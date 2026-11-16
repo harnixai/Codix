@@ -20,7 +20,7 @@ tui = { workspace = true }
 keys.workspace = true
 model.workspace = true
 mock.workspace = true
-ratatui = { workspace = true, features = ["crossterm"] }
+ratatui = { workspace = true, features = ["std", "crossterm_0_29"] }
 crossterm.workspace = true
 tokio.workspace = true
 futures.workspace = true

@@ -11,5 +11,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-ratatui.workspace = true
+ratatui = { workspace = true, features = ["std", "layout-cache", "underline-color"] }
 unicode-width.workspace = true
