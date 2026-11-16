@@ -106,7 +106,10 @@ impl Instances for MockInstances {
             .collect())
     }
 
-    async fn create(&self, opts: NewInstance) -> Result<Arc<dyn Backend>, PortError> {
+    async fn create(
+        &self,
+        opts: NewInstance,
+    ) -> Result<(InstanceInfo, Arc<dyn Backend>), PortError> {
         let name = {
             let mut list = self.list.lock().unwrap();
             let name = opts.name.unwrap_or_else(|| {
@@ -143,7 +146,15 @@ impl Instances for MockInstances {
             });
             name
         };
-        Ok(self.open(name.as_str())?)
+        let info = self
+            .list
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|i| i.info.name == name)
+            .map(|i| i.info.clone())
+            .unwrap();
+        Ok((info, self.open(name.as_str())?))
     }
 
     async fn attach(&self, name: &str, opts: Attach) -> Result<Arc<dyn Backend>, PortError> {

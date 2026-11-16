@@ -3,7 +3,10 @@ use port::{Command, ConnState, Event, PortError, Reply};
 use tui::layout::{self, ShowPane, Size};
 
 use crate::mouse::{Mouse, MouseButton, MouseKind};
-use crate::state::{Drag, Focus, Notice, Overlay, State, Tab};
+use crate::state::{
+    Confirm, DetachReason, Drag, Focus, HEARTBEAT_MS, IDLE_WARN_MS, Notice, Overlay, Picker,
+    Screen, State, Tab,
+};
 use crate::view::{layout_spec, tab_labels};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -20,6 +23,37 @@ pub enum Msg {
     Reply(ReqId, Box<Result<Reply, PortError>>),
     Tick,
     Resize(Size),
+    /// 实例目录操作的结果（`Effect::Instances` 回来的）。
+    Instances(InstOp, Result<InstOk, PortError>),
+}
+
+/// 对本机实例目录的操作，由 app 交给 `port::Instances` 执行。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstOp {
+    List,
+    Attach {
+        name: String,
+        force: bool,
+    },
+    Start {
+        name: String,
+    },
+    /// `project` 为空时由 app 用当前目录。
+    Create {
+        name: Option<String>,
+        project: Option<String>,
+    },
+    Stop {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstOk {
+    Listed(Vec<port::InstanceInfo>),
+    /// 已接上这个实例：app 已换上它的后端。
+    Attached(String),
+    Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,11 +66,15 @@ pub enum Effect {
     SetMouseCapture(bool),
     Redraw,
     Bell,
+    Instances(InstOp),
+    /// 放下当前后端：被踢、空闲脱离、实例停了之后不再收它的事件。
+    Release,
 }
 
 /// 发出去还没回来的命令，回来时据此知道把结果放到哪里。
 #[derive(Debug, Clone)]
 pub(crate) enum Pending {
+    Ignore,
     Hello,
     Sessions,
     Flows,
@@ -74,6 +112,42 @@ impl State {
         ]
     }
 
+    /// 启动时有在跑的实例：先显示实例选择（I-01）。
+    pub fn open_picker(&mut self, message: Option<String>) -> Vec<Effect> {
+        self.ui.screen = Screen::Instances(Picker {
+            loading: true,
+            message,
+            ..Picker::default()
+        });
+        self.ui.confirm = None;
+        vec![Effect::Instances(InstOp::List)]
+    }
+
+    /// 最早的下一个定时：通知过期、Ctrl+C 失效、空闲提醒与脱离、心跳。app 据此安排 Tick，
+    /// 没有定时就不唤醒（architecture §5）。
+    pub fn next_deadline(&self) -> Option<u64> {
+        let u = &self.ui;
+        let mut d: Vec<u64> = vec![];
+        if let Some(n) = &u.notice {
+            d.push(n.until_ms);
+        }
+        if let Some(t) = u.quit_armed_ms {
+            d.push(t + QUIT_ARM_MS + 1);
+        }
+        if u.screen == Screen::Workbench {
+            d.push(u.next_heartbeat_ms);
+            if u.idle_timeout_ms > 0 {
+                let at = u.last_input_ms + u.idle_timeout_ms;
+                d.push(if u.idle_warned {
+                    at
+                } else {
+                    at.saturating_sub(IDLE_WARN_MS)
+                });
+            }
+        }
+        d.into_iter().min()
+    }
+
     pub fn set_now(&mut self, now_ms: u64) {
         self.ui.now_ms = now_ms;
     }
@@ -109,37 +183,263 @@ impl State {
 }
 
 pub fn update(s: &mut State, msg: Msg) -> Vec<Effect> {
+    if matches!(
+        msg,
+        Msg::Action(_) | Msg::Text(_) | Msg::Paste(_) | Msg::Mouse(_)
+    ) {
+        s.ui.last_input_ms = s.ui.now_ms;
+        s.ui.idle_warned = false;
+    }
+    if let Some(c) = s.ui.confirm.take() {
+        return match msg {
+            Msg::Action(Action::Yes | Action::Confirm) => confirmed(s, c),
+            Msg::Action(_) | Msg::Text(_) => {
+                s.notice("已放弃", false);
+                vec![]
+            }
+            other => {
+                s.ui.confirm = Some(c);
+                update_inner(s, other)
+            }
+        };
+    }
+    update_inner(s, msg)
+}
+
+fn update_inner(s: &mut State, msg: Msg) -> Vec<Effect> {
+    match (&s.ui.screen, msg) {
+        (_, Msg::Instances(op, r)) => instances_done(s, op, r),
+        (Screen::Instances(_), Msg::Action(a)) => picker_action(s, a),
+        (Screen::Detached(reason), Msg::Action(a)) => {
+            let reason = reason.clone();
+            detached_action(s, &reason, Some(a))
+        }
+        (Screen::Detached(reason), Msg::Text(_)) => {
+            let reason = reason.clone();
+            detached_action(s, &reason, None)
+        }
+        (Screen::Workbench, msg) => workbench(s, msg),
+        (_, Msg::Resize(size)) => {
+            s.ui.size = size;
+            vec![]
+        }
+        (_, Msg::Tick) => {
+            tick_common(s);
+            vec![]
+        }
+        _ => vec![],
+    }
+}
+
+fn workbench(s: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
+        Msg::Instances(..) => vec![],
         Msg::Action(a) => action(s, a),
         Msg::Text(_) | Msg::Paste(_) => {
             s.ui.quit_armed_ms = None;
             vec![]
         }
         Msg::Mouse(m) => mouse(s, m),
-        Msg::Event(e) => {
-            event(s, *e);
-            vec![]
-        }
+        Msg::Event(e) => event(s, *e),
         Msg::Reply(id, r) => {
             reply(s, id, *r);
             vec![]
         }
         Msg::Tick => {
-            let now = s.ui.now_ms;
-            if s.ui.notice.as_ref().is_some_and(|n| n.until_ms <= now) {
-                s.ui.notice = None;
-            }
-            if s.ui
-                .quit_armed_ms
-                .is_some_and(|t| now.saturating_sub(t) > QUIT_ARM_MS)
-            {
-                s.ui.quit_armed_ms = None;
-            }
-            vec![]
+            tick_common(s);
+            idle_and_heartbeat(s)
         }
         Msg::Resize(size) => {
             s.ui.size = size;
             vec![]
+        }
+    }
+}
+
+fn tick_common(s: &mut State) {
+    let now = s.ui.now_ms;
+    if s.ui.notice.as_ref().is_some_and(|n| n.until_ms <= now) {
+        s.ui.notice = None;
+    }
+    if s.ui
+        .quit_armed_ms
+        .is_some_and(|t| now.saturating_sub(t) > QUIT_ARM_MS)
+    {
+        s.ui.quit_armed_ms = None;
+    }
+}
+
+/// 空闲脱离与心跳（需求 I-10、I-11）。
+fn idle_and_heartbeat(s: &mut State) -> Vec<Effect> {
+    let now = s.ui.now_ms;
+    let mut out = vec![];
+    let timeout = s.ui.idle_timeout_ms;
+    if timeout > 0 {
+        let idle = now.saturating_sub(s.ui.last_input_ms);
+        if idle >= timeout {
+            out.push(s.call(Pending::Ignore, Command::Detach));
+            out.push(Effect::Release);
+            s.ui.screen = Screen::Detached(DetachReason::Idle { after_ms: idle });
+            s.ui.overlay = None;
+            return out;
+        }
+        if idle + IDLE_WARN_MS >= timeout && !s.ui.idle_warned {
+            s.ui.idle_warned = true;
+            let left = (timeout - idle).div_ceil(60_000);
+            s.ui.notice = Some(Notice {
+                text: format!("{left} 分钟后因空闲脱离（有任何输入就不会）"),
+                error: false,
+                until_ms: s.ui.last_input_ms + timeout,
+            });
+        }
+    }
+    if now >= s.ui.next_heartbeat_ms {
+        s.ui.next_heartbeat_ms = now + HEARTBEAT_MS;
+        let last = s.ui.last_input_ms;
+        out.push(s.call(
+            Pending::Ignore,
+            Command::Heartbeat {
+                last_input_ms: last,
+            },
+        ));
+    }
+    out
+}
+
+fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
+    match c {
+        Confirm::ForceAttach(name) => {
+            set_picker_message(s, format!("正在强制接入 {name} …"));
+            vec![Effect::Instances(InstOp::Attach { name, force: true })]
+        }
+        Confirm::StopInstance(name) => {
+            set_picker_message(s, format!("正在停止 {name} …"));
+            vec![Effect::Instances(InstOp::Stop { name })]
+        }
+    }
+}
+
+fn set_picker_message(s: &mut State, m: String) {
+    if let Screen::Instances(p) = &mut s.ui.screen {
+        p.message = Some(m);
+    }
+}
+
+fn picker_action(s: &mut State, a: Action) -> Vec<Effect> {
+    let Screen::Instances(p) = &mut s.ui.screen else {
+        return vec![];
+    };
+    let rows = p.list.len() + 1;
+    let chosen = p.list.get(p.selected).cloned();
+    match a {
+        Action::Up => p.selected = p.selected.saturating_sub(1),
+        Action::Down => p.selected = (p.selected + 1).min(rows - 1),
+        Action::Quit => return vec![Effect::Quit { detach: true }],
+        Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
+        Action::New => return create(s),
+        Action::Open => match chosen {
+            None => return create(s),
+            Some(i) => match i.state {
+                port::InstanceState::Running if i.holder.is_some() => {
+                    s.ui.confirm = Some(Confirm::ForceAttach(i.name.0));
+                }
+                port::InstanceState::Running => {
+                    p.message = Some(format!("正在接入 {} …", i.name));
+                    return vec![Effect::Instances(InstOp::Attach {
+                        name: i.name.0,
+                        force: false,
+                    })];
+                }
+                _ => {
+                    p.message = Some(format!("正在启动 {} …", i.name));
+                    return vec![Effect::Instances(InstOp::Start { name: i.name.0 })];
+                }
+            },
+        },
+        Action::Force => {
+            if let Some(i) = chosen.filter(|i| i.state == port::InstanceState::Running) {
+                s.ui.confirm = Some(Confirm::ForceAttach(i.name.0));
+            }
+        }
+        Action::Stop => {
+            if let Some(i) = chosen.filter(|i| i.state == port::InstanceState::Running) {
+                s.ui.confirm = Some(Confirm::StopInstance(i.name.0));
+            }
+        }
+        _ => {}
+    }
+    vec![]
+}
+
+fn create(s: &mut State) -> Vec<Effect> {
+    set_picker_message(s, "正在新建实例 …".into());
+    vec![Effect::Instances(InstOp::Create {
+        name: None,
+        project: None,
+    })]
+}
+
+fn detached_action(s: &mut State, reason: &DetachReason, a: Option<Action>) -> Vec<Effect> {
+    if a == Some(Action::Quit) || a == Some(Action::Detach) {
+        return vec![Effect::Quit { detach: true }];
+    }
+    match (reason, &s.ui.attached) {
+        (DetachReason::Idle { .. }, Some(name)) => {
+            vec![Effect::Instances(InstOp::Attach {
+                name: name.clone(),
+                force: false,
+            })]
+        }
+        _ if a == Some(Action::Open) || a.is_none() => s.open_picker(None),
+        _ => vec![],
+    }
+}
+
+fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Vec<Effect> {
+    match r {
+        Ok(InstOk::Listed(mut list)) => {
+            list.sort_by_key(|i| (i.state != port::InstanceState::Running, i.name.clone()));
+            let Screen::Instances(p) = &mut s.ui.screen else {
+                return vec![];
+            };
+            p.loading = false;
+            p.selected = p.selected.min(list.len());
+            p.list = list;
+            vec![]
+        }
+        Ok(InstOk::Attached(name)) => {
+            s.domain = Default::default();
+            s.pending.clear();
+            s.ui.screen = Screen::Workbench;
+            s.ui.attached = Some(name);
+            s.ui.last_input_ms = s.ui.now_ms;
+            s.ui.next_heartbeat_ms = s.ui.now_ms + HEARTBEAT_MS;
+            s.ui.focus = Focus::Composer;
+            s.start()
+        }
+        Ok(InstOk::Stopped) => {
+            if matches!(s.ui.screen, Screen::Instances(_)) {
+                set_picker_message(s, "已停止".into());
+                vec![Effect::Instances(InstOp::List)]
+            } else {
+                vec![]
+            }
+        }
+        Err(e) => {
+            let text = match (&op, &e) {
+                (InstOp::Attach { name, .. }, PortError::Occupied { holder, idle_ms }) => format!(
+                    "{name} 已被 {} 接入（空闲 {}）· f 强制接入",
+                    holder.label(),
+                    crate::view::fmt_duration(*idle_ms)
+                ),
+                _ => e.to_string(),
+            };
+            if matches!(s.ui.screen, Screen::Instances(_)) {
+                set_picker_message(s, text);
+                vec![Effect::Instances(InstOp::List)]
+            } else {
+                s.open_picker(Some(text))
+            }
         }
     }
 }
@@ -345,7 +645,20 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
     vec![]
 }
 
-fn event(s: &mut State, e: Event) {
+fn event(s: &mut State, e: Event) -> Vec<Effect> {
+    match e {
+        Event::Kicked { by, at_ms } => {
+            s.ui.screen = Screen::Detached(DetachReason::Kicked { by, at_ms });
+            s.ui.overlay = None;
+            return vec![Effect::Release];
+        }
+        Event::InstanceStopped { reason } => {
+            s.ui.screen = Screen::Detached(DetachReason::Stopped { reason });
+            s.ui.overlay = None;
+            return vec![Effect::Release];
+        }
+        _ => {}
+    }
     let d = &mut s.domain;
     match e {
         Event::Connection(c) => {
@@ -354,7 +667,6 @@ fn event(s: &mut State, e: Event) {
                 s.notice("与实例断开", true);
             }
         }
-        Event::InstanceStopped { reason } => s.notice(format!("实例已停止：{reason}"), true),
         Event::SessionUpserted(sum) => match d.sessions.iter_mut().find(|x| x.id == sum.id) {
             Some(x) => *x = sum,
             None => d.sessions.insert(0, sum),
@@ -372,12 +684,16 @@ fn event(s: &mut State, e: Event) {
         Event::Notice { level, text } => s.notice(text, level == port::NoticeLevel::Error),
         _ => {}
     }
+    vec![]
 }
 
 fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) {
     let Some(what) = s.pending.remove(&id) else {
         return;
     };
+    if matches!(what, Pending::Ignore) {
+        return;
+    }
     let reply = match r {
         Ok(r) => r,
         Err(e) => {

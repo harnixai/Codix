@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use app::core::ShellEffect;
+use app::core::{ShellEffect, Start};
 use app::term::{self, CrosstermTerm, Term};
 use app::{Core, config};
 use clap::{Parser, Subcommand};
@@ -10,8 +10,8 @@ use crossterm::event::{
     Event as CtEvent, EventStream, KeyEventKind, MouseButton as CtButton, MouseEventKind,
 };
 use futures::StreamExt;
-use model::{Mouse, MouseButton, MouseKind, Msg};
-use port::{Attach, Instances};
+use model::{InstOp, Mouse, MouseButton, MouseKind, Msg};
+use port::Instances;
 
 #[derive(Parser)]
 #[command(name = "codix", version, about = "跑在终端里的 agent 工作台")]
@@ -43,8 +43,12 @@ enum Cmd {
     /// 接入指定实例。
     Attach {
         name: String,
+        /// 踢掉当前接入者。
         #[arg(long)]
         force: bool,
+        /// 空闲多久自动脱离，如 30m、2h、0（不超时）。
+        #[arg(long)]
+        idle_timeout: Option<String>,
     },
     /// 启动一个已停止的实例。
     Start { name: String },
@@ -76,6 +80,13 @@ async fn main() -> Result<()> {
             ..mock::MockOptions::default()
         },
     );
+    let idle_override = match &cli.command {
+        Some(Cmd::Attach {
+            idle_timeout: Some(t),
+            ..
+        }) => Some(config::parse_duration_ms(t).with_context(|| format!("看不懂的时长 {t}"))?),
+        _ => None,
+    };
     if let Some(Cmd::List { all }) = cli.command {
         for i in instances.list(all).await? {
             println!(
@@ -92,40 +103,40 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let backend = match cli.command {
-        Some(Cmd::New { name, project }) => {
-            instances
-                .create(port::NewInstance {
-                    name: name.map(Into::into),
-                    project,
-                })
-                .await?
-        }
-        Some(Cmd::Attach { name, force }) => {
-            instances
-                .attach(
-                    &name,
-                    Attach {
-                        force,
-                        idle_timeout_ms: None,
-                    },
-                )
-                .await?
-        }
-        Some(Cmd::Start { name }) => instances.start(&name).await?,
+    let start = match cli.command {
+        Some(Cmd::New { name, project }) => Start::Op(InstOp::Create { name, project }),
+        Some(Cmd::Attach { name, force, .. }) => Start::Op(InstOp::Attach { name, force }),
+        Some(Cmd::Start { name }) => Start::Op(InstOp::Start { name }),
         Some(Cmd::Stop { name }) => {
             instances.stop(&name).await?;
             println!("已停止 {name}");
             return Ok(());
         }
-        // 2.3 起：有在跑的实例时先弹选择列表。
-        _ => instances.attach("dev", Attach::default()).await?,
+        Some(Cmd::List { .. }) => unreachable!(),
+        None => {
+            let running = instances.list(false).await?;
+            if running.is_empty() {
+                Start::Op(InstOp::Create {
+                    name: None,
+                    project: None,
+                })
+            } else {
+                Start::Picker
+            }
+        }
     };
-    run(backend).await
+    let (cfg, cfg_err) = config::load();
+    let idle = idle_override.or_else(|| config::parse_duration_ms(&cfg.instance.idle_timeout));
+    run(Arc::new(instances), start, cfg, cfg_err, idle).await
 }
 
-async fn run(backend: Arc<dyn port::Backend>) -> Result<()> {
-    let (cfg, cfg_err) = config::load();
+async fn run(
+    instances: Arc<dyn Instances>,
+    start: Start,
+    cfg: config::Config,
+    cfg_err: Option<String>,
+    idle: Option<u64>,
+) -> Result<()> {
     let mut t = CrosstermTerm::new()?;
     let negotiated = term::negotiate(
         &mut t,
@@ -135,7 +146,7 @@ async fn run(backend: Arc<dyn port::Backend>) -> Result<()> {
     );
     install_panic_hook();
     t.enter(true)?;
-    let result = event_loop(&mut t, backend, cfg_err).await;
+    let result = event_loop(&mut t, instances, start, cfg_err, idle).await;
     t.leave()?;
     term::restore(&mut t, negotiated);
     result
@@ -156,15 +167,16 @@ fn install_panic_hook() {
 }
 
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
-const TICK: Duration = Duration::from_millis(250);
 
 async fn event_loop(
     t: &mut CrosstermTerm,
-    backend: Arc<dyn port::Backend>,
+    instances: Arc<dyn Instances>,
+    start: Start,
     cfg_err: Option<String>,
+    idle: Option<u64>,
 ) -> Result<()> {
     let keymap = Arc::new(keys::Keymap::default());
-    let (mut core, effects) = Core::new(backend, keymap, t.size(), Box::new(now_ms));
+    let (mut core, effects) = Core::new(instances, keymap, t.size(), Box::new(now_ms), start, idle);
     if let Some(e) = cfg_err {
         core.handle(Msg::Event(Box::new(port::Event::Notice {
             level: port::NoticeLevel::Error,
@@ -172,42 +184,45 @@ async fn event_loop(
         })));
     }
     let mut input = EventStream::new();
-    let mut tick = tokio::time::interval(TICK);
     let mut last_draw = Instant::now() - FRAME_BUDGET;
     let mut pending = effects;
+    let mut dirty = false;
     loop {
         for e in pending.drain(..) {
             match e {
-                ShellEffect::Quit { .. } => return Ok(()),
+                ShellEffect::Quit { .. } => {
+                    core.detach().await;
+                    return Ok(());
+                }
                 ShellEffect::SetMouseCapture(on) => t.set_mouse(on)?,
                 ShellEffect::Redraw => t.clear()?,
                 ShellEffect::Bell => print!("\x07"),
             }
         }
+        dirty |= core.take_dirty();
         let due = last_draw + FRAME_BUDGET;
-        let dirty = core.take_dirty();
         if dirty && Instant::now() >= due {
             t.draw(&core.frame())?;
             last_draw = Instant::now();
-        } else if dirty {
-            // 帧预算没到：记着脏，等到点再画（合帧，architecture §5）。
-            core.handle(Msg::Tick);
+            dirty = false;
         }
+        // 帧预算没到就记着脏、到点再画（合帧，architecture §5）；定时只按 model 给的最早时刻。
         let redraw_at = tokio::time::Instant::from_std(due);
-        let need_redraw = dirty && Instant::now() < due;
+        let tick_at = core.deadline().map(|d| {
+            let wait = d.saturating_sub(core.now_ms());
+            tokio::time::Instant::now() + Duration::from_millis(wait)
+        });
         tokio::select! {
             ev = input.next() => match ev {
                 Some(Ok(ev)) => pending.extend(on_terminal(&mut core, ev)),
                 Some(Err(e)) => return Err(e.into()),
                 None => return Ok(()),
             },
-            msg = core.next_backend_msg() => {
-                if let Some(m) = msg {
-                    pending.extend(core.handle(m));
-                }
+            effects = core.next_msg() => pending.extend(effects),
+            _ = tokio::time::sleep_until(tick_at.unwrap_or(redraw_at)), if tick_at.is_some() => {
+                pending.extend(core.tick());
             }
-            _ = tick.tick(), if core.wants_tick() => pending.extend(core.tick()),
-            _ = tokio::time::sleep_until(redraw_at), if need_redraw => {}
+            _ = tokio::time::sleep_until(redraw_at), if dirty => {}
         }
         pending.extend(core.pump());
     }

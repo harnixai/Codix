@@ -5,7 +5,10 @@ const SEEDS: &[(&str, &str)] = &[
     ("default", include_str!("../seeds/default.yaml")),
 ];
 
-const SCENARIOS: &[(&str, &str)] = &[("default", include_str!("../scenarios/default.yaml"))];
+const SCENARIOS: &[(&str, &str)] = &[
+    ("default", include_str!("../scenarios/default.yaml")),
+    ("m21-kicked", include_str!("../scenarios/m21-kicked.yaml")),
+];
 
 pub fn seed(name: &str) -> Option<&'static str> {
     SEEDS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)

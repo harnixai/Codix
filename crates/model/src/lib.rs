@@ -10,6 +10,9 @@ mod view;
 mod welcome;
 
 pub use mouse::{Mouse, MouseButton, MouseKind};
-pub use state::{Domain, Focus, Overlay, State, Tab, Ui};
-pub use update::{Effect, Msg, ReqId, update};
+pub use state::{
+    Confirm, DEFAULT_IDLE_TIMEOUT_MS, DetachReason, Domain, Focus, Overlay, Picker, Screen, State,
+    Tab, Ui,
+};
+pub use update::{Effect, InstOk, InstOp, Msg, ReqId, update};
 pub use view::view;

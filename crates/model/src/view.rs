@@ -5,7 +5,7 @@ use tui::{
     Workbench, truncate_to_width,
 };
 
-use crate::state::{Focus, Overlay, State, Tab};
+use crate::state::{Confirm, DetachReason, Focus, Overlay, Picker, Screen, State, Tab};
 
 pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
     LayoutSpec {
@@ -61,6 +61,25 @@ pub fn view(s: &State) -> FrameState {
             footer,
             overlay: None,
         };
+    }
+    match &s.ui.screen {
+        Screen::Instances(p) => {
+            return FrameState {
+                body: Body::Instances(picker(s, p)),
+                footer,
+                overlay: s.ui.overlay.as_ref().map(|o| overlay(s, o)),
+            };
+        }
+        Screen::Detached(r) => {
+            return FrameState {
+                body: Body::Detached(tui::DetachedScreen {
+                    lines: detached(s, r),
+                }),
+                footer,
+                overlay: None,
+            };
+        }
+        Screen::Workbench => {}
     }
     let spec = layout_spec(s);
     let tabs = tabs(s);
@@ -235,11 +254,22 @@ fn footer(s: &State) -> tui::Footer {
         key,
         label: label.to_string(),
     });
-    let message = s.ui.notice.as_ref().map(|n| {
-        Line::toned(
-            n.text.clone(),
-            if n.error { Tone::Error } else { Tone::Warn },
-        )
+    let confirm = s.ui.confirm.as_ref().map(|c| {
+        let text = match c {
+            Confirm::ForceAttach(n) => format!("强制接入 {n}？对方会被踢掉 · y 确认 / 其他键放弃"),
+            Confirm::StopInstance(n) => {
+                format!("停止实例 {n}？里面的会话、流程、作业都会停下 · y 确认 / 其他键放弃")
+            }
+        };
+        Line::toned(text, Tone::Attention)
+    });
+    let message = confirm.or_else(|| {
+        s.ui.notice.as_ref().map(|n| {
+            Line::toned(
+                n.text.clone(),
+                if n.error { Tone::Error } else { Tone::Warn },
+            )
+        })
     });
     tui::Footer {
         hints,
@@ -296,5 +326,137 @@ impl State {
             Focus::Transcript => vec![keys::Context::Transcript],
             _ => vec![self.ui.tab.context()],
         }
+    }
+}
+
+/// `3h12m`、`6d`、`41m`、`12s` 这种给人看的时长。
+pub(crate) fn fmt_duration(ms: u64) -> String {
+    let s = ms / 1000;
+    match s {
+        0..60 => format!("{s}s"),
+        60..3600 => format!("{}m", s / 60),
+        3600..86_400 => format!("{}h{}m", s / 3600, s % 3600 / 60),
+        _ => format!("{}d", s / 86_400),
+    }
+}
+
+fn pad(text: &str, width: usize) -> String {
+    let t = truncate_to_width(text, width);
+    let w = tui::display_width(&t);
+    format!("{t}{}", " ".repeat(width.saturating_sub(w)))
+}
+
+fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
+    let host = p.list.first().map(|i| i.host.as_str()).unwrap_or("本机");
+    let now = s.ui.now_ms;
+    let mut rows: Vec<Line> = p
+        .list
+        .iter()
+        .map(|i| {
+            let (glyph, tone) = match (i.state, i.holder.is_some()) {
+                (port::InstanceState::Running, true) => ("🔒", Tone::Warn),
+                (port::InstanceState::Running, false) => ("● ", Tone::Ok),
+                (port::InstanceState::Stopped, _) => ("○ ", Tone::Dim),
+                (port::InstanceState::Stale, _) => ("✗ ", Tone::Error),
+            };
+            let project = i.project.as_deref().unwrap_or("");
+            let mut line = Line::toned(format!("{glyph} "), tone)
+                .push(pad(i.name.as_str(), 12), Tone::Strong)
+                .push(pad(project, 16), Tone::Dim);
+            match i.state {
+                port::InstanceState::Running => {
+                    let up = i.started_ms.map(|t| fmt_duration(now.saturating_sub(t)));
+                    line = line
+                        .push(
+                            pad(&format!("运行 {}", up.unwrap_or_default()), 13),
+                            Tone::Normal,
+                        )
+                        .push(pad(&format!("会话 {}", i.sessions), 9), Tone::Normal);
+                    if i.waiting > 0 {
+                        line =
+                            line.push(pad(&format!("◐ 等你 {}", i.waiting), 10), Tone::Attention);
+                    }
+                    if i.jobs > 0 {
+                        line = line.push(pad(&format!("作业 {}", i.jobs), 8), Tone::Dim);
+                    }
+                    if let Some(h) = &i.holder {
+                        line = line.push(
+                            format!(
+                                "已被 {} 接入，空闲 {}",
+                                h.label(),
+                                fmt_duration(now.saturating_sub(h.last_input_ms))
+                            ),
+                            Tone::Warn,
+                        );
+                    }
+                }
+                port::InstanceState::Stopped => {
+                    line = line.push("已停止 · Enter 启动", Tone::Dim);
+                }
+                port::InstanceState::Stale => {
+                    line = line.push("残留（进程已不在）· Enter 重新启动", Tone::Error);
+                }
+            }
+            line
+        })
+        .collect();
+    rows.push(Line::default());
+    rows.push(Line::toned("＋ 新建实例", Tone::Accent));
+    // "新建实例"前面空了一行，选中下标要跳过它。
+    let selected = if p.selected >= p.list.len() {
+        p.list.len() + 1
+    } else {
+        p.selected
+    };
+    let message = if p.loading && p.list.is_empty() {
+        Some(Line::toned("正在列出本机的实例 …", Tone::Dim))
+    } else {
+        p.message
+            .as_ref()
+            .map(|m| Line::toned(m.clone(), Tone::Warn))
+    };
+    tui::InstancesScreen {
+        title: Line::plain(format!("Codix · 选择实例 · 主机 {host}")),
+        rows,
+        selected: Some(selected),
+        message,
+    }
+}
+
+fn detached(s: &State, r: &DetachReason) -> Vec<Line> {
+    let name = s.ui.attached.clone().unwrap_or_default();
+    match r {
+        DetachReason::Kicked { by, at_ms } => vec![
+            Line::toned(format!("已脱离实例 {name}"), Tone::Strong),
+            Line::default(),
+            Line::toned(
+                format!(
+                    "被 {} 强制接入（{} 之前）",
+                    by.label(),
+                    fmt_duration(s.ui.now_ms.saturating_sub(*at_ms))
+                ),
+                Tone::Warn,
+            ),
+            Line::toned("实例仍在运行", Tone::Dim),
+            Line::default(),
+            Line::toned("Enter 回到实例选择 · q 退出", Tone::Dim),
+        ],
+        DetachReason::Idle { after_ms } => vec![
+            Line::toned(format!("已脱离实例 {name}"), Tone::Strong),
+            Line::default(),
+            Line::toned(
+                format!("空闲 {}，已自动脱离，实例仍在运行", fmt_duration(*after_ms)),
+                Tone::Warn,
+            ),
+            Line::default(),
+            Line::toned("按任意键重新接入 · q 退出", Tone::Dim),
+        ],
+        DetachReason::Stopped { reason } => vec![
+            Line::toned(format!("实例 {name} 已停止"), Tone::Strong),
+            Line::default(),
+            Line::toned(reason.clone(), Tone::Warn),
+            Line::default(),
+            Line::toned("Enter 回到实例选择 · q 退出", Tone::Dim),
+        ],
     }
 }

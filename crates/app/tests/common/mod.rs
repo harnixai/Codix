@@ -6,10 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use app::Core;
-use app::core::ShellEffect;
+use app::core::{ShellEffect, Start};
 use app::snapshot::{assert_snapshot, render_text};
-use model::{Mouse, MouseButton, MouseKind, Msg};
-use port::{Attach, Instances};
+use model::{InstOp, Mouse, MouseButton, MouseKind, Msg};
 use tui::Size;
 
 pub const EPOCH_MS: u64 = 1_763_280_000_000;
@@ -22,14 +21,34 @@ pub struct Harness {
 }
 
 impl Harness {
+    /// 直接接入 mock 实例 `dev`。
     pub async fn new(scenario: &str, size: Size) -> Harness {
+        Harness::start(
+            scenario,
+            size,
+            Start::Op(InstOp::Attach {
+                name: "dev".into(),
+                force: false,
+            }),
+            None,
+        )
+        .await
+    }
+
+    pub async fn start(scenario: &str, size: Size, start: Start, idle: Option<u64>) -> Harness {
         let sc =
             mock::load_scenario(scenario).unwrap_or_else(|_| mock::Scenario::seed_only(scenario));
         let instances = Arc::new(mock::MockInstances::new(sc, mock::MockOptions::default()));
-        let backend = instances.attach("dev", Attach::default()).await.unwrap();
-        let start = tokio::time::Instant::now();
-        let clock = Box::new(move || EPOCH_MS + start.elapsed().as_millis() as u64);
-        let (core, shell) = Core::new(backend, Arc::new(keys::Keymap::default()), size, clock);
+        let begin = tokio::time::Instant::now();
+        let clock = Box::new(move || EPOCH_MS + begin.elapsed().as_millis() as u64);
+        let (core, shell) = Core::new(
+            instances.clone(),
+            Arc::new(keys::Keymap::default()),
+            size,
+            clock,
+            start,
+            idle,
+        );
         let mut h = Harness {
             core,
             size,
@@ -42,18 +61,39 @@ impl Harness {
 
     /// 让已 spawn 的后端调用跑完、结果进来。
     pub async fn settle(&mut self) {
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
+        for _ in 0..4 {
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+            let s = self.core.pump();
+            self.shell.extend(s);
         }
-        let s = self.core.pump();
-        self.shell.extend(s);
     }
 
+    /// 让时间走 `ms`：途中到期的定时（model 的 deadline）都按时 Tick。
     pub async fn advance(&mut self, ms: u64) {
-        tokio::time::advance(Duration::from_millis(ms)).await;
-        self.settle().await;
-        let s = self.core.tick();
-        self.shell.extend(s);
+        let end = self.core.now_ms() + ms;
+        loop {
+            let now = self.core.now_ms();
+            let next = self.core.deadline().filter(|d| *d <= end).unwrap_or(end);
+            let step = next.saturating_sub(now).max(1).min(end.saturating_sub(now));
+            if step > 0 {
+                tokio::time::advance(Duration::from_millis(step)).await;
+            }
+            self.settle().await;
+            if self
+                .core
+                .deadline()
+                .is_some_and(|d| d <= self.core.now_ms())
+            {
+                let s = self.core.tick();
+                self.shell.extend(s);
+                self.settle().await;
+            }
+            if self.core.now_ms() >= end {
+                return;
+            }
+        }
     }
 
     /// 空格分隔的按键：`"Ctrl+B F2 Down"`；字面空格写 `Space`。

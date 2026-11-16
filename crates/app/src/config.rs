@@ -10,6 +10,40 @@ use tui::Size;
 #[serde(default)]
 pub struct Config {
     pub ui: UiConfig,
+    pub instance: InstanceConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct InstanceConfig {
+    /// `"30m"`、`"2h"`、`"0"`（不超时），需求 I-10。
+    pub idle_timeout: String,
+}
+
+impl Default for InstanceConfig {
+    fn default() -> Self {
+        InstanceConfig {
+            idle_timeout: "30m".into(),
+        }
+    }
+}
+
+/// `45s`、`30m`、`2h`、`1d`、`0`；读不懂返回 `None`。
+pub fn parse_duration_ms(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s == "0" {
+        return Some(0);
+    }
+    let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
+    let n: u64 = num.parse().ok()?;
+    let per = match unit.trim() {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => return None,
+    };
+    Some(n * per)
 }
 
 #[derive(Debug, Clone, Deserialize)]

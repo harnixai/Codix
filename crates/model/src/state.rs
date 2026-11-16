@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use keys::{Context, Keymap};
-use port::{ConnState, FlowSummary, InstanceInfo, Job, SessionSummary};
+use port::{ClientInfo, ConnState, FlowSummary, InstanceInfo, Job, SessionSummary};
 use tui::{ShowPane, Size};
 
 use crate::update::{Pending, ReqId};
@@ -56,6 +56,38 @@ impl Focus {
     }
 }
 
+/// 整屏显示什么（交互 §2.1、§2.2、§9）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Screen {
+    Instances(Picker),
+    Workbench,
+    /// 已脱离：实例还在跑，这个 TUI 没接着它。
+    Detached(DetachReason),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Picker {
+    pub list: Vec<InstanceInfo>,
+    /// 选中行；`list.len()` 表示最后那行"＋ 新建实例"。
+    pub selected: usize,
+    pub loading: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DetachReason {
+    Kicked { by: ClientInfo, at_ms: u64 },
+    Idle { after_ms: u64 },
+    Stopped { reason: String },
+}
+
+/// 底栏上的二次确认（交互 §5.1）：`y` / Enter 确认，其他键放弃。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Confirm {
+    ForceAttach(String),
+    StopInstance(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Overlay {
     Help { scroll: usize },
@@ -95,6 +127,15 @@ pub struct Domain {
 /// 界面状态：只由输入与 Tick 写入。
 #[derive(Debug, Clone)]
 pub struct Ui {
+    pub screen: Screen,
+    pub confirm: Option<Confirm>,
+    /// 接着的实例名（工作台或"已脱离"时有）。
+    pub attached: Option<String>,
+    pub last_input_ms: u64,
+    /// 0 表示不超时（需求 I-10）。
+    pub idle_timeout_ms: u64,
+    pub idle_warned: bool,
+    pub next_heartbeat_ms: u64,
     pub size: Size,
     pub now_ms: u64,
     pub ratio_pct: u16,
@@ -132,6 +173,10 @@ impl Ui {
     }
 }
 
+pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 30 * 60_000;
+pub const HEARTBEAT_MS: u64 = 10_000;
+pub const IDLE_WARN_MS: u64 = 60_000;
+
 pub struct State {
     pub domain: Domain,
     pub ui: Ui,
@@ -145,6 +190,13 @@ impl State {
         State {
             domain: Domain::default(),
             ui: Ui {
+                screen: Screen::Workbench,
+                confirm: None,
+                attached: None,
+                last_input_ms: now_ms,
+                idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
+                idle_warned: false,
+                next_heartbeat_ms: now_ms + HEARTBEAT_MS,
                 size,
                 now_ms,
                 ratio_pct: 60,
@@ -169,8 +221,14 @@ impl State {
 
     /// 键位解析用的上下文，从最具体到最宽（`Global` 由解析器自己补上）。
     pub fn key_contexts(&self) -> Vec<Context> {
+        if self.ui.confirm.is_some() {
+            return vec![Context::Dialog];
+        }
         if self.ui.overlay.is_some() {
             return vec![Context::Overlay];
+        }
+        if !matches!(self.ui.screen, Screen::Workbench) {
+            return vec![Context::Instances];
         }
         match self.ui.focus {
             Focus::Composer => vec![Context::Composer],

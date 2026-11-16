@@ -1,0 +1,8 @@
+# 场景 m21：接入 5 秒后被另一个 TUI 强制接入（需求 I-06）。
+name: m21-kicked
+seed: default
+timeline:
+  - at: 5000
+    kicked:
+      by: {user: alice, pid: 8801, tty: /dev/pts/5, ssh_from: 10.0.0.9, attached_ms: 1763280005000, last_input_ms: 1763280005000}
+      at_ms: 1763280005000

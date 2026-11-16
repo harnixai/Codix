@@ -356,26 +356,25 @@ fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
 }
 
 fn instances(f: &mut Frame, size: Size, s: &InstancesScreen) {
-    lines(
-        f,
-        Rect::new(0, 0, size.cols, 1),
-        std::slice::from_ref(&s.title),
-        None,
-    );
+    let w = size.cols.saturating_sub(2).min(118);
+    let h = size.rows.saturating_sub(2);
+    let frame = Rect::new((size.cols - w) / 2, 0, w, h);
+    f.render_widget(frame_block(true), rr(frame));
+    titles(f, frame, &s.title, &Line::default(), true);
     let list = Rect::new(
-        2,
-        2,
-        size.cols.saturating_sub(4),
-        size.rows.saturating_sub(5),
+        frame.x + 2,
+        frame.y + 2,
+        w.saturating_sub(4),
+        h.saturating_sub(5),
     );
     lines(f, list, &s.rows, s.selected);
     if let Some(m) = &s.message {
         lines(
             f,
             Rect::new(
-                2,
-                size.rows.saturating_sub(3),
-                size.cols.saturating_sub(4),
+                frame.x + 2,
+                frame.bottom().saturating_sub(2),
+                w.saturating_sub(4),
                 1,
             ),
             std::slice::from_ref(m),

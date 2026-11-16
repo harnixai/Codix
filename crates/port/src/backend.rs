@@ -26,7 +26,11 @@ pub enum PortError {
 #[async_trait]
 pub trait Instances: Send + Sync + 'static {
     async fn list(&self, all: bool) -> Result<Vec<InstanceInfo>, PortError>;
-    async fn create(&self, opts: NewInstance) -> Result<Arc<dyn Backend>, PortError>;
+    /// 返回新实例的信息（名字可能由目录生成）与它的后端。
+    async fn create(
+        &self,
+        opts: NewInstance,
+    ) -> Result<(InstanceInfo, Arc<dyn Backend>), PortError>;
     /// 实例已被接入且 `opts.force` 为假时返回 [`PortError::Occupied`]。
     async fn attach(&self, name: &str, opts: Attach) -> Result<Arc<dyn Backend>, PortError>;
     async fn start(&self, name: &str) -> Result<Arc<dyn Backend>, PortError>;
