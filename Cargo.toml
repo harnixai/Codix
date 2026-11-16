@@ -32,6 +32,8 @@ futures     = "0.3"
 unicode-width = "0.2"
 unicode-segmentation = "1"
 clap        = { version = "4", features = ["derive"] }
+toml        = "1"
+tempfile    = "3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

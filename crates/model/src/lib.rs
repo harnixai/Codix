@@ -1,1 +1,14 @@
+//! Codix 的 view-model（docs/design/architecture.md §4）。
+//!
+//! `update` 与 `view` 都是同步纯函数：不做 IO、不起任务，所以整套交互不用终端也能测。
+//! 后端调用以 `Effect::Call` 交给 app 去 spawn，结果以 `Msg::Reply` 回来。
 
+mod mouse;
+mod state;
+mod update;
+mod view;
+
+pub use mouse::{Mouse, MouseButton, MouseKind};
+pub use state::{Domain, Focus, Overlay, State, Tab, Ui};
+pub use update::{Effect, Msg, ReqId, update};
+pub use view::view;

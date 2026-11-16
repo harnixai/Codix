@@ -165,11 +165,7 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
         };
         lines(f, *hit, &[Line::toned(tab.display(), tone)], None);
     }
-    let sel = |sec: &Section| if sec.focused { sec.selected } else { None };
-    lines(f, s.upper, &p.upper.rows, sel(&p.upper));
-    if let (Some(i), false) = (p.upper.selected, p.upper.focused) {
-        dim_marker(f, s.upper, i);
-    }
+    section(f, s.upper, &p.upper);
     let title = p.lower.title.clone().unwrap_or_default();
     let tone = if p.lower.focused || p.upper.focused {
         Tone::Accent
@@ -188,19 +184,29 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
         )],
         None,
     );
-    lines(f, s.lower, &p.lower.rows, sel(&p.lower));
-    if let (Some(i), false) = (p.lower.selected, p.lower.focused) {
-        dim_marker(f, s.lower, i);
-    }
+    section(f, s.lower, &p.lower);
 }
 
-/// 没有焦点的一段仍标出选中项：在行首画一个暗的 `›`，不反色。
-fn dim_marker(f: &mut Frame, r: Rect, i: usize) {
-    if (i as u16) < r.h {
+/// 第一列留给选中标记 `›`：有焦点时亮、并反色整行；没焦点时暗，不盖住行首的状态符号。
+fn section(f: &mut Frame, r: Rect, sec: &Section) {
+    if r.w < 2 {
+        return;
+    }
+    let body = Rect::new(r.x + 1, r.y, r.w - 1, r.h);
+    lines(
+        f,
+        body,
+        &sec.rows,
+        if sec.focused { sec.selected } else { None },
+    );
+    if let Some(i) = sec.selected
+        && (i as u16) < r.h
+    {
+        let tone = if sec.focused { Tone::Accent } else { Tone::Dim };
         lines(
             f,
             Rect::new(r.x, r.y + i as u16, 1, 1),
-            &[Line::toned("›", Tone::Dim)],
+            &[Line::toned("›", tone)],
             None,
         );
     }
