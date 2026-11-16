@@ -96,6 +96,9 @@ pub enum DetachReason {
 pub enum Confirm {
     ForceAttach(String),
     StopInstance(String),
+    CloseSession(SessionId, String),
+    StopTask(port::TaskId, String),
+    ClearGoal(SessionId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +143,8 @@ pub struct Domain {
     pub jobs: Vec<Job>,
     /// 被 Watch 的会话。
     pub convs: Map<SessionId, Conversation>,
+    /// 任务到目前为止的输出（看任务输出时取，之后 `TaskOutput` 事件追加）。
+    pub task_output: Map<port::TaskId, String>,
 }
 
 /// 界面状态：只由输入与 Tick 写入。
@@ -190,6 +195,21 @@ pub struct Ui {
     /// 测试用计数：重排了多少个块（testing.md §1 用计数验性能）。
     pub relayouts: u64,
     pub quitting: bool,
+    /// 会话标签：展开了的主 Agent、展开了 todo 明细的、收起来的子 Agent、展开了"已结束"的。
+    pub sess_expanded: std::collections::HashSet<SessionId>,
+    pub todo_expanded: std::collections::HashSet<SessionId>,
+    pub tree_collapsed: std::collections::HashSet<port::TaskId>,
+    pub finished_expanded: std::collections::HashSet<SessionId>,
+    /// 已发出 Watch、还没回来的。
+    pub watching: std::collections::HashSet<SessionId>,
+    /// 对话区的上下文栈（面包屑）：进入子 Agent 或任务输出之前的那些会话与标题。
+    pub ctx_parents: Vec<(SessionId, String)>,
+    /// 对话区是子 Agent 的侧链会话时，它对应的任务：输入的话经"给任务发消息"送达（C-16）。
+    pub via_task: Option<port::TaskId>,
+    /// 对话区在看某个任务的输出（只读）。
+    pub task_view: Option<port::TaskId>,
+    /// 正在给这个会话改名：输入框里是新名字（交互 §5.2 `r`）。
+    pub rename: Option<SessionId>,
 }
 
 impl Ui {
@@ -275,6 +295,15 @@ impl State {
                 detach_armed_ms: None,
                 relayouts: 0,
                 quitting: false,
+                sess_expanded: Default::default(),
+                todo_expanded: Default::default(),
+                tree_collapsed: Default::default(),
+                finished_expanded: Default::default(),
+                watching: Default::default(),
+                ctx_parents: vec![],
+                via_task: None,
+                task_view: None,
+                rename: None,
             },
             keymap,
             pending: HashMap::new(),
@@ -294,7 +323,11 @@ impl State {
             return vec![Context::Instances];
         }
         match self.ui.focus {
-            Focus::Composer if self.ask_visible() && self.ui.ask_active => vec![Context::Dialog],
+            Focus::Composer
+                if self.ask_visible() && self.ui.ask_active && self.ui.task_view.is_none() =>
+            {
+                vec![Context::Dialog]
+            }
             Focus::Composer if !self.picker_candidates().is_empty() => {
                 vec![Context::Picker, Context::Composer]
             }
@@ -333,9 +366,16 @@ impl State {
     }
 
     /// 当前右栏上半的行数（2.5 起由各标签自己的模型给出）。
+    pub(crate) fn lower_len(&self) -> usize {
+        match self.ui.tab {
+            Tab::Sessions => self.tree_rows().len(),
+            _ => 0,
+        }
+    }
+
     pub(crate) fn upper_len(&self) -> usize {
         match self.ui.tab {
-            Tab::Sessions => self.main_sessions().count(),
+            Tab::Sessions => self.session_rows().len(),
             Tab::Flows => self.domain.flows.len(),
             Tab::Jobs => self.domain.jobs.len(),
         }

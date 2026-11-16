@@ -83,7 +83,11 @@ async fn default_answer_streams_and_updates_the_summary() {
         panic!()
     };
     assert!(!w.running);
-    assert_eq!(w.history.len(), 1, "快照与已推出的增量一致");
+    assert_eq!(
+        w.history.len(),
+        2,
+        "快照与已推出的增量一致：用户的话 + 回答"
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -162,6 +162,17 @@ impl Conversation {
         c
     }
 
+    /// 用快照里的状态更新自己，保留本地的转录。
+    pub fn merge_state(&mut self, from: Conversation) {
+        self.summary = from.summary;
+        self.goal = from.goal;
+        self.todos = from.todos;
+        self.tasks = from.tasks;
+        if self.prompts.is_empty() {
+            self.prompts = from.prompts;
+        }
+    }
+
     pub fn push(&mut self, kind: BlockKind) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

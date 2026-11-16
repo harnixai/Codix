@@ -186,6 +186,14 @@ impl ScriptedBackend {
 
     fn react(&self, cmd: &Command) -> Result<Reply, PortError> {
         let session = command_session(cmd);
+        // 用户的话本来就在会话历史里（真实后端的快照会带上它），mock 也记一笔，
+        // 这样提交之后再 Watch 拿到的快照与界面一致。
+        if let Command::Submit { session, text, .. } = cmd
+            && let Some(sess) = self.state.lock().unwrap().sessions.get_mut(session)
+        {
+            sess.history
+                .push(port::HistoryItem::User { text: text.clone() });
+        }
         // 提交的消息 id 先定下来：规则的片段里可以写 `$message` 引用它（插话被退回）。
         let message =
             matches!(cmd, Command::Submit { .. }).then(|| port::MessageId(self.next_id("m")));

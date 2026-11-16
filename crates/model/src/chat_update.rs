@@ -90,9 +90,10 @@ pub(crate) fn open_session(s: &mut State, id: SessionId) -> Vec<Effect> {
     s.ui.chat = Some(id.clone());
     s.ui.answering = None;
     s.ui.ask_active = false;
-    if s.domain.convs.contains_key(&id) {
+    if s.domain.convs.contains_key(&id) || s.ui.watching.contains(&id) {
         return vec![];
     }
+    s.ui.watching.insert(id.clone());
     vec![
         s.call(
             Pending::Watch(id.clone()),
@@ -105,6 +106,36 @@ pub(crate) fn open_session(s: &mut State, id: SessionId) -> Vec<Effect> {
             Command::Commands { session: id },
         ),
     ]
+}
+
+/// 进入子 Agent 的侧链会话（交互 §4.1）：之后输入的话经"给任务发消息"送达它。
+pub(crate) fn open_sidechain(s: &mut State, child: SessionId, task: port::TaskId) -> Vec<Effect> {
+    let e = open_session(s, child);
+    s.ui.via_task = Some(task);
+    s.ui.task_view = None;
+    e
+}
+
+/// 看一个任务的输出（只读，实时跟随）。对话区仍挂在它所属的会话上，归属行照常。
+pub(crate) fn open_task_output(s: &mut State, owner: SessionId, task: port::TaskId) -> Vec<Effect> {
+    s.ui.chat = Some(owner);
+    s.ui.via_task = None;
+    s.ui.task_view = Some(task.clone());
+    vec![s.call(
+        Pending::TaskOutput(task.clone()),
+        Command::TaskOutput { task, from_byte: 0 },
+    )]
+}
+
+/// 退回上一层上下文。
+fn pop_context(s: &mut State) -> bool {
+    let Some((id, _)) = s.ui.ctx_parents.pop() else {
+        return false;
+    };
+    s.ui.chat = Some(id);
+    s.ui.via_task = None;
+    s.ui.task_view = None;
+    true
 }
 
 pub(crate) fn scroll(s: &mut State, delta: isize) {
@@ -190,6 +221,9 @@ pub(crate) fn transcript_action(s: &mut State, a: Action) -> Option<Vec<Effect>>
 }
 
 pub(crate) fn text(s: &mut State, c: char) -> Vec<Effect> {
+    if s.ui.task_view.is_some() {
+        return vec![];
+    }
     if c == '?' && s.ui.composer.is_empty() && !s.ui.composer.bash {
         s.ui.overlay = Some(Overlay::Help { scroll: 0 });
         return vec![];
@@ -256,6 +290,18 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             };
         }
         Action::Back => {
+            if s.ui.rename.take().is_some() {
+                s.ui.composer.clear();
+                return Some(vec![]);
+            }
+            // 子 Agent 或任务输出里：Esc 就是返回，不去中断上一层正在跑的那一轮
+            // （要停子 Agent，用树上的 s）。
+            let nested = !s.ui.ctx_parents.is_empty();
+            let idle = !s.conv().is_some_and(|c| c.running);
+            if s.ui.composer.is_empty() && (nested || idle) && pop_context(s) {
+                return Some(vec![]);
+            }
+            let c = &mut s.ui.composer;
             if !picker.is_empty() {
                 c.picker_closed = true;
             } else if s.conv().is_some_and(|c| c.running) {
@@ -401,8 +447,18 @@ pub(crate) fn dialog_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
 
 /// Enter：本地命令、自由回答、或者发给会话（交互 §4.4、§4.5）。
 fn submit(s: &mut State) -> Vec<Effect> {
-    if s.ui.composer.text.trim().is_empty() {
+    if s.ui.composer.text.trim().is_empty() || s.ui.task_view.is_some() {
         return vec![];
+    }
+    if let Some(id) = s.ui.rename.take() {
+        let (title, _) = s.ui.composer.take();
+        return vec![s.call(
+            Pending::Ignore,
+            Command::Rename {
+                session: id,
+                title: title.trim().to_string(),
+            },
+        )];
     }
     if let Some((session, prompt)) = s.ui.answering.take() {
         let (text, _) = s.ui.composer.take();
@@ -438,6 +494,19 @@ fn submit(s: &mut State) -> Vec<Effect> {
 }
 
 pub(crate) fn send(s: &mut State, session: SessionId, text: String) -> Vec<Effect> {
+    if let Some(task) = s.ui.via_task.clone()
+        && s.ui.chat.as_ref() == Some(&session)
+    {
+        if let Some(c) = s.domain.convs.get_mut(&session) {
+            c.follow = true;
+            c.push(BlockKind::User {
+                text: text.clone(),
+                pending: None,
+                steer: true,
+            });
+        }
+        return vec![s.call(Pending::Ignore, Command::MessageTask { task, text })];
+    }
     let running = s.domain.convs.get(&session).is_some_and(|c| c.running);
     let permission = (s.ui.permission != PermissionMode::Default).then_some(s.ui.permission);
     let block = match s.domain.convs.get_mut(&session) {
@@ -600,9 +669,17 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
 pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effect> {
     match (what, reply) {
         (Pending::Watch(id), Reply::Watched(w)) => {
+            s.ui.watching.remove(&id);
             let conv = Conversation::from_watched(*w, s.ui.now_ms);
             let prompt_waiting = !conv.prompts.is_empty();
-            s.domain.convs.insert(id.clone(), conv);
+            match s.domain.convs.get_mut(&id) {
+                // 本地已经有这段对话（比如刚建的会话已经发了第一句）：它比快照新，
+                // 只补快照里的状态，转录留着本地的。
+                Some(existing) => existing.merge_state(conv),
+                None => {
+                    s.domain.convs.insert(id.clone(), conv);
+                }
+            }
             if s.ui.chat.as_ref() == Some(&id) && prompt_waiting && s.ui.composer.is_empty() {
                 s.ui.ask_active = true;
             }
@@ -655,6 +732,10 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
             e
         }
         (Pending::CreateOnly, Reply::Session(summary)) => open_session(s, summary.id),
+        (Pending::TaskOutput(task), Reply::TaskOutput { text, .. }) => {
+            s.domain.task_output.insert(task, text);
+            vec![]
+        }
         _ => vec![],
     }
 }

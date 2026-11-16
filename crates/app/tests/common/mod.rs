@@ -185,6 +185,60 @@ impl Harness {
         self.settle().await;
     }
 
+    /// 会话标签上半选中标题为 `title` 的主 Agent（不打开）。
+    pub async fn select_session(&mut self, title: &str) {
+        self.keys("F2").await;
+        let target = self
+            .core
+            .state
+            .session_rows()
+            .iter()
+            .position(|r| {
+                matches!(r, model::SessRow::Session(id)
+                    if self.core.state.domain.sessions.iter().any(|x| &x.id == id && x.title == title))
+            })
+            .unwrap_or_else(|| panic!("没有会话 {title}"));
+        self.step_to(target, true).await;
+        self.settle().await;
+    }
+
+    /// 会话标签下半选中标签为 `label` 的任务（先切到下半）。
+    pub async fn select_task(&mut self, label: &str) {
+        if self.core.state.ui.focus != model::Focus::SideLower {
+            self.keys("Tab").await;
+        }
+        let target = self
+            .core
+            .state
+            .tree_rows()
+            .iter()
+            .position(|r| match r {
+                model::TreeRow::Task { id, .. } => self
+                    .core
+                    .state
+                    .conv_tasks()
+                    .iter()
+                    .any(|t| &t.id == id && t.label == label),
+                _ => false,
+            })
+            .unwrap_or_else(|| panic!("树里没有 {label}"));
+        self.step_to(target, false).await;
+    }
+
+    async fn step_to(&mut self, target: usize, upper: bool) {
+        loop {
+            let cur = if upper {
+                self.core.state.ui.upper().selected
+            } else {
+                self.core.state.ui.lower().selected
+            };
+            if cur == target {
+                return;
+            }
+            self.keys(if cur < target { "Down" } else { "Up" }).await;
+        }
+    }
+
     /// 当前会话转录的全部文字（已排好的行，不受视口限制）。
     pub fn transcript(&self) -> String {
         self.core

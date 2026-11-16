@@ -91,6 +91,7 @@ pub(crate) enum Pending {
         text: String,
     },
     CreateOnly,
+    TaskOutput(port::TaskId),
 }
 
 const RATIO_MIN: u16 = 40;
@@ -191,6 +192,10 @@ impl State {
         self.ui.focus = focus;
     }
 
+    pub(crate) fn show_chat_pub(&mut self) {
+        self.show_chat();
+    }
+
     fn show_chat(&mut self) {
         self.ui.showing = ShowPane::Chat;
         if self.ui.focus.in_side() {
@@ -207,7 +212,9 @@ pub fn update(s: &mut State, msg: Msg) -> Vec<Effect> {
         s.ui.last_input_ms = s.ui.now_ms;
         s.ui.idle_warned = false;
     }
-    let effects = update_confirm(s, msg);
+    let mut effects = update_confirm(s, msg);
+    effects.extend(crate::sessions::ensure_watch(s));
+    fix_scroll(s);
     crate::chat_update::relayout(s);
     effects
 }
@@ -358,8 +365,22 @@ fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
         }
         Confirm::StopInstance(name) => {
             set_picker_message(s, format!("正在停止 {name} …"));
+            if s.ui.screen == Screen::Workbench {
+                s.ui.quitting = true;
+            }
             vec![Effect::Instances(InstOp::Stop { name })]
         }
+        Confirm::CloseSession(id, _) => {
+            vec![s.call(Pending::Ignore, Command::Close { session: id })]
+        }
+        Confirm::StopTask(task, _) => vec![s.call(Pending::Ignore, Command::StopTask { task })],
+        Confirm::ClearGoal(id) => vec![s.call(
+            Pending::Ignore,
+            Command::UpdateGoal {
+                session: id,
+                action: port::GoalAction::Clear,
+            },
+        )],
     }
 }
 
@@ -550,7 +571,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
         return vec![];
     }
     let routed = match s.ui.focus {
-        Focus::Composer if s.ask_visible() && s.ui.ask_active => {
+        Focus::Composer if s.ask_visible() && s.ui.ask_active && s.ui.task_view.is_none() => {
             crate::chat_update::dialog_action(s, a)
         }
         Focus::Composer => crate::chat_update::composer_action(s, a),
@@ -560,19 +581,16 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
     if let Some(e) = routed {
         return e;
     }
+    if s.ui.tab == Tab::Sessions
+        && s.ui.focus.in_side()
+        && let Some(e) = crate::sessions::action(s, a)
+    {
+        return e;
+    }
     match a {
         Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
         Action::ToggleDetail => s.ui.detail = !s.ui.detail,
         Action::ToggleTodos => s.ui.show_todos = !s.ui.show_todos,
-        Action::Open if s.ui.focus == Focus::SideUpper && s.ui.tab == Tab::Sessions => {
-            let i = s.ui.upper().selected;
-            let Some(id) = s.main_sessions().nth(i).map(|x| x.id.clone()) else {
-                return vec![];
-            };
-            s.show_chat();
-            s.ui.focus = Focus::Composer;
-            return crate::chat_update::open_session(s, id);
-        }
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
         Action::TabJobs => switch_tab(s, Tab::Jobs),
@@ -664,10 +682,32 @@ fn switch_tab(s: &mut State, tab: Tab) {
     s.show_side(Focus::SideUpper);
 }
 
+/// 右栏两半的选中项始终在视口里。
+fn fix_scroll(s: &mut State) {
+    if s.ui.screen != Screen::Workbench {
+        return;
+    }
+    let spec = layout_spec(s);
+    let labels = tab_labels(s);
+    let Some(side) = layout::compute(s.ui.size, &spec, &labels).side else {
+        return;
+    };
+    let fit = |sec: &mut crate::state::SectionUi, h: usize| {
+        let h = h.max(1);
+        if sec.selected < sec.scroll {
+            sec.scroll = sec.selected;
+        } else if sec.selected >= sec.scroll + h {
+            sec.scroll = sec.selected + 1 - h;
+        }
+    };
+    fit(s.ui.upper_mut(), side.upper.h as usize);
+    fit(s.ui.lower_mut(), side.lower.h as usize);
+}
+
 fn move_selection(s: &mut State, focus: Focus, delta: isize) {
     let len = match focus {
         Focus::SideUpper => s.upper_len(),
-        _ => 0,
+        _ => s.lower_len(),
     };
     let sec = match focus {
         Focus::SideLower => s.ui.lower_mut(),
@@ -774,6 +814,27 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
 
 fn event(s: &mut State, e: Event) -> Vec<Effect> {
     let mut out = crate::chat_update::chat_event(s, &e);
+    match &e {
+        Event::TaskUpserted(t) => {
+            for c in s.domain.convs.values_mut() {
+                let mine = c.summary.id == t.owner
+                    || c.tasks
+                        .iter()
+                        .any(|x| x.id == t.id || x.agent_session.as_ref() == Some(&t.owner));
+                if mine {
+                    c.apply(Event::TaskUpserted(t.clone()), s.ui.now_ms);
+                }
+            }
+        }
+        Event::TaskOutput { task, text, .. } => {
+            s.domain
+                .task_output
+                .entry(task.clone())
+                .or_default()
+                .push_str(text);
+        }
+        _ => {}
+    }
     match e {
         Event::Kicked { by, at_ms } => {
             s.ui.screen = Screen::Detached(DetachReason::Kicked { by, at_ms });

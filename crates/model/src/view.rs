@@ -148,9 +148,24 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     let width = r.transcript.w as usize;
     let focused = matches!(s.ui.focus, Focus::Composer | Focus::Transcript);
     let conv = s.conv();
+    let mut trail: Vec<String> = s.ui.ctx_parents.iter().map(|(_, t)| t.clone()).collect();
+    let task_label =
+        s.ui.task_view
+            .as_ref()
+            .and_then(|t| conv.and_then(|c| c.tasks.iter().find(|x| &x.id == t)))
+            .map(|t| t.label.clone());
     let (crumbs, badge, owner) = match conv {
         Some(c) => (
-            format!("会话 › {}", c.summary.title),
+            {
+                if task_label.is_none() || s.ui.ctx_parents.is_empty() {
+                    trail.push(c.summary.title.clone());
+                }
+                if let Some(t) = &task_label {
+                    trail.push(t.clone());
+                }
+                trail.dedup();
+                format!("会话 › {}", trail.join(" › "))
+            },
             match c.summary.state {
                 port::SessionState::Running => "● 运行中",
                 port::SessionState::Waiting => "◐ 等你",
@@ -178,6 +193,27 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     let h = r.transcript.h as usize;
     let mut below = None;
     let transcript = match (conv, &s.ui.chat) {
+        (Some(_), _) if s.ui.task_view.is_some() => {
+            let task = s.ui.task_view.as_ref().unwrap();
+            let text = s.domain.task_output.get(task).cloned().unwrap_or_default();
+            let mut lines: Vec<Line> = text
+                .lines()
+                .flat_map(|l| {
+                    crate::text::wrap_text(
+                        l,
+                        Tone::Normal,
+                        width,
+                        &Line::plain("  "),
+                        &Line::plain("  "),
+                    )
+                })
+                .collect();
+            if lines.is_empty() {
+                lines.push(Line::toned("  （还没有输出）", Tone::Dim));
+            }
+            let skip = lines.len().saturating_sub(h);
+            lines.into_iter().skip(skip).collect()
+        }
         (Some(c), _) => {
             let top = c.viewport_top(h);
             let sel = (s.ui.focus == Focus::Transcript)
@@ -207,6 +243,9 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     };
     let composer_w = r.composer_inner.w as usize;
     let placeholder = match (&s.ui.answering, conv) {
+        _ if s.ui.task_view.is_some() => "只读：任务输出，实时跟随 · Esc 返回".to_string(),
+        _ if s.ui.rename.is_some() => "新的名字".to_string(),
+        _ if s.ui.via_task.is_some() => "给这个子 Agent 发消息".to_string(),
         (Some(_), Some(c)) => c
             .prompts
             .first()
@@ -364,7 +403,8 @@ fn todo_lines(todos: &[port::Todo], width: usize) -> Vec<Line> {
 fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
     let c = s.conv()?;
     let p = c.prompts.first()?;
-    if s.ui.answering.is_some() {
+    // 看任务输出时不显示提问框：那时 Esc 是"返回"，不能变成替你拒绝一次审批。
+    if s.ui.answering.is_some() || s.ui.task_view.is_some() {
         return None;
     }
     let count = if c.prompts.len() > 1 {
@@ -420,7 +460,11 @@ fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
 
 fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> SidePane {
     let w = r.upper.w as usize;
-    let all = upper_rows(s, w);
+    // 第一列是选中标记，内容从第二列起。
+    let all = match s.ui.tab {
+        Tab::Sessions => crate::sessions::upper_lines(s, w.saturating_sub(1)),
+        _ => upper_rows(s, w),
+    };
     let up = s.ui.upper();
     let visible: Vec<Line> = all
         .iter()
@@ -445,16 +489,7 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
             },
             selected,
         },
-        lower: Section {
-            focused: s.ui.focus == Focus::SideLower && s.ui.overlay.is_none(),
-            title: lower_title,
-            title_right: None,
-            rows: vec![Line::toned(
-                truncate_to_width("（下半在 2.5–2.7 实现）", r.lower.w as usize),
-                Tone::Dim,
-            )],
-            selected: None,
-        },
+        lower: lower_section(s, r, lower_title),
     }
 }
 
@@ -466,10 +501,48 @@ fn empty_hint(t: Tab) -> &'static str {
     }
 }
 
+fn lower_section(s: &State, r: &tui::layout::SideRegions, title: Option<String>) -> Section {
+    let focused = s.ui.focus == Focus::SideLower && s.ui.overlay.is_none();
+    let w = r.lower.w as usize;
+    match s.ui.tab {
+        Tab::Sessions => {
+            let all = crate::sessions::lower_lines(s, w.saturating_sub(1));
+            let lo = s.ui.lower();
+            Section {
+                focused,
+                title,
+                title_right: crate::sessions::lower_summary(s),
+                selected: lo
+                    .selected
+                    .checked_sub(lo.scroll)
+                    .filter(|i| *i < r.lower.h as usize && !all.is_empty()),
+                rows: all
+                    .into_iter()
+                    .skip(lo.scroll)
+                    .take(r.lower.h as usize)
+                    .collect(),
+            }
+        }
+        _ => Section {
+            focused,
+            title,
+            title_right: None,
+            rows: vec![Line::toned(
+                truncate_to_width("（下半在 2.6–2.7 实现）", w),
+                Tone::Dim,
+            )],
+            selected: None,
+        },
+    }
+}
+
 fn upper_title(s: &State) -> Option<String> {
     let i = s.ui.upper().selected;
     match s.ui.tab {
-        Tab::Sessions => s.main_sessions().nth(i).map(|x| x.title.clone()),
+        Tab::Sessions => s
+            .selected_session()
+            .and_then(|id| s.domain.sessions.iter().find(|x| x.id == id))
+            .map(|x| x.title.clone()),
         Tab::Flows => s.domain.flows.get(i).map(|x| x.title.clone()),
         Tab::Jobs => s.domain.jobs.get(i).map(|x| x.name.clone()),
     }
@@ -528,6 +601,9 @@ fn footer(s: &State) -> tui::Footer {
             Confirm::StopInstance(n) => {
                 format!("停止实例 {n}？里面的会话、流程、作业都会停下 · y 确认 / 其他键放弃")
             }
+            Confirm::CloseSession(_, t) => format!("关闭会话「{t}」？ · y 确认 / 其他键放弃"),
+            Confirm::StopTask(_, t) => format!("停止「{t}」？ · y 确认 / 其他键放弃"),
+            Confirm::ClearGoal(_) => "清除这个 goal？ · y 确认 / 其他键放弃".to_string(),
         };
         Line::toned(text, Tone::Attention)
     });
