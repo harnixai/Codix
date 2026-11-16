@@ -4,118 +4,114 @@
 
 ## 1. 总览
 
+Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux 的 server / client 类似。
+
 ```
-┌──────────────────────────── codix（TUI 进程）──────────────────────────────┐
-│                                                                            │
-│  终端按键 ──► keys（上下文 + 快捷键 → 动作）                                │
-│                 │                                                          │
-│                 ▼                                                          │
-│  app（事件循环）── Msg ──► model::update(&mut State, Msg) → Vec<Effect>     │
-│     ▲   │                         │                                        │
-│     │   │                         └─► model::view(&State, Size) → FrameState│
-│     │   │                                              │                   │
-│     │   │                                              ▼                   │
-│     │   │                                   tui::render(FrameState)        │
-│     │   ▼ Effect::Call(Command)                                            │
-│     │  ┌──────────── port::Backend（唯一端口）────────────┐                │
-│     └──┤ Event（领域事件）              Reply（命令结果）  │                │
-│        └───────────────┬──────────────────────────────────┘                │
-│                        │                                                   │
-│          阶段 2：mock::ScriptedBackend    阶段 3：client::HostBackend       │
-└────────────────────────┼───────────────────────────────────────────────────┘
-                         │ 阶段 3：宿主协议 = port 的消息序列化成 JSON-RPC
-                         ▼
-              ┌──── host（宿主）──────────────────────────────┐
-              │ 流程（3rds/harnix-flow 内核 + runner）         │  本地：同进程，经 duplex
-              │ 作业调度                                       │  远程：codix serve，
-              │ Agix 协议客户端 ──► Agix                       │        经 unix socket / WebSocket
-              └───────────────────────────────────────────────┘
-                                   │ Agix JSON-RPC
-                                   ▼
-                     agix::embed（同进程）或远端 agixd
+本机（远程时就是 ssh 登录上去的那台机器）
+
+┌──── codix（TUI 进程，可以有几个）────────────────────────────────┐
+│  终端（按键 / 鼠标 / 尺寸）──► keys ──► app 事件循环              │
+│                                         │                        │
+│               model::update / model::view ──► tui::render        │
+│                                         │                        │
+│                    port::Backend  ◄─────┘   port::Instances      │
+│                         │                  （列出 / 新建 / 接入） │
+└─────────────────────────┼────────────────────────────────────────┘
+                          │ unix socket（0600，校验对端 uid）
+                          │ 消息 = port 的 Command / Reply / Event，编码为 NDJSON
+┌─────────────────────────▼──── codix host（实例进程，常驻）───────┐
+│  会话代理 ── Agix 客户端 ──► agix::embed（同进程，data_root = ~/.codix）│
+│  流程（3rds/harnix-flow 内核 + runner，FlowEngine 由 Agix 实现）   │
+│  作业调度                                                         │
+│  多客户端广播；状态落盘在 ~/.codix/instances/<名字>/              │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-设计要点有三条：
+设计要点：
 
-1. **TUI 只认 `port`。** 阶段 2 的 mock 和阶段 3 的真实后端实现的是同一个 trait、同一套消息。接缝就是换一个实现，界面一行不动。
-2. **端口的消息本身就是宿主协议。** `Command`、`Event`、`Reply` 都可以序列化，阶段 3 远程化时把它们放上 JSON-RPC 即可，不再另外设计一套协议。
-3. **本地和远程走同一条代码路径。** 本地模式下宿主也跑在协议后面（同进程，通过 duplex 通信），这一点照搬 `agix::embed` 的做法。远程只是换了传输。
+1. **TUI 只认 `port`。** 阶段 2 由 mock 实现 `port`，阶段 3 换成真实实现，界面一行都不用改。
+2. **`port` 的消息就是实例协议。** `Command`、`Reply`、`Event` 都可以序列化，放到 unix socket 上就是 TUI 与实例之间的协议，不再另外设计。
+3. **实例一律跑在独立进程里。** 新建实例就是拉起一个脱离终端的 `codix host` 进程，再让 TUI 接入它。退出 TUI 等于脱离，流程和作业不会因为终端关掉而停下。
+4. **只有本机 socket。** 不监听任何网络端口。远程使用就是 ssh 登录后在那台机器上运行 `codix`，安全交给 ssh 和操作系统。
 
 ## 2. crate 划分
 
 | crate | 阶段 | 职责 | 依赖 |
 |---|---|---|---|
-| `port` | 2 | 后端端口：`Backend` trait；`Command` / `Reply` / `Event`；领域数据类型（会话摘要、任务、goal、todo、流程、运行、站、作业……） | serde, async-trait, tokio（mpsc） |
-| `tui` | 2 | 纯渲染：`FrameState` → 画面；`layout::compute`（纯函数，算出各区域的矩形） | ratatui, crossterm, unicode-width |
+| `port` | 2 | 端口定义：`Instances` 与 `Backend` 两个 trait；`Command`、`Reply`、`Event`；领域数据类型（实例信息、会话摘要与归属、任务、goal、todo、流程、运行、站、作业……） | serde, async-trait, tokio（mpsc） |
+| `tui` | 2 | 纯渲染：把 `FrameState` 画到屏幕上；`layout::compute` 是纯函数，算出各区域的矩形，同时给出鼠标命中测试用的区域表 | ratatui, crossterm, unicode-width |
 | `keys` | 2 | 快捷键：解析、带上下文的绑定表、和弦状态机、用户覆盖与冲突校验 | crossterm, serde |
-| `model` | 2 | view-model：`State`（领域状态 + 界面状态）、`update`、`view`；转录块的排版缓存 | port, tui（只用 `FrameState` 类型和 `layout`）, keys（只用动作和上下文类型） |
-| `mock` | 2 | `ScriptedBackend`：按场景文件推事件、按规则回应命令；种子数据 | port |
-| `app` | 2 | 二进制 `codix`：命令行参数、终端生命周期、事件循环、选择后端实现 | 以上全部 |
-| `wire` | 3 | Agix 协议的 serde 类型（协议 §4 和 §7）；不认识的 `kind` 一律跳过 | serde |
-| `host` | 3 | 宿主：Agix 客户端（rpc + 传输）、Agix 帧 → 领域事件的翻译、流程（`FlowEngine` 实现）、作业调度；对外暴露端口消息 | port, wire, agix, 3rds/harnix-flow |
-| `client` | 3 | `HostBackend`：通过传输（duplex / unix / ws）连接宿主，实现 `Backend` | port |
+| `model` | 2 | view-model：`State`（领域状态 + 界面状态）、`update`、`view`；转录块的排版缓存；鼠标事件到动作的翻译 | port, tui（只用 `FrameState` 类型与 `layout`）, keys（只用动作与上下文类型） |
+| `mock` | 2 | `MockInstances` 与 `ScriptedBackend`：用种子数据和场景脚本驱动 | port |
+| `app` | 2 | 二进制 `codix`：命令行解析、终端生命周期（尺寸协商、鼠标捕获）、事件循环、实例选择列表 | 以上全部 |
+| `wire` | 3 | Agix 协议的 serde 类型（协议 §4、§7）。遇到不认识的 `kind` 一律跳过 | serde |
+| `host` | 3 | 实例进程：Agix 客户端、把 Agix 帧翻译成领域事件、流程（`FlowEngine` 的实现）、作业调度、socket 服务与多客户端管理、实例锁与发现文件 | port, wire, agix, 3rds/harnix-flow |
+| `client` | 3 | `SocketInstances` 与 `SocketBackend`：扫描实例、拉起实例、通过 socket 接入 | port |
 
-**依赖边界**（阶段 2 用测试守住）：
+**依赖边界**（阶段 2 起用测试守住）：
 
-- `tui` 不依赖 `port`、`model`，更不依赖 Agix。它只知道 `FrameState`。
-- `model` 不依赖 ratatui 的渲染、不碰 IO、不起任务：`update` 和 `view` 都是同步的纯函数，所以可以完全离线测试。
-- `port` 不依赖任何 Agix 或 Harnix 类型。领域类型由 Codix 自己定义，翻译工作在 `host` 里做。
-- `app` 不依赖 Agix。它只通过 `Backend` 和后端说话。
+- `tui` 不依赖 `port`、`model`，也不依赖 Agix。
+- `model` 不做 IO、不起任务，`update` 和 `view` 都是同步的纯函数。
+- `port` 不依赖任何 Agix 或 Harnix 的类型，翻译工作在 `host` 里做。
+- `app` 不依赖 Agix，只通过 `port` 与后端打交道。阶段 3 的 `codix host` 子命令由 `app` 转交给 `host` crate 处理。
 
 ## 3. 端口 `port`
 
-### 3.1 trait
+### 3.1 两个 trait
 
 ```rust
 #[async_trait]
+pub trait Instances: Send + Sync + 'static {
+    async fn list(&self, all: bool) -> Result<Vec<InstanceInfo>, PortError>;
+    async fn create(&self, opts: NewInstance) -> Result<Arc<dyn Backend>, PortError>;
+    async fn attach(&self, name: &str) -> Result<Arc<dyn Backend>, PortError>;
+    async fn start(&self, name: &str) -> Result<Arc<dyn Backend>, PortError>;
+    async fn stop(&self, name: &str) -> Result<(), PortError>;
+}
+
+#[async_trait]
 pub trait Backend: Send + Sync + 'static {
-    /// 发一条命令，等它的结果。实现方不得在这里阻塞事件流。
-    async fn call(&self, cmd: Command) -> Result<Reply, BackendError>;
-    /// 领域事件流。每个 Backend 只有一个订阅者，也就是 app。
-    fn events(&self) -> mpsc::Receiver<Event>;
+    async fn call(&self, cmd: Command) -> Result<Reply, PortError>;
+    fn events(&self) -> mpsc::Receiver<Event>;   // 每个 Backend 只有一个订阅者，就是 app
 }
 ```
 
-app 把每个 `call` 都 spawn 出去，结果以 `Msg::Reply { req, result }` 投回事件循环。所以没有任何一个后端调用会卡住界面（N-03）。
+- `InstanceInfo` 包含：名字、PID、主机名、项目、启动时间、版本、会话数、在等人的数量、已接入的客户端数、状态（运行中 / 已停止 / 残留）。
+- app 把每次 `call` 都 spawn 出去，结果通过 `Msg::Reply` 投回事件循环，没有哪个调用会卡住界面（N-03）。
 
 ### 3.2 命令（`Command`）
 
-按对象分组，名字是领域语言，不是 Agix 的方法名。
-
 | 组 | 命令 |
 |---|---|
-| 连接 | `Hello`（取能力位：流程和作业是否可用） |
-| 会话 | `ListSessions{filter}`、`CreateSession{project, scene, model}`、`OpenSession{id}`（必要时恢复）、`Watch{id}` / `Unwatch{id}`（订阅或退订它的细节事件）、`History{id, before}`、`Rename`、`Close` |
-| 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt{session}`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
+| 连接 | `Hello{client}`：返回实例信息和能力位；`Detach`；`StopInstance` |
+| 会话 | `ListSessions{filter}`、`CreateSession{project, scene, model}`、`OpenSession{id}`（需要时先恢复）、`Watch{id}` / `Unwatch{id}`、`History{id, before}`、`Rename`、`Close` |
+| 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
 | goal | `SetGoal`、`UpdateGoal{action: Pause \| Resume \| Edit \| Clear}` |
 | 任务 | `StopTask`、`MessageTask`、`TaskOutput{task, from_byte}` |
-| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`GetRun{id}`、`StartRun{flow, subject, inputs}`、`RunOp{run, op}`（`op` 为 Confirm / Release / Force{reason} / Rework{to} / Retry / Pause / Resume / Cancel）、`OpenAuthoring{flow?}` |
+| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`GetRun{id}`、`StartRun{flow, subject, inputs}`、`RunOp{run, op}`、`OpenAuthoring{flow?}` |
 | 作业 | `ListJobs`、`SaveJob`、`DeleteJob`、`SetJobEnabled`、`RunJobNow`、`JobHistory{job}` |
 
 ### 3.3 事件（`Event`）
 
-事件已经归一化成领域语言，model 不需要知道 Agix 的帧长什么样。
-
 | 组 | 事件 |
 |---|---|
-| 连接 | `Connection(Connected \| Lost \| Reconnecting \| Resynced)` |
-| 会话列表 | `SessionUpserted(SessionSummary)`、`SessionRemoved(id)`。所有会话都推，只推摘要：状态、在等人的数量、token |
-| 一轮（仅限 Watch 中的会话） | `TurnStarted`、`StepRestarted{step}`（丢掉这一步已画的文字）、`TextDelta`、`ThinkingDelta`、`ToolStarted{id, name}`、`ToolInput{id, input}`、`ToolProgress`、`ToolFinished{id, content, is_error, file_changes}`、`TurnEnded{stop, usage}`、`TurnFailed{error}` |
+| 连接 | `Connection(Connected \| Lost \| Reconnecting \| Resynced)`、`Clients{count}`（有别的 TUI 接入或脱离时推送） |
+| 会话列表 | `SessionUpserted(SessionSummary)`、`SessionRemoved(id)` |
+| 一轮（仅限被 Watch 的会话） | `TurnStarted`、`StepRestarted{step}`、`TextDelta`、`ThinkingDelta`、`ToolStarted`、`ToolInput`、`ToolProgress`、`ToolFinished`、`TurnEnded{stop, usage}`、`TurnFailed` |
 | 插话 | `SteerDelivered`、`SteerReturned{messages}` |
-| 提问 | `PromptPending(Prompt)`、`PromptResolved{id, resolution}` |
+| 提问 | `PromptPending(Prompt)`、`PromptResolved{id, resolution}`。多个客户端接入时，一处回答了，其他各处都会收到 `PromptResolved` |
 | 会话状态 | `GoalChanged`、`TodosChanged`、`Compacted`、`CommandsChanged`、`Notice{level, text}` |
-| 任务 | `TaskUpserted(Task)`（子 Agent 的 `session` 字段指向它的侧链会话）、`TaskOutput{task, bytes, from, next}` |
-| 流程 | `RunUpserted(RunSummary)`、`RunDetail(RunView)`（选中的运行才推） |
+| 任务 | `TaskUpserted(Task)`、`TaskOutput{task, bytes, from, next}` |
+| 流程 | `RunUpserted(RunSummary)`、`RunDetail(RunView)` |
 | 作业 | `JobUpserted(Job)`、`JobFired{job, entry}` |
 
-**追赶由后端负责**：先订阅，再读历史，把订阅之后缓冲的事件接在后面。model 收到的永远是"一个快照（`Reply`）+ 之后的增量"，不处理接缝。重连之后先推 `Connection(Resynced)`，再推新的快照。
+**追赶由后端负责。** model 看到的永远是"先一个快照（`Reply`），再接着增量"。重连成功后，后端先推 `Connection(Resynced)`，再推一个新的快照。
 
 ### 3.4 数据类型
 
-- 所有 id 都是不透明的字符串新类型（`SessionId`、`TaskId`、`PromptId`、`RunId`、`JobId`）。
-- 时间统一用毫秒时间戳（`u64`），用量统一用 `Usage{input, output, cache_read, cache_write}`。
-- 任务的 `kind` 是枚举（`Agent`、`Teammate`、`Shell`、`Monitor`、`Code`、`Mcp`、`Cron`），另外带一个 `Unknown(String)`。引擎加了新类型，界面照样能画，显示原样的名字。
-- 流程的状态枚举与 Harnix 一致：运行 `Active / Finished / Cancelled`，加上派生出来的"等待 / 暂停中 / 已暂停"；站 `Pending / Held / Working / Unmet / Passed / Skipped / Stale`。阶段 3 由 `host` 从 harnix-flow 的类型翻译过来，`port` 不直接引用它们。
+- id 一律用不透明的字符串新类型。时间一律是毫秒时间戳。用量统一为 `Usage{input, output, cache_read, cache_write}`。
+- **会话归属** `Provenance`：`instance`、`host`、`project`、`scene`、`model`、`origin`。其中 `origin` 取值为 `User | Job{job} | FlowStation{run, station} | SubAgent{parent, task} | Fork{from}`（C-12）。
+- 任务的 `kind`、站和运行的状态都是枚举，并带一个 `Unknown(String)` 兜底。站和运行的状态与 Harnix 保持一致。
 
 ## 4. view-model `model`
 
@@ -124,161 +120,182 @@ app 把每个 `call` 都 spawn 出去，结果以 `Msg::Reply { req, result }` �
 ```
 State
 ├── domain        后端事实，只由 Event / Reply 写入
-│   ├── sessions      会话摘要；被 Watch 的会话还有 Transcript、AskQueue、Tasks、Goal、Todos
+│   ├── instance      当前接入的实例信息、能力位、客户端数
+│   ├── sessions      会话摘要与归属；被 Watch 的会话另有 Transcript / AskQueue / Tasks / Goal / Todos
 │   ├── flows / runs  流程定义、运行摘要、选中运行的详情
 │   ├── jobs          作业与触发历史
-│   └── conn          连接状态、能力位
-└── ui            界面状态，只由按键和 Tick 写入
-    ├── layout        并排 / 单栏、比例、右栏是否收起
-    ├── focus         Composer / Transcript / Right(Upper | Lower) / Dialog
-    ├── context       对话区当前的上下文栈：会话 › 子 Agent › …（面包屑）
-    ├── tabs          当前标签；每个标签的展开、选中、滚动
+│   └── conn          连接状态
+└── ui            界面状态，只由输入（按键、鼠标）和 Tick 写入
+    ├── screen        实例选择列表 / 工作台
+    ├── layout        并排或单栏、两栏比例、右栏是否收起、当前显示哪一栏（单栏时）
+    ├── focus         Composer / Transcript / Side(Upper | Lower) / Dialog
+    ├── context       对话区的上下文栈（面包屑）
+    ├── tabs          当前标签；每个标签各自的展开、选中、滚动状态
     ├── composer      草稿、光标、历史、补全
-    └── transcript    每个上下文的滚动位置、选中块、折叠集合
+    ├── transcript    每个上下文各自的滚动位置、选中块、折叠集合、拖选范围
+    └── mouse         是否捕获鼠标、正在拖动的对象（分隔线 / 选区）
 ```
 
-**一份 `FrameState` 只有一个写者，就是 `view`。** 旧实现里 reducer 和 app 各填半份 `FrameState`，这一点不能再犯。
+**`FrameState` 只有 `view` 一个写者。**
 
 ### 4.2 `update` / `view`
 
-- `update(&mut State, Msg) -> Vec<Effect>`：`Msg` 是 `Action(动作)`、`Text(char)`、`Paste(String)`、`Event`、`Reply`、`Tick`、`Resize`；`Effect` 是 `Call(Command)`、`Quit`、`Bell`。
-- `view(&State, Size) -> FrameState`：先调 `tui::layout::compute(size, &ui.layout)` 拿到各区域的矩形，再按每个区域的宽高投影。渲染端用同一个函数算矩形，两边不会对不上。
+- `update(&mut State, Msg) -> Vec<Effect>`
+  - `Msg`：`Action`、`Text`、`Paste`、`Mouse{kind, col, row}`、`Event`、`Reply`、`Tick`、`Resize`
+  - `Effect`：`Call(Command)`、`Instances(op)`、`Quit{detach}`、`Clipboard(String)`、`SetMouseCapture(bool)`、`Bell`
+- `view(&State, Size) -> FrameState`：先调用 `tui::layout::compute`，拿到各区域的矩形，再分别投影。
+- **鼠标命中测试**：`layout::compute` 同时返回区域表（矩形 → 区域路径）。model 记住上一帧每一行对应什么（列表项、块头、选项、分隔线）。鼠标事件按"区域 + 行"找到目标，再翻译成和键盘相同的动作。鼠标没有任何独立的逻辑分支，所以键盘能做的鼠标都能做，测试也只需要覆盖一份动作逻辑。
 
 ### 4.3 转录：一条 entry 就是屏幕上的一行
 
-- 转录由**块**组成：用户输入、回答、思考、工具调用、通知、错误。每个块有稳定的 id。
-- 每个块缓存它在某个宽度下排好的行，排版由 model 完成：按显示宽度折行，按 `\n` 分行，CJK 和 emoji 按宽度计算。`FrameState` 里只有视口内已经排好的行，**渲染端不折行**。
-- 流式增量只把它所在的块标脏，下一帧只重排脏块，与转录长度无关（N-02）。宽度一变，所有块的缓存都失效，但只有视口附近的块会被立刻重排。
-- 行上带 `block_id` 和 `first_of_block`。**语义只有一种**：`first_of_block == true` 表示这是块的第一行。凡是"按块还原"的逻辑（输入历史、置顶的提问行），都只能用 `model` 里同一个辅助函数，不允许各自去解释这个字段。
+- 转录由**块**组成，每个块有稳定的 id。每个块缓存它在当前宽度下排好的行，排版在 model 里完成：按显示宽度折行，按 `\n` 分行，CJK 和 emoji 按实际宽度计算。**渲染端不做折行。**
+- 流式增量只把它所在的那个块标脏，与转录长度无关（N-02）。
+- 行上带 `block_id` 和 `first_of_block`，后者只有一种语义：这一行是块的第一行。凡是"按块还原"的逻辑，都只能调用 `model` 里的同一个辅助函数。
+- 拖选复制（M-07）：按"块 + 行 + 列"记录选区，复制时从块的原文中取，不从排版后的行拼。这样折行处不会混进多余的换行。
 
-### 4.4 待人处理（L-04、L-05）
+### 4.4 待人处理
 
-`model` 维护一个派生的"等你处理"列表，在每次 `update` 之后重算，来源包括：
+`model` 维护一个派生列表："等你处理"的事项。来源有：各会话中在等人的项、搁置或待确认的站、受阻的 goal、失败的作业。标签角标和"跳到下一处"都读这一份列表。
 
-- 各会话的 `waiting` 数量
-- 搁置或待确认的站
-- 受阻的 goal
-- 失败的作业
-
-标签上的角标和"跳到下一处"都读这个列表。
-
-## 5. 事件循环 `app`
+## 5. 事件循环与终端 `app`
 
 ```
 loop {
     select! {
-        key   = terminal.next()      => msgs.push(resolve(key, state.key_context())),
+        input = terminal.next()      => msgs.push(translate(input, &state)),  // 按键 / 鼠标 / 尺寸 / 粘贴
         ev    = backend_events.recv() => msgs.push(Msg::Event(ev)),
         reply = replies.recv()        => msgs.push(Msg::Reply(reply)),
         _     = ticker, if animating  => msgs.push(Msg::Tick),
     }
-    // 把这一刻已经到达的消息全部处理完，再画一帧
     while let Ok(m) = drain() { effects += update(&mut state, m) }
-    run(effects);                      // Call → spawn；Quit → 退出
+    run(effects);
     if dirty && frame_budget_ok { terminal.draw(view(&state, size)) }
 }
 ```
 
-- **合帧**：一次循环把这一刻已经到达的消息全部消化完，最多画一帧，帧间隔下限约 16ms。事件风暴时，每个事件只付出 `update` 的代价。
-- **Tick 只在有动画时开启**，比如 spinner 和状态行计时。没有动画就不唤醒。
-- 终端的进入和退出（raw mode、备用屏、bracketed paste、键盘增强协议）集中在一处管理。panic 时先恢复终端，再打印错误。
+- **合帧**：每轮循环先把这一刻已经到达的消息全部处理完，最多画一帧，帧间隔下限约 16ms。
+- **Tick 只在有动画时开启**（比如 spinner、计时器）。
+
+**终端生命周期**集中在一处，按下面的顺序进入，退出时按相反顺序恢复；panic 时也要先恢复终端：
+
+| 步骤 | 内容 |
+|---|---|
+| 1 | 尺寸协商（L-06）：没有在 tmux 或 screen 里、且配置没有关掉时，先记下当前尺寸，再发送 `CSI 8 ; 行 ; 列 t` 请求缺省尺寸，最多等 300ms 的 Resize 事件。等不到就按实际尺寸继续。退出时如果改过尺寸，再请求恢复到原来的尺寸 |
+| 2 | raw mode、备用屏 |
+| 3 | 鼠标捕获（按下与松开、拖动、滚轮）。可以在运行中切换（M-08） |
+| 4 | bracketed paste |
+| 5 | 键盘增强协议（kitty），终端支持时才开启，用来区分 Shift+Enter 等组合键 |
+
+**剪贴板**：写剪贴板用 OSC 52，ssh 上也能用。tmux 里需要打开 `set-clipboard`，这一点写进手册。
+
+**命令行**：
+
+| 命令 | 行为 |
+|---|---|
+| `codix` | 本机有在跑的实例时，先显示实例选择列表；没有就新建一个并接入 |
+| `codix new [--name] [--project]` | 新建实例并接入 |
+| `codix list [--all]` | 用纯文本列出实例，不进入 TUI |
+| `codix attach <名字>` / `start <名字>` / `stop <名字>` | 接入 / 启动 / 停止指定实例 |
+| `codix --mock <场景>` | 阶段 2：使用 mock 的实例和后端 |
+| `codix host --name <名字>` | 内部使用：实例进程的入口，由 `new` / `start` 拉起，用户不直接调用 |
 
 ## 6. 快捷键 `keys`
 
-- 绑定是 `(上下文, 按键或和弦) → 动作`。上下文有 `global`、`composer`、`transcript`、`sessions`、`flows`、`jobs`、`dialog`、`picker`。
-- 解析顺序：先查当前上下文，再查 `global`。同一个上下文里同一个键只能绑一个动作；冲突在加载时报错，不能静默覆盖。
-- 普通字符按键在 `composer` 上下文里一律当作输入。只有在列表和对话框的上下文里，字母才是快捷键。旧实现里"同一个 `y` 在不同区域有时是输入、有时是快捷键"的猜测逻辑不再需要。
-- 和弦有超时（1.5 秒），超时后把已按下的键按普通键处理。
-- 用户覆盖文件：`<配置目录>/keybindings.json`（D-02，P1）。
+- 绑定的形式是 `(上下文, 按键或和弦) → 动作`。上下文有：`global`、`composer`、`transcript`、`sessions`、`flows`、`jobs`、`dialog`、`picker`、`instances`。
+- 查找顺序：先查当前上下文，再查 `global`。同一个上下文里，同一个键只能绑定一个动作；有冲突时在加载阶段就报错。
+- 在 `composer` 上下文里，普通字符一律作为输入；字母快捷键只在列表和对话框里生效。
+- 和弦超时 1.5 秒。用户的覆盖文件放在 `~/.codix/keybindings.json`。
+- **底栏的保底提示**：不论处在哪个上下文，底栏的最后两项永远是"切换栏位"和"帮助"（L-07）。这两项由 `keys` 从绑定表里取出实际的键位，用户改了键位，底栏也跟着变。
 
-完整的键位表见 `interaction.md`。
+## 7. mock `mock`
 
-## 7. mock 后端 `mock`
+见 `testing.md`。`MockInstances` 用种子数据提供几个"在跑"的实例和几个"已停止"的实例，`create` 和 `attach` 返回一个 `ScriptedBackend`。阶段 2 不会真的起任何进程。
 
-详见 `testing.md`。要点如下：
+## 8. 阶段 3：实例（这里只写到接口层面）
 
-- `ScriptedBackend` 实现 `Backend`。状态由**种子数据**初始化（会话、任务、流程、运行、作业），之后由**场景**驱动。
-- 场景是一条带时间点的事件时间线，再加一组"命令 → 反应"的规则（比如对 `Submit` 回放一段带工具调用的回答，对 `RunOp::Confirm` 推进一站）。
-- 时钟可以注入：交互运行时用真实时钟（并支持 `--speed` 加速），测试时用 tokio 的暂停时钟，结果完全确定。
-- 不依赖 Agix、Harnix 或网络。
+### 8.1 数据目录
 
-## 8. 阶段 3：接缝（只写到接口这一层）
+```
+~/.codix/                       （由 CODIX_HOME 指定时以它为准；同时作为 Agix 的 data_root）
+├── settings.json  scenes/  …   Agix 的全局数据，布局由 Agix 决定
+├── codix/
+│   ├── config.toml             Codix 的配置：缺省终端尺寸、鼠标、比例等
+│   ├── keybindings.json
+│   ├── flows/                  流程包（流程、skills、规则、策略、门禁、钩子），所有实例共用
+│   └── instances/<名字>/
+│       ├── instance.json       发现文件：pid、socket、项目、启动时间、版本
+│       ├── instance.lock       flock，防止同名实例跑两个
+│       ├── host.sock           0600，所在目录 0700
+│       ├── groups.json         Agix 的 groups_file，用于回收孤儿进程组
+│       ├── runs/               本实例的流程运行（harnix-flow 的 FileStore）
+│       ├── jobs/               本实例的作业定义和触发历史
+│       └── host.log
+```
 
-### 8.1 两条独立的传输
+- Codix 自己的东西都放在 `codix/` 子目录下，不和 Agix 的布局混在一起。
+- **流程包所有实例共用；运行和作业属于各自的实例。** 这样两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时，会把它的运行和作业接着跑起来。
+- 项目层仍然使用 `<项目>/.agix/`，这是 Agix 写死的（见需求 §7）。
 
-| 段 | 可选项 | 决定什么 |
-|---|---|---|
-| TUI ↔ 宿主 | 同进程（duplex）/ 远端 `codix serve`（unix socket 或 WebSocket + token） | 断开终端后，流程和作业还在不在跑 |
-| 宿主 ↔ Agix | `agix::embed` 同进程 / 远端 `agixd` | 引擎在哪台机器上跑 |
+### 8.2 实例进程
 
-两段可以自由组合。远程使用的主形态是"`codix serve` 在服务器上，引擎嵌在它里面"。
-
-### 8.2 Agix 接入
-
-- 只走 JSON-RPC 协议（`agix/docs/daemon_rpc_protocol.md`），不使用 `agix::pool`。
-- 宿主侧的进程职责（agix-sdk.md §7）：
-  - tracing 的过滤器用 `agix::process::log_filter`，否则 rmcp 会把 OAuth 令牌写进日志
+- `codix new` 的流程：拿到 `instance.lock` → 用 `setsid` 拉起脱离终端的 `codix host` → 等 `host.sock` 可以连接 → 接入。
+- 引擎嵌在实例进程里：`agix::embed`，`EmbedConfig::new(~/.codix)`，**不传 `instance`**。原因是 Agix 的实例锁按"数据根 + 场景"计算，同一个场景只能锁一份，所以实例锁由 Codix 自己管；`groups_file` 指向实例目录下的 `groups.json`。
+- 实例进程要做的进程级工作（agix-sdk.md §7）：
+  - 日志过滤用 `agix::process::log_filter`，否则 rmcp 会把 OAuth 令牌写进日志
   - 安装 panic 钩子
-  - 收到信号时调用 `shutdown`
-  - 用 `groups_file` 回收孤儿进程组
+  - 收到 SIGTERM 时依次关闭会话、流程、作业，再删掉 socket 和发现文件
+- 多个客户端：实例维护一张连接表，事件广播给所有客户端，`Watch` 按连接各自记录。连接断开不影响任何正在进行的工作。
+- 残留检测：`list` 时遇到 pid 已经不在、或者 socket 连不上的实例，标记为"残留"，并清理掉 socket 和发现文件；运行和作业的状态保留，可以用 `start` 再拉起来。
+- 对端校验：accept 之后用 `getpeereid` / `SO_PEERCRED` 检查对端 uid，必须与实例进程的 uid 一致。
+
+### 8.3 Agix 接入
+
+- 只走 JSON-RPC 协议：实例进程内部用 `Embedded::serve_stream` 加 duplex 和引擎通信，不使用 `agix::pool`。
 - 建会话时声明 `prompt_types: ["permission", "question"]`。
-- 帧到事件的翻译：
+
+帧与事件的对应关系：
 
 | Agix 帧 / 方法 | 领域事件 / 命令 |
 |---|---|
-| `turn_start` / `step_start`（同一个 step 第二次出现） | `TurnStarted` / `StepRestarted` |
+| `turn_start` / 同一个 step 再次出现的 `step_start` | `TurnStarted` / `StepRestarted` |
 | `text_delta` / `thinking_delta` | `TextDelta` / `ThinkingDelta` |
 | `tool_use_start` / `tool_use` / `tool_progress` / `tool_result` | `ToolStarted` / `ToolInput` / `ToolProgress` / `ToolFinished` |
-| `tool_use` 的工具名为 `TodoWrite` | 另外推一条 `TodosChanged` |
+| 工具名为 `TodoWrite` 的 `tool_use` | 额外推一个 `TodosChanged` |
 | `prompt` / `prompt_resolved` | `PromptPending` / `PromptResolved` |
-| `turn_complete` / `error` 帧或 `run_turn` 的错误 | `TurnEnded` / `TurnFailed` |
+| `turn_complete` / `error` 帧，或 `run_turn` 返回的错误 | `TurnEnded` / `TurnFailed` |
 | `user_message_delivered` / `user_messages_returned` | `SteerDelivered` / `SteerReturned` |
 | `task_started` / `task_updated` / `task_finished` / `task_progress` | `TaskUpserted` / `TaskOutput` |
-| `subagent_progress` | 子 Agent 侧链会话的细节事件（Watch 时） |
 | `goal_changed` / `compact` / `skills_changed` / `notification` | `GoalChanged` / `Compacted` / `CommandsChanged` / `Notice` |
-| `Submit{mode}` | `session.run_turn{on_busy: reject \| steer \| queue}` |
+| `Submit{mode}` | `session.run_turn{on_busy}` |
 | `Interrupt` / `Answer` / `SetModel` | `session.interrupt` / `session.respondToPrompt` / `session.setModel` |
-| `SideQuestion` | `session.fork` 之后在分叉会话上 `run_turn` |
+| `SideQuestion` | 先 `session.fork`，再在分叉出的会话上 `run_turn` |
 | `StopTask` / `MessageTask` / `TaskOutput` | `session.stopTask` / `session.messageTask` / `session.taskOutput` |
 
-### 8.3 流程
+会话归属：`origin` 由实例自己记录（是哪个作业、哪一站、哪次分叉建的会话）；子 Agent 的上级来自 `session.list{parent_session_id}`。
 
-- 流程代码从 Harnix 拷贝到 `3rds/harnix-flow/`（内核 + runner）。本地不改，同步规则见 `3rds/INDEX.md`。
-- `host` 用 Agix 客户端实现 `FlowEngine`，内容包括：开会话、跑一轮、起子 Agent、回答询问、登记 `flow_submit` / `flow_state` / `flow_propose` 宿主工具、订阅帧。
-- 流程会话里的权限询问由宿主按这一站的策略作答，策略写的是 `ask` 时才转给人，在界面上表现为一条 `PromptPending`。
-- 编写会话的实现方式：`session.setPrompt` 加上编写用的宿主工具。
-- 前提：Harnix#66 拆出 `crates/flow`，并在其中加入 runner 和 `FlowEngine`。
+### 8.4 流程与作业
 
-### 8.4 作业
+- 流程代码拷贝到 `3rds/harnix-flow/`（内核 + runner）。实例用 Agix 客户端实现 `FlowEngine`。流程会话里的权限询问由实例按站的策略作答，策略为 `ask` 的才转给人。前提是 Harnix#66 已经完成。
+- 作业由实例自带的调度器执行。简单作业：建会话或复用会话，再提交提示词。流程作业：调用 `StartRun`。实例没在运行期间错过的触发，按作业的 `catch_up` 设置处理。
 
-- 宿主自带调度器，作业定义和触发历史都由宿主持久化。
-- 简单作业：在指定的项目和场景里建会话（或复用会话），然后提交提示词。
-- 流程作业：调用 `StartRun`。
-- 宿主不在时错过的触发，按作业的 `catch_up` 配置决定补跑一次还是跳过。
+## 9. 旧实现踩过的坑
 
-### 8.5 `codix serve`
-
-- 同一个二进制的子命令，不带 TUI。
-- 运行在 systemd / launchd 下，处理 SIGTERM，写崩溃记录。
-- 认证：unix socket 用文件权限 0600，配合 ssh 转发使用；WebSocket 必须带 token。
-
-## 9. 旧实现踩过的坑（必须避开）
-
-| 坑 | 本设计怎么避开 |
+| 坑 | 本设计如何避开 |
 |---|---|
-| 一个"块首行"标记被产出方和消费方理解成相反的意思，测试辅助按错误的理解造数据，所以测试全是绿的 | §4.3：只有一种语义，只有一个辅助函数；测试必须用 `view` 的真实输出，不允许手工拼 `FrameState` |
-| 渲染端开了自动折行，破坏了"一条 entry 一行"，视口按条数取内容，贴底时最新的行被挤出屏幕 | §4.3：由 model 排版，渲染端不折行 |
-| ratatui 的 `Line` 遇到 `\n` 会直接吞掉，不换行也不留空格 | 排版时先按 `\n` 拆行，单元测试覆盖 |
-| 每个 token 都重建整份转录，再把整帧 clone 一次 | §4.3 块级缓存，§5 合帧 |
-| 在 `select!` 的分支里直接 await 读盘，读的期间界面卡住 | §3.1：所有调用都 spawn 出去，结果以 Msg 投回 |
-| `FrameState` 由两方各填一半，同一个派生量两处各算一次 | §4.1：`view` 是唯一的写者 |
-| 键位层没有上下文，只好给每个模态起别名，裸字符时而是输入、时而是快捷键 | §6：键位带上下文 |
-| 契约里有一批字段从来没人产出 | 阶段 2 每个 `FrameState` 字段都必须有一个场景和一张快照覆盖到 |
+| "块首行"标记在产出方和消费方的理解正好相反，而测试辅助函数是按错误的理解造数据的，所以测试全绿 | §4.3：只有一种语义，只有一个辅助函数；测试只能用 `view` 的真实输出 |
+| 渲染端自动折行，破坏了"一条 entry 一行"的约定 | §4.3：由 model 排版，渲染端不折行 |
+| ratatui 的 `Line` 会把 `\n` 吞掉 | 排版时先按 `\n` 拆行 |
+| 每来一个 token 就重建整段转录，再整帧 clone 一次 | §4.3 按块缓存，§5 合帧 |
+| 在 `select!` 的分支里直接 await 读盘 | §3.1：所有调用 spawn 出去，结果以消息投回 |
+| `FrameState` 由两方各填一半 | §4.1：只有 `view` 一个写者 |
+| 键位层没有上下文概念，只能给每个模态起别名 | §6：绑定带上下文 |
+| 契约里有一批字段从来没人产出 | 守卫：每个字段都必须被某张快照覆盖到 |
 
 ## 10. 待定
 
 | 问题 | 倾向 |
 |---|---|
-| 数据目录：Agix 的数据和 Codix 自己的流程、作业放在哪 | Agix 用 `~/.agix`，与 `agixd` 共用；Codix 用 `~/.codix`（流程包、运行、作业、快捷键）。阶段 3 再定 |
-| 宽屏下左右两栏的默认比例 | 60 : 40，可调，并记住 |
-| `codix serve` 的 WebSocket 是否需要 TLS | 不自带 TLS，跨公网时前面加反向代理 |
+| 项目层目录要不要也改成 `.codix` | 先沿用 Agix 的 `.agix/`。要改的话需要给 Agix 提 issue，请维护者决定 |
+| 缺省终端尺寸 | 160×45，写在 `config.toml`，可以设为 `off` |
+| 宽屏下左右两栏的缺省比例 | 60 : 40，可调，并记住 |
+| 实例开机自启 | P2：在手册里给出 systemd user unit 和 launchd plist 的示例 |

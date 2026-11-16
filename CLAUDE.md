@@ -17,14 +17,17 @@ Codix 不跟 Claude Code 这类聊天式编程 CLI 拼打磨。它的位置是 A
 1. **阶段 0**：仓库与约定。
 2. **阶段 1**：需求与设计文档，不写代码。
 3. **阶段 2**：TUI 接 **mock 后端**。不碰 Agix，也不碰流程；数据来自脚本化的场景，各种交互全部验证通过才算完。
-4. **阶段 3**：接缝。逐块把 mock 换成真实后端（Agix 协议客户端、远程连接、流程、作业、`codix serve`），mock 保留给测试用。
+4. **阶段 3**：接缝。按块把 mock 换成真实后端（实例进程、Agix 协议客户端、流程、作业），mock 保留下来给测试用。
 
 **阶段 2 没验收，不接缝。** 每个阶段结束都要输出简报，由维护者决定是否进入下一阶段。
 
 ## 已定的边界
 
-- **引擎只走 Agix 的 JSON-RPC 协议**（`agix/docs/daemon_rpc_protocol.md`）。缺省用 `agix::embed` 把引擎嵌在本进程，经 `tokio::io::duplex` 通信；`--connect` 连远端 `agixd`。不用 `agix::pool` 这层 Rust 门面，它不承诺兼容。
-- **TUI 与后端之间只有一个端口**：`Backend` trait 加领域事件，定义在 `docs/design/` 里。mock 和真实后端实现的是同一个端口。
+- **常驻实例 + 可接入的 TUI。** 实例是本机上一个常驻的 `codix host` 进程，引擎、流程、作业都跑在里面。TUI 通过本机 unix socket 接入实例，退出 TUI 就是脱离。可以用 `codix list` 查看实例、`codix attach` 接入。
+- **不监听任何网络端口。** 远程使用就是 ssh 登录到那台机器后运行 `codix`，安全交给 ssh 和操作系统。
+- **引擎只走 Agix 的 JSON-RPC 协议**（`agix/docs/daemon_rpc_protocol.md`）：实例进程内部用 `agix::embed` 嵌入引擎，通过 duplex 通信。不使用 `agix::pool` 这一层 Rust 门面，因为它不承诺兼容。
+- **数据目录是 `~/.codix`**（可以用 `CODIX_HOME` 改），Agix 的 `data_root` 也指向这里，不使用 `~/.agix`。项目里的 `.agix/` 目录是 Agix 写死的，暂时沿用。
+- **TUI 与后端之间只有一个端口**：`Instances` 和 `Backend` 两个 trait 加上领域事件，定义见 `docs/design/architecture.md` §3。mock 与真实实现走的是同一个端口；端口的消息序列化之后就是 TUI 与实例之间的协议。
 - **流程来自 Harnix**：拷贝，不引用，见下面的 `3rds/`。流程格式与 Harnix 兼容。流程不放进 Agix。
 - **不做**：ACP（已作为需求提给 Agix：openatta/Agix#74）、Web 界面。
 
