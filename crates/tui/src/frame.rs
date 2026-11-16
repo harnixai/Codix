@@ -21,6 +21,8 @@ pub enum Tone {
     Selected,
     /// 需要人处理的高亮。
     Attention,
+    /// 转录里用户输入那一块的淡底色（与 Claude Code 一致）。
+    UserMsg,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -123,6 +125,12 @@ pub struct ChatPane {
     pub status: Option<Line>,
     pub todos: Vec<Line>,
     pub composer: Composer,
+    /// 补全列表：浮在输入框正上方，自下而上贴着它（交互 §4.5）。
+    pub picker: Vec<Line>,
+    pub picker_selected: Option<usize>,
+    /// 提问框：有它时画在输入框的位置上（交互 §4.6）。
+    pub ask: Option<Vec<Line>>,
+    pub ask_selected: Option<usize>,
     /// 输入框下面那一行：左边 `? 快捷键`，右边权限模式（交互 §4.4）。
     pub hint_left: Line,
     pub hint_right: Line,

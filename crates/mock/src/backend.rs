@@ -54,6 +54,7 @@ pub struct ScriptedBackend {
     events: Mutex<Option<mpsc::UnboundedReceiver<Event>>>,
     calls: CallLog,
     seq: AtomicU64,
+    current_message: Mutex<Option<port::MessageId>>,
     opts: MockOptions,
     started: Instant,
 }
@@ -73,6 +74,7 @@ impl ScriptedBackend {
             events: Mutex::new(Some(ev_rx)),
             calls: CallLog::default(),
             seq: AtomicU64::new(1),
+            current_message: Mutex::new(None),
             opts,
             started: Instant::now(),
         });
@@ -153,7 +155,8 @@ impl ScriptedBackend {
     ) -> Instant {
         match action {
             StepAction::Event(ev) => {
-                self.emit_at(at, substitute(ev, session));
+                let message = self.current_message.lock().unwrap().clone();
+                self.emit_at(at, substitute(ev, session, message.as_ref()));
                 at
             }
             StepAction::Play(name) if depth < 8 => match self.scenario.scripts.get(name) {
@@ -183,6 +186,10 @@ impl ScriptedBackend {
 
     fn react(&self, cmd: &Command) -> Result<Reply, PortError> {
         let session = command_session(cmd);
+        // 提交的消息 id 先定下来：规则的片段里可以写 `$message` 引用它（插话被退回）。
+        let message =
+            matches!(cmd, Command::Submit { .. }).then(|| port::MessageId(self.next_id("m")));
+        *self.current_message.lock().unwrap() = message.clone();
         let rule = {
             let mut used = self.used_rules.lock().unwrap();
             let hit = self
@@ -270,7 +277,12 @@ impl ScriptedBackend {
                 mode,
                 ..
             } => {
-                let message = port::MessageId(self.next_id("m"));
+                let message = self
+                    .current_message
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| port::MessageId(self.next_id("m")));
                 if effects {
                     let running = st().sessions.get(session).is_some_and(|s| s.running);
                     if running && *mode == SubmitMode::Steer {
@@ -682,22 +694,28 @@ impl Backend for ScriptedBackend {
     }
 }
 
-/// 片段里写 `$session` 的地方换成实际的会话：同一个片段可以对任意会话回放。
-fn substitute(ev: &Event, session: Option<&SessionId>) -> Event {
-    let Some(session) = session else {
+/// 片段里写 `$session` / `$message` 的地方换成实际的会话与消息 id：同一个片段可以对任意
+/// 会话回放。
+fn substitute(ev: &Event, session: Option<&SessionId>, message: Option<&port::MessageId>) -> Event {
+    let Ok(mut text) = serde_json::to_string(ev) else {
         return ev.clone();
     };
-    let Ok(text) = serde_json::to_string(ev) else {
-        return ev.clone();
-    };
-    if !text.contains("\"$session\"") {
+    let mut changed = false;
+    for (key, val) in [
+        ("\"$session\"", session.map(|s| s.as_str())),
+        ("\"$message\"", message.map(|m| m.as_str())),
+    ] {
+        if let Some(v) = val
+            && text.contains(key)
+        {
+            text = text.replace(key, &serde_json::to_string(v).unwrap_or_default());
+            changed = true;
+        }
+    }
+    if !changed {
         return ev.clone();
     }
-    let replaced = text.replace(
-        "\"$session\"",
-        &serde_json::to_string(session.as_str()).unwrap_or_default(),
-    );
-    serde_json::from_str(&replaced).unwrap_or_else(|_| ev.clone())
+    serde_json::from_str(&text).unwrap_or_else(|_| ev.clone())
 }
 
 fn command_session(cmd: &Command) -> Option<SessionId> {

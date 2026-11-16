@@ -2,7 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use keys::{Context, Keymap};
-use port::{ClientInfo, ConnState, FlowSummary, InstanceInfo, Job, SessionSummary};
+use std::collections::HashMap as Map;
+
+use port::{
+    ClientInfo, ConnState, FlowSummary, InstanceInfo, Job, PermissionMode, PromptId, SessionId,
+    SessionSummary,
+};
+
+use crate::chat::Conversation;
+use crate::composer::ComposerState;
 use tui::{ShowPane, Size};
 
 use crate::update::{Pending, ReqId};
@@ -122,6 +130,8 @@ pub struct Domain {
     pub sessions: Vec<SessionSummary>,
     pub flows: Vec<FlowSummary>,
     pub jobs: Vec<Job>,
+    /// 被 Watch 的会话。
+    pub convs: Map<SessionId, Conversation>,
 }
 
 /// 界面状态：只由输入与 Tick 写入。
@@ -153,6 +163,24 @@ pub struct Ui {
     /// 空闲时第一次 Ctrl+C 的时刻：两秒内再按一次才脱离。
     pub quit_armed_ms: Option<u64>,
     pub last_click: Option<(u16, u16, u64)>,
+    /// 对话区当前显示的会话。
+    pub chat: Option<SessionId>,
+    pub composer: ComposerState,
+    /// Ctrl+O：转录精简 / 详细。
+    pub detail: bool,
+    /// Ctrl+T：显示 todo 清单。
+    pub show_todos: bool,
+    /// Shift+Tab 轮换的权限模式。
+    pub permission: PermissionMode,
+    /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
+    pub ask_active: bool,
+    pub ask_selected: usize,
+    /// 正在用输入框自由回答的提问。
+    pub answering: Option<(SessionId, PromptId)>,
+    pub esc_armed_ms: Option<u64>,
+    pub detach_armed_ms: Option<u64>,
+    /// 测试用计数：重排了多少个块（testing.md §1 用计数验性能）。
+    pub relayouts: u64,
 }
 
 impl Ui {
@@ -212,6 +240,17 @@ impl State {
                 notice: None,
                 quit_armed_ms: None,
                 last_click: None,
+                chat: None,
+                composer: ComposerState::default(),
+                detail: false,
+                show_todos: false,
+                permission: PermissionMode::Default,
+                ask_active: false,
+                ask_selected: 0,
+                answering: None,
+                esc_armed_ms: None,
+                detach_armed_ms: None,
+                relayouts: 0,
             },
             keymap,
             pending: HashMap::new(),
@@ -231,10 +270,30 @@ impl State {
             return vec![Context::Instances];
         }
         match self.ui.focus {
+            Focus::Composer if self.ask_visible() && self.ui.ask_active => vec![Context::Dialog],
+            Focus::Composer if !self.picker_candidates().is_empty() => {
+                vec![Context::Picker, Context::Composer]
+            }
             Focus::Composer => vec![Context::Composer],
             Focus::Transcript => vec![Context::Transcript],
             Focus::SideUpper | Focus::SideLower => vec![self.ui.tab.context()],
         }
+    }
+
+    pub fn conv(&self) -> Option<&Conversation> {
+        self.ui
+            .chat
+            .as_ref()
+            .and_then(|id| self.domain.convs.get(id))
+    }
+
+    pub fn conv_mut(&mut self) -> Option<&mut Conversation> {
+        let id = self.ui.chat.clone()?;
+        self.domain.convs.get_mut(&id)
+    }
+
+    pub fn ask_visible(&self) -> bool {
+        self.conv().is_some_and(|c| !c.prompts.is_empty())
     }
 
     /// 右栏会话列表只列主 Agent；子 Agent 的侧链会话挂在它的拆分树下（需求 S-01、S-04）。

@@ -79,6 +79,18 @@ pub(crate) enum Pending {
     Sessions,
     Flows,
     Jobs,
+    Watch(port::SessionId),
+    Commands(port::SessionId),
+    /// 插话时要拿到消息 id，等 `SteerDelivered` / `SteerReturned` 对上。
+    Submitted {
+        session: port::SessionId,
+        block: u64,
+    },
+    /// 还没有会话时第一句话：先建会话，建好再发（与 Claude Code 一进来就能说话一致）。
+    CreateThenSubmit {
+        text: String,
+    },
+    CreateOnly,
 }
 
 const RATIO_MIN: u16 = 40;
@@ -87,6 +99,8 @@ const RATIO_STEP: u16 = 5;
 const DOUBLE_CLICK_MS: u64 = 400;
 const QUIT_ARM_MS: u64 = 2_000;
 const NOTICE_MS: u64 = 3_000;
+/// 状态行 `✻` 动画的帧间隔：只在有一轮在跑时唤醒。
+pub(crate) const SPINNER_MS: u64 = 150;
 
 impl State {
     /// 接入实例之后的第一批命令。
@@ -136,6 +150,9 @@ impl State {
         }
         if u.screen == Screen::Workbench {
             d.push(u.next_heartbeat_ms);
+            if self.conv().is_some_and(|c| c.running) {
+                d.push((u.now_ms / SPINNER_MS + 1) * SPINNER_MS);
+            }
             if u.idle_timeout_ms > 0 {
                 let at = u.last_input_ms + u.idle_timeout_ms;
                 d.push(if u.idle_warned {
@@ -152,14 +169,14 @@ impl State {
         self.ui.now_ms = now_ms;
     }
 
-    fn call(&mut self, what: Pending, cmd: Command) -> Effect {
+    pub(crate) fn call(&mut self, what: Pending, cmd: Command) -> Effect {
         let id = ReqId(self.next_req);
         self.next_req += 1;
         self.pending.insert(id, what);
         Effect::Call(id, Box::new(cmd))
     }
 
-    fn notice(&mut self, text: impl Into<String>, error: bool) {
+    pub(crate) fn notice(&mut self, text: impl Into<String>, error: bool) {
         self.ui.notice = Some(Notice {
             text: text.into(),
             error,
@@ -190,6 +207,12 @@ pub fn update(s: &mut State, msg: Msg) -> Vec<Effect> {
         s.ui.last_input_ms = s.ui.now_ms;
         s.ui.idle_warned = false;
     }
+    let effects = update_confirm(s, msg);
+    crate::chat_update::relayout(s);
+    effects
+}
+
+fn update_confirm(s: &mut State, msg: Msg) -> Vec<Effect> {
     if let Some(c) = s.ui.confirm.take() {
         return match msg {
             Msg::Action(Action::Yes | Action::Confirm) => confirmed(s, c),
@@ -235,16 +258,23 @@ fn workbench(s: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Instances(..) => vec![],
         Msg::Action(a) => action(s, a),
-        Msg::Text(_) | Msg::Paste(_) => {
+        Msg::Text(c) => {
             s.ui.quit_armed_ms = None;
+            if s.ui.focus == Focus::Composer {
+                crate::chat_update::text(s, c)
+            } else {
+                vec![]
+            }
+        }
+        Msg::Paste(p) => {
+            s.ui.quit_armed_ms = None;
+            s.ui.focus = Focus::Composer;
+            s.ui.composer.paste(&p);
             vec![]
         }
         Msg::Mouse(m) => mouse(s, m),
         Msg::Event(e) => event(s, *e),
-        Msg::Reply(id, r) => {
-            reply(s, id, *r);
-            vec![]
-        }
+        Msg::Reply(id, r) => reply(s, id, *r),
         Msg::Tick => {
             tick_common(s);
             idle_and_heartbeat(s)
@@ -410,6 +440,9 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
         Ok(InstOk::Attached(name)) => {
             s.domain = Default::default();
             s.pending.clear();
+            s.ui.chat = None;
+            s.ui.ask_active = false;
+            s.ui.answering = None;
             s.ui.screen = Screen::Workbench;
             s.ui.attached = Some(name);
             s.ui.last_input_ms = s.ui.now_ms;
@@ -463,8 +496,30 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
         }
         return vec![];
     }
+    let routed = match s.ui.focus {
+        Focus::Composer if s.ask_visible() && s.ui.ask_active => {
+            crate::chat_update::dialog_action(s, a)
+        }
+        Focus::Composer => crate::chat_update::composer_action(s, a),
+        Focus::Transcript => crate::chat_update::transcript_action(s, a),
+        _ => None,
+    };
+    if let Some(e) = routed {
+        return e;
+    }
     match a {
         Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
+        Action::ToggleDetail => s.ui.detail = !s.ui.detail,
+        Action::ToggleTodos => s.ui.show_todos = !s.ui.show_todos,
+        Action::Open if s.ui.focus == Focus::SideUpper && s.ui.tab == Tab::Sessions => {
+            let i = s.ui.upper().selected;
+            let Some(id) = s.main_sessions().nth(i).map(|x| x.id.clone()) else {
+                return vec![];
+            };
+            s.show_chat();
+            s.ui.focus = Focus::Composer;
+            return crate::chat_update::open_session(s, id);
+        }
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
         Action::TabJobs => switch_tab(s, Tab::Jobs),
@@ -616,8 +671,20 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
             if let Some(chat) = &r.chat {
                 if chat.composer.contains(col, row) {
                     s.ui.focus = Focus::Composer;
+                    if s.ask_visible() {
+                        s.ui.ask_active = true;
+                        let i = (row.saturating_sub(chat.composer_inner.y) as usize)
+                            .checked_sub(crate::view::ASK_OPTIONS_OFFSET);
+                        if let Some(i) = i {
+                            s.ui.ask_selected = i;
+                            if double {
+                                return action(s, Action::Confirm);
+                            }
+                        }
+                    }
                 } else if chat.transcript.contains(col, row) {
                     s.ui.focus = Focus::Transcript;
+                    crate::chat_update::transcript_click(s, (row - chat.transcript.y) as usize);
                 } else if chat.frame.contains(col, row) {
                     s.ui.focus = Focus::Composer;
                 }
@@ -632,6 +699,10 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
         MouseKind::Up(_) => s.ui.drag = None,
         MouseKind::ScrollUp | MouseKind::ScrollDown => {
             let delta = if m.kind == MouseKind::ScrollUp { -3 } else { 3 };
+            if r.chat.is_some_and(|c| c.transcript.contains(col, row)) {
+                crate::chat_update::scroll(s, delta);
+                return vec![];
+            }
             if let Some(side) = &r.side {
                 if side.upper_frame.contains(col, row) {
                     move_selection(s, Focus::SideUpper, delta);
@@ -646,6 +717,7 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
 }
 
 fn event(s: &mut State, e: Event) -> Vec<Effect> {
+    let mut out = crate::chat_update::chat_event(s, &e);
     match e {
         Event::Kicked { by, at_ms } => {
             s.ui.screen = Screen::Detached(DetachReason::Kicked { by, at_ms });
@@ -684,23 +756,23 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
         Event::Notice { level, text } => s.notice(text, level == port::NoticeLevel::Error),
         _ => {}
     }
-    vec![]
+    std::mem::take(&mut out)
 }
 
-fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) {
+fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
     let Some(what) = s.pending.remove(&id) else {
-        return;
+        return vec![];
     };
-    if matches!(what, Pending::Ignore) {
-        return;
-    }
     let reply = match r {
         Ok(r) => r,
         Err(e) => {
             s.notice(e.to_string(), true);
-            return;
+            return vec![];
         }
     };
+    if matches!(what, Pending::Ignore) {
+        return vec![];
+    }
     let d = &mut s.domain;
     match (what, reply) {
         (
@@ -719,6 +791,7 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) {
         (Pending::Sessions, Reply::Sessions(v)) => d.sessions = v,
         (Pending::Flows, Reply::Flows(v)) => d.flows = v,
         (Pending::Jobs, Reply::Jobs(v)) => d.jobs = v,
-        _ => {}
+        (what, reply) => return crate::chat_update::chat_reply(s, what, reply),
     }
+    vec![]
 }

@@ -7,8 +7,25 @@ use tui::{
 
 use crate::state::{Confirm, DetachReason, Focus, Overlay, Picker, Screen, State, Tab};
 
+/// 提问框里第一个选项所在的行（鼠标点选项用，交互 §4.6）。
+pub(crate) const ASK_OPTIONS_OFFSET: usize = 4;
+const PLACEHOLDER: &str = "输入消息 · / 命令 · @ 文件 · ! 执行命令";
+const SPINNER: [&str; 4] = ["✻", "✽", "✶", "✳"];
+
 pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
-    LayoutSpec {
+    chat_layout(s).0
+}
+
+/// 两遍：先按一行输入框算出宽度，再按这个宽度排输入框（或提问框）定高度。
+pub(crate) fn chat_layout(s: &State) -> (LayoutSpec, Vec<String>) {
+    let labels = tab_labels(s);
+    let conv = s.conv();
+    let todo_rows = if s.ui.show_todos {
+        conv.map_or(0, |c| c.todos.len().min(5)) as u16
+    } else {
+        0
+    };
+    let mut spec = LayoutSpec {
         mode: layout::pane_mode_for(
             s.ui.size.cols,
             s.ui.ratio_pct,
@@ -16,9 +33,17 @@ pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
             s.ui.showing,
         ),
         composer_rows: 1,
-        status: false,
-        todo_rows: 0,
+        status: conv.is_some_and(|c| c.running || !c.prompts.is_empty()),
+        todo_rows,
+    };
+    if let Some(chat) = layout::compute(s.ui.size, &spec, &labels).chat {
+        let w = chat.composer_inner.w as usize;
+        spec.composer_rows = match ask_lines(s, w) {
+            Some((lines, _)) => lines.len() as u16,
+            None => s.ui.composer.layout(w, PLACEHOLDER).0.len() as u16,
+        };
     }
+    (spec, labels)
 }
 
 fn tabs(s: &State) -> Vec<TabLabel> {
@@ -85,7 +110,7 @@ pub fn view(s: &State) -> FrameState {
     let tabs = tabs(s);
     let labels: Vec<String> = tabs.iter().map(TabLabel::display).collect();
     let regions = layout::compute(size, &spec, &labels);
-    let chat = regions.chat.map(|r| chat_pane(s, r.transcript.w as usize));
+    let chat = regions.chat.as_ref().map(|r| chat_pane(s, r));
     let side = regions.side.as_ref().map(|r| side_pane(s, tabs, r));
     FrameState {
         body: Body::Workbench(Box::new(Workbench {
@@ -115,39 +140,278 @@ fn header(s: &State) -> Header {
     Header { left, right }
 }
 
-fn chat_pane(s: &State, width: usize) -> ChatPane {
+fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
+    let width = r.transcript.w as usize;
     let focused = matches!(s.ui.focus, Focus::Composer | Focus::Transcript);
-    let owner = match &s.domain.instance {
-        Some(i) => format!(
-            "{}@{} · {}",
-            i.name,
-            i.host,
-            i.project.as_deref().unwrap_or("无项目")
+    let conv = s.conv();
+    let (crumbs, badge, owner) = match conv {
+        Some(c) => (
+            format!("会话 › {}", c.summary.title),
+            match c.summary.state {
+                port::SessionState::Running => "● 运行中",
+                port::SessionState::Waiting => "◐ 等你",
+                port::SessionState::Idle => "○ 空闲",
+            },
+            owner_line(&c.summary),
         ),
-        None => String::new(),
+        None => (
+            "会话 › 新会话（输入即开始）".to_string(),
+            "",
+            s.domain
+                .instance
+                .as_ref()
+                .map(|i| {
+                    format!(
+                        "{}@{} · {}",
+                        i.name,
+                        i.host,
+                        i.project.as_deref().unwrap_or("无项目")
+                    )
+                })
+                .unwrap_or_default(),
+        ),
     };
-    let composer_focused = s.ui.focus == Focus::Composer && s.ui.overlay.is_none();
+    let h = r.transcript.h as usize;
+    let mut below = None;
+    let transcript = match (conv, &s.ui.chat) {
+        (Some(c), _) => {
+            let top = c.viewport_top(h);
+            let sel = (s.ui.focus == Focus::Transcript)
+                .then_some(c.selected)
+                .flatten()
+                .and_then(|id| c.first_line_of(id));
+            if c.unseen && !c.follow {
+                below = Some(Line::toned("↓ 有新内容 (End)", Tone::Attention));
+            }
+            c.blocks
+                .iter()
+                .flat_map(|b| b.cache.iter().flat_map(|x| x.lines.iter()))
+                .enumerate()
+                .skip(top)
+                .take(h)
+                .map(|(i, l)| {
+                    if Some(i) == sel {
+                        l.clone().with_tone(Tone::Selected)
+                    } else {
+                        l.clone()
+                    }
+                })
+                .collect()
+        }
+        (None, Some(_)) => vec![Line::toned("加载中 …", Tone::Dim)],
+        (None, None) => crate::welcome::idle(s.domain.instance.as_ref(), width),
+    };
+    let composer_w = r.composer_inner.w as usize;
+    let placeholder = match (&s.ui.answering, conv) {
+        (Some(_), Some(c)) => c
+            .prompts
+            .first()
+            .map(|p| match &p.kind {
+                port::PromptKind::Question { question, .. } => format!("回答：{question}"),
+                _ => "写下回答".into(),
+            })
+            .unwrap_or_default(),
+        _ => PLACEHOLDER.to_string(),
+    };
+    let (lines, cursor) = s.ui.composer.layout(composer_w, &placeholder);
+    let picker = s.picker_candidates();
+    let ask = ask_lines(s, composer_w);
+    let running = conv.is_some_and(|c| c.running);
+    let hint_left = if s.ui.esc_armed_ms.is_some() && !s.ui.composer.is_empty() {
+        Line::toned("再按一次 Esc 清空", Tone::Warn)
+    } else if running {
+        Line::toned("esc 中断", Tone::Dim)
+    } else {
+        Line::toned("? 快捷键", Tone::Dim)
+    };
+    let hint_right = match s.ui.permission {
+        port::PermissionMode::Default => Line::default(),
+        port::PermissionMode::AcceptEdits => {
+            Line::toned("⏵⏵ 自动接受编辑 (shift+tab 切换)", Tone::Accent)
+        }
+        port::PermissionMode::Plan => Line::toned("⏸ 计划模式 (shift+tab 切换)", Tone::Accent),
+        port::PermissionMode::BypassPermissions => {
+            Line::toned("⏵⏵ 绕过权限 (shift+tab 切换)", Tone::Error)
+        }
+    };
     ChatPane {
         focused,
-        crumbs: Line::plain("会话 › 未打开"),
-        badge: Line::default(),
+        crumbs: Line::plain(crumbs),
+        badge: Line::plain(badge),
         owner: Line::toned(truncate_to_width(&owner, width), Tone::Dim),
-        transcript: crate::welcome::lines(s, width),
+        transcript,
         transcript_focused: s.ui.focus == Focus::Transcript,
-        below: None,
-        status: None,
-        todos: vec![],
-        composer: Composer {
-            focused: composer_focused,
-            lines: vec![
-                Line::toned("> ", Tone::Strong)
-                    .push("输入消息 · / 命令 · @ 文件 · ! 执行命令", Tone::Dim),
-            ],
-            cursor: Some((2, 0)),
+        below,
+        status: conv.and_then(|c| status_line(s, c, width)),
+        todos: if s.ui.show_todos {
+            conv.map(|c| todo_lines(&c.todos, width))
+                .unwrap_or_default()
+        } else {
+            vec![]
         },
-        hint_left: Line::toned("? 快捷键", Tone::Dim),
-        hint_right: Line::default(),
+        composer: Composer {
+            focused: s.ui.focus == Focus::Composer && s.ui.overlay.is_none() && ask.is_none(),
+            lines,
+            cursor: Some(cursor),
+        },
+        picker: picker
+            .iter()
+            .map(|c| {
+                Line::toned(format!("  /{:<14}", c.name), Tone::Accent)
+                    .push(
+                        truncate_to_width(&c.description, width.saturating_sub(30)),
+                        Tone::Normal,
+                    )
+                    .push(format!("  {}", c.source), Tone::Dim)
+            })
+            .collect(),
+        picker_selected: (!picker.is_empty()).then(|| s.ui.composer.picker.min(picker.len() - 1)),
+        ask_selected: ask.as_ref().and_then(|(_, sel)| *sel),
+        ask: ask.map(|(l, _)| l),
+        hint_left,
+        hint_right,
     }
+}
+
+fn owner_line(sum: &port::SessionSummary) -> String {
+    let p = &sum.provenance;
+    let origin = match &p.origin {
+        port::Origin::User => "用户新建".to_string(),
+        port::Origin::Job { name, .. } => format!("作业「{name}」"),
+        port::Origin::FlowStation {
+            flow_title,
+            subject,
+            station_title,
+            ..
+        } => format!("流程「{flow_title}」› {subject} › {station_title}"),
+        port::Origin::SubAgent { parent_title, .. } => format!("子 Agent ← {parent_title}"),
+        port::Origin::Fork { from_title, .. } => format!("分叉自 {from_title}"),
+    };
+    let mut s = format!(
+        "{}@{} · {} · {} · {} · {}",
+        p.instance,
+        p.host,
+        p.project.as_deref().unwrap_or("无项目"),
+        p.scene,
+        p.model,
+        origin
+    );
+    if let Some(h) = &sum.held_by {
+        s.push_str(&format!(" · ⚠ 被实例 {h} 占用"));
+    }
+    s
+}
+
+fn status_line(s: &State, c: &crate::chat::Conversation, width: usize) -> Option<Line> {
+    if let Some(p) = c.prompts.first() {
+        let what = match &p.kind {
+            port::PromptKind::Permission { tool, summary, .. } => {
+                format!("◐ 等你批准：{tool}({summary})")
+            }
+            port::PromptKind::Question { question, .. } => format!("◐ 等你回答：{question}"),
+        };
+        return Some(Line::toned(
+            truncate_to_width(&what, width),
+            Tone::Attention,
+        ));
+    }
+    if !c.running {
+        return None;
+    }
+    let frame = SPINNER[(s.ui.now_ms / crate::update::SPINNER_MS) as usize % SPINNER.len()];
+    let verb = match &c.phase {
+        crate::chat::Phase::Thinking => "思考中…".to_string(),
+        crate::chat::Phase::Answering => "回答中…".to_string(),
+        crate::chat::Phase::Tool(name) => format!("执行 {name}…"),
+        crate::chat::Phase::Compacting => "压缩上下文…".to_string(),
+    };
+    let secs = s.ui.now_ms.saturating_sub(c.turn_started_ms) / 1000;
+    let mut tail = format!("{secs}s");
+    if c.out_chars > 0 {
+        tail.push_str(&format!(
+            " · ↓ {} tokens",
+            crate::chat::fmt_k((c.out_chars / 3).max(1) as u64)
+        ));
+    }
+    Some(
+        Line::toned(format!("{frame} "), Tone::Accent)
+            .push(verb, Tone::Accent)
+            .push(format!(" ({tail})"), Tone::Dim),
+    )
+}
+
+fn todo_lines(todos: &[port::Todo], width: usize) -> Vec<Line> {
+    todos
+        .iter()
+        .take(5)
+        .map(|t| {
+            let (g, tone) = match t.status {
+                port::TodoStatus::Done => ("☒", Tone::Dim),
+                port::TodoStatus::InProgress => ("◼", Tone::Strong),
+                port::TodoStatus::Pending => ("☐", Tone::Normal),
+            };
+            Line::toned(truncate_to_width(&format!("  {g} {}", t.text), width), tone)
+        })
+        .collect()
+}
+
+/// 提问框的行与选中行（交互 §4.6，照 Claude Code）。固定结构：标题、摘要、来源、问句，
+/// 然后从第 `ASK_OPTIONS_OFFSET` 行起是选项，最后一行是键位提示。
+fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
+    let c = s.conv()?;
+    let p = c.prompts.first()?;
+    if s.ui.answering.is_some() {
+        return None;
+    }
+    let count = if c.prompts.len() > 1 {
+        format!("({}/{})", 1, c.prompts.len())
+    } else {
+        String::new()
+    };
+    let (title, summary, question) = match &p.kind {
+        port::PromptKind::Permission { tool, summary, .. } => (
+            format!("{tool} 命令"),
+            summary.clone(),
+            "要执行吗？".to_string(),
+        ),
+        port::PromptKind::Question {
+            question, header, ..
+        } => (
+            header.clone().unwrap_or_else(|| "模型提问".into()),
+            String::new(),
+            question.clone(),
+        ),
+    };
+    let fit = |t: String| truncate_to_width(&t, width);
+    let pad = width.saturating_sub(tui::display_width(&title) + tui::display_width(&count));
+    let mut lines = vec![
+        Line::toned(fit(title), Tone::Strong)
+            .push(format!("{}{count}", " ".repeat(pad)), Tone::Dim),
+        Line::toned(fit(format!("  {summary}")), Tone::Normal),
+        match &p.from {
+            Some(f) => Line::toned(fit(format!("  来自 {}", f.label)), Tone::Dim),
+            None => Line::default(),
+        },
+        Line::toned(fit(question), Tone::Normal),
+    ];
+    let options = crate::chat_update::ask_options(&p.kind);
+    let sel = s.ui.ask_selected.min(options.len() - 1);
+    for (i, o) in options.iter().enumerate() {
+        let mark = if i == sel && s.ui.ask_active {
+            "❯ "
+        } else {
+            "  "
+        };
+        lines.push(Line::plain(fit(format!("{mark}{}. {o}", i + 1))));
+    }
+    let keys = if s.ui.ask_active {
+        "Esc 拒绝 · ↑↓ / 数字选择 · Enter 确认"
+    } else {
+        "Ctrl+G 或点这里作答"
+    };
+    lines.push(Line::toned(fit(keys.into()), Tone::Dim));
+    let selected = s.ui.ask_active.then_some(ASK_OPTIONS_OFFSET + sel);
+    Some((lines, selected))
 }
 
 fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> SidePane {

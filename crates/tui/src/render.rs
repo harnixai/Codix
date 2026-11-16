@@ -49,6 +49,7 @@ fn style(t: Tone) -> Style {
         Tone::Code => s.fg(Color::LightBlue),
         Tone::Selected => s.add_modifier(Modifier::REVERSED),
         Tone::Attention => s.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Tone::UserMsg => s.bg(Color::Indexed(237)),
     }
 }
 
@@ -194,18 +195,34 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
     if let Some(r) = c.todos {
         lines(f, r, &p.todos, None);
     }
-    let border = if p.composer.focused {
-        style(Tone::Accent)
+    if !p.picker.is_empty() {
+        let n = (p.picker.len() as u16).min(c.transcript.h);
+        let r = Rect::new(c.transcript.x, c.composer.y - n, c.transcript.w, n);
+        f.render_widget(Clear, rr(r));
+        lines(f, r, &p.picker, p.picker_selected);
+    }
+    if let Some(ask) = &p.ask {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(style(Tone::Warn));
+        f.render_widget(block, rr(c.composer));
+        lines(f, c.composer_inner, ask, p.ask_selected);
     } else {
-        style(Tone::Dim)
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(border);
-    f.render_widget(block, rr(c.composer));
-    lines(f, c.composer_inner, &p.composer.lines, None);
-    if p.composer.focused
+        let border = if p.composer.focused {
+            style(Tone::Accent)
+        } else {
+            style(Tone::Dim)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border);
+        f.render_widget(block, rr(c.composer));
+        lines(f, c.composer_inner, &p.composer.lines, None);
+    }
+    if p.ask.is_none()
+        && p.composer.focused
         && let Some((x, y)) = p.composer.cursor
         && x < c.composer_inner.w
         && y < c.composer_inner.h

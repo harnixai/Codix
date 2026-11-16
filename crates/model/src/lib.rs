@@ -3,6 +3,9 @@
 //! `update` 与 `view` 都是同步纯函数：不做 IO、不起任务，所以整套交互不用终端也能测。
 //! 后端调用以 `Effect::Call` 交给 app 去 spawn，结果以 `Msg::Reply` 回来。
 
+mod chat;
+mod chat_update;
+mod composer;
 mod mouse;
 mod state;
 mod text;
@@ -10,6 +13,8 @@ mod update;
 mod view;
 mod welcome;
 
+pub use chat::{Block, BlockKind, Conversation, Phase};
+pub use composer::ComposerState;
 pub use mouse::{Mouse, MouseButton, MouseKind};
 pub use state::{
     Confirm, DEFAULT_IDLE_TIMEOUT_MS, DetachReason, Domain, Focus, Overlay, Picker, Screen, State,
