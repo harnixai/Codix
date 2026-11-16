@@ -1,0 +1,4 @@
+[submodule "agix"]
+	path = agix
+	url = https://github.com/openatta/Agix.git
+	branch = main
