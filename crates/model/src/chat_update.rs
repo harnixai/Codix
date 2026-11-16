@@ -591,7 +591,7 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
 pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effect> {
     match (what, reply) {
         (Pending::Watch(id), Reply::Watched(w)) => {
-            let conv = Conversation::from_watched(*w);
+            let conv = Conversation::from_watched(*w, s.ui.now_ms);
             let prompt_waiting = !conv.prompts.is_empty();
             s.domain.convs.insert(id.clone(), conv);
             if s.ui.chat.as_ref() == Some(&id) && prompt_waiting && s.ui.composer.is_empty() {
@@ -617,19 +617,23 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
             vec![]
         }
         (Pending::CreateThenSubmit { text }, Reply::Session(summary)) => {
+            let now = s.ui.now_ms;
             let id = summary.id.clone();
             let mut e = open_session(s, id.clone());
             // 会话快照回来之前先放一个空的，好让这句话马上出现在转录里。
             s.domain.convs.entry(id.clone()).or_insert_with(|| {
-                Conversation::from_watched(port::Watched {
-                    session: summary,
-                    history: vec![],
-                    running: false,
-                    goal: None,
-                    todos: vec![],
-                    tasks: vec![],
-                    prompts: vec![],
-                })
+                Conversation::from_watched(
+                    port::Watched {
+                        session: summary,
+                        history: vec![],
+                        running: false,
+                        goal: None,
+                        todos: vec![],
+                        tasks: vec![],
+                        prompts: vec![],
+                    },
+                    now,
+                )
             });
             e.retain(|x| match x {
                 Effect::Call(req, c) if matches!(**c, Command::Watch { .. }) => {

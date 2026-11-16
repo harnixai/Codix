@@ -3,6 +3,7 @@
 const SEEDS: &[(&str, &str)] = &[
     ("empty", include_str!("../seeds/empty.yaml")),
     ("default", include_str!("../seeds/default.yaml")),
+    ("showcase", include_str!("../seeds/showcase.yaml")),
 ];
 
 const SCENARIOS: &[(&str, &str)] = &[
@@ -28,6 +29,7 @@ const SCENARIOS: &[(&str, &str)] = &[
     ),
     ("m07-steer", include_str!("../scenarios/m07-steer.yaml")),
     ("m16-storm", include_str!("../scenarios/m16-storm.yaml")),
+    ("showcase", include_str!("../scenarios/showcase.yaml")),
 ];
 
 pub fn seed(name: &str) -> Option<&'static str> {

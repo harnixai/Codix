@@ -93,12 +93,13 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    pub fn from_watched(w: Watched) -> Conversation {
+    /// `now`：正在跑的会话从载入这一刻起计时（快照里没有这一轮的开始时间）。
+    pub fn from_watched(w: Watched, now: u64) -> Conversation {
         let mut c = Conversation {
             summary: w.session,
             blocks: vec![],
             running: w.running,
-            turn_started_ms: 0,
+            turn_started_ms: now,
             out_chars: 0,
             phase: Phase::Thinking,
             goal: w.goal,
@@ -115,6 +116,7 @@ impl Conversation {
             next_id: 1,
         };
         c.push(BlockKind::Welcome);
+        let todos = c.todos.clone();
         for item in w.history {
             let kind = match item {
                 HistoryItem::User { text } => BlockKind::User {
@@ -136,6 +138,11 @@ impl Conversation {
                     is_error,
                     file_changes,
                 } => BlockKind::Tool {
+                    todos: if name == "TodoWrite" {
+                        todos.clone()
+                    } else {
+                        vec![]
+                    },
                     id,
                     name,
                     input,
@@ -143,7 +150,6 @@ impl Conversation {
                     content: Some(content),
                     is_error,
                     changes: file_changes,
-                    todos: vec![],
                 },
                 HistoryItem::Notice { text } => BlockKind::Notice {
                     text,

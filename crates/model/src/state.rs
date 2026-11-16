@@ -76,8 +76,10 @@ pub enum Screen {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Picker {
     pub list: Vec<InstanceInfo>,
-    /// 选中行；`list.len()` 表示最后那行"＋ 新建实例"。
+    /// 选中行：0 是第一行"＋ 新建实例"，`i` 是 `list[i - 1]`。
     pub selected: usize,
+    /// 视口第一行（一次只显示 `PICKER_ROWS` 行，交互 §2.2）。
+    pub scroll: usize,
     pub loading: bool,
     pub message: Option<String>,
 }
@@ -201,6 +203,7 @@ impl Ui {
     }
 }
 
+pub const PICKER_ROWS: usize = 6;
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 30 * 60_000;
 pub const HEARTBEAT_MS: u64 = 10_000;
 pub const IDLE_WARN_MS: u64 = 60_000;

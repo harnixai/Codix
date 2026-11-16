@@ -102,89 +102,266 @@ pub(crate) fn wrap_text(
     out
 }
 
-/// 简化的 markdown：标题、列表、代码块、行内代码、粗体。足以让回答读起来像 Claude Code。
+/// markdown：标题、列表（含嵌套、编号、任务）、引用、分隔线、代码块（带语言）、表格、
+/// 行内代码、粗体、斜体、链接。够让回答读起来像 Claude Code。
 pub(crate) fn markdown(text: &str, width: usize, first: &Line, cont: &Line) -> Vec<Line> {
     let mut out = vec![];
-    let mut in_code = false;
-    for (i, raw) in text.split('\n').enumerate() {
-        let lead = if i == 0 { first } else { cont };
-        let line = raw.trim_end_matches('\r');
-        if line.trim_start().starts_with("```") {
-            in_code = !in_code;
-            if i == 0 {
-                out.push(first.clone());
+    let raw: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
+    let mut i = 0;
+    let mut code: Option<String> = None;
+    let lead = |out: &Vec<Line>| {
+        if out.is_empty() {
+            first.clone()
+        } else {
+            cont.clone()
+        }
+    };
+    while i < raw.len() {
+        let line = raw[i];
+        let trimmed = line.trim_start();
+        if let Some(lang) = trimmed.strip_prefix("```") {
+            match code.take() {
+                None => {
+                    let label = if lang.trim().is_empty() {
+                        "代码".to_string()
+                    } else {
+                        lang.trim().to_string()
+                    };
+                    out.push(lead(&out).push(format!("┌─ {label}"), Tone::Dim));
+                    code = Some(label);
+                }
+                Some(_) => out.push(lead(&out).push("└─", Tone::Dim)),
             }
+            i += 1;
             continue;
         }
-        if in_code {
+        if code.is_some() {
+            let bar = lead(&out).push("│ ", Tone::Dim);
+            let mut bar_cont = cont.clone();
+            bar_cont = bar_cont.push("│ ", Tone::Dim);
             out.extend(wrap(
                 &[Span {
                     text: line.to_string(),
                     tone: Tone::Code,
                 }],
                 width,
-                lead,
-                cont,
+                &bar,
+                &bar_cont,
             ));
+            i += 1;
             continue;
         }
-        let trimmed = line.trim_start();
-        let indent = &line[..line.len() - trimmed.len()];
-        let (marker, body, base) = if let Some(h) = trimmed.strip_prefix("#") {
-            ("", h.trim_start_matches('#').trim_start(), Tone::Strong)
+        // 表格：连续的 `|` 行。
+        if trimmed.starts_with('|') {
+            let mut rows = vec![];
+            while i < raw.len() && raw[i].trim_start().starts_with('|') {
+                rows.push(raw[i].trim());
+                i += 1;
+            }
+            out.extend(table(&rows, width, &lead(&out), cont));
+            continue;
+        }
+        i += 1;
+        if trimmed.is_empty() {
+            out.push(lead(&out));
+            continue;
+        }
+        if trimmed.chars().all(|c| c == '-' || c == '*' || c == '_') && trimmed.len() >= 3 {
+            let w = width.saturating_sub(cont.width()).min(40);
+            out.push(lead(&out).push("─".repeat(w), Tone::Dim));
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        let pad = " ".repeat(indent);
+        let (marker, body, base) = if let Some(h) = trimmed.strip_prefix('#') {
+            let level = 1 + h.chars().take_while(|c| *c == '#').count();
+            let tone = if level == 1 {
+                Tone::Accent
+            } else {
+                Tone::Strong
+            };
+            (String::new(), h.trim_start_matches('#').trim_start(), tone)
+        } else if let Some(q) = trimmed.strip_prefix('>') {
+            ("▎ ".to_string(), q.trim_start(), Tone::Italic)
+        } else if let Some(t) = trimmed
+            .strip_prefix("- [x] ")
+            .or_else(|| trimmed.strip_prefix("- [X] "))
+        {
+            (format!("{pad}☒ "), t, Tone::Dim)
+        } else if let Some(t) = trimmed.strip_prefix("- [ ] ") {
+            (format!("{pad}☐ "), t, Tone::Normal)
         } else if let Some(b) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
         {
-            ("• ", b, Tone::Normal)
+            let dot = if indent >= 2 { "◦ " } else { "• " };
+            (format!("{pad}{dot}"), b, Tone::Normal)
+        } else if let Some((n, rest)) = numbered(trimmed) {
+            (format!("{pad}{n}. "), rest, Tone::Normal)
         } else {
-            ("", trimmed, Tone::Normal)
+            (pad.clone(), trimmed, Tone::Normal)
         };
-        let mut spans = vec![];
-        if !indent.is_empty() || !marker.is_empty() {
-            spans.push(Span {
-                text: format!("{indent}{marker}"),
-                tone: Tone::Normal,
-            });
-        }
-        spans.extend(inline(body, base));
-        out.extend(wrap(&spans, width, lead, cont));
+        let marker_tone = if marker.starts_with('▎') {
+            Tone::Dim
+        } else {
+            Tone::Normal
+        };
+        let first_line = lead(&out).push(marker.clone(), marker_tone);
+        let hang = cont
+            .clone()
+            .push(" ".repeat(tui::display_width(&marker)), Tone::Normal);
+        let hang = if marker.starts_with('▎') {
+            cont.clone().push("▎ ", Tone::Dim)
+        } else {
+            hang
+        };
+        out.extend(wrap(&inline(body, base), width, &first_line, &hang));
     }
     out
 }
 
-/// 行内的 `code` 与 **粗体**。
-fn inline(text: &str, base: Tone) -> Vec<Span> {
+fn numbered(s: &str) -> Option<(&str, &str)> {
+    let dot = s.find(". ")?;
+    let n = &s[..dot];
+    (!n.is_empty() && n.len() <= 3 && n.chars().all(|c| c.is_ascii_digit()))
+        .then(|| (n, &s[dot + 2..]))
+}
+
+/// GitHub 表格：按显示宽度对齐列；放不下就原样折行。
+fn table(rows: &[&str], width: usize, first: &Line, cont: &Line) -> Vec<Line> {
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .filter(|r| {
+            !r.trim_matches(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+                .is_empty()
+        })
+        .map(|r| {
+            r.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
+        .collect();
+    let cols = cells.iter().map(Vec::len).max().unwrap_or(0);
+    let mut widths = vec![0usize; cols];
+    for r in &cells {
+        for (k, c) in r.iter().enumerate() {
+            widths[k] = widths[k].max(tui::display_width(&strip_inline(c)));
+        }
+    }
+    let total: usize = widths.iter().sum::<usize>() + 3 * cols.saturating_sub(1) + cont.width();
+    if total > width || cols == 0 {
+        return rows
+            .iter()
+            .enumerate()
+            .flat_map(|(k, r)| {
+                let lead = if k == 0 { first } else { cont };
+                wrap(
+                    &[Span {
+                        text: r.to_string(),
+                        tone: Tone::Normal,
+                    }],
+                    width,
+                    lead,
+                    cont,
+                )
+            })
+            .collect();
+    }
     let mut out = vec![];
+    for (k, r) in cells.iter().enumerate() {
+        let mut line = if k == 0 { first.clone() } else { cont.clone() };
+        for (c, w) in widths.iter().enumerate() {
+            let text = strip_inline(r.get(c).map(String::as_str).unwrap_or(""));
+            let pad = w - tui::display_width(&text);
+            let tone = if k == 0 { Tone::Strong } else { Tone::Normal };
+            line = line.push(format!("{text}{}", " ".repeat(pad)), tone);
+            if c + 1 < cols {
+                line = line.push(" │ ", Tone::Dim);
+            }
+        }
+        out.push(line);
+        if k == 0 {
+            let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+            out.push(cont.clone().push(sep.join("─┼─"), Tone::Dim));
+        }
+    }
+    out
+}
+
+fn strip_inline(s: &str) -> String {
+    s.replace("**", "").replace('`', "")
+}
+
+/// 行内的 `code`、**粗体**、*斜体*、[链接](地址)。
+fn inline(text: &str, base: Tone) -> Vec<Span> {
+    let mut out: Vec<Span> = vec![];
     let mut buf = String::new();
     let mut tone = base;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        let toggle = if c == '`' {
-            Some(Tone::Code)
-        } else if c == '*' && chars.peek() == Some(&'*') {
-            chars.next();
-            Some(Tone::Strong)
-        } else {
-            None
+    let chars: Vec<char> = text.chars().collect();
+    let flush = |out: &mut Vec<Span>, buf: &mut String, tone: Tone| {
+        if !buf.is_empty() {
+            out.push(Span {
+                text: std::mem::take(buf),
+                tone,
+            });
+        }
+    };
+    let mut k = 0;
+    while k < chars.len() {
+        let c = chars[k];
+        if c == '['
+            && let Some((label, url, used)) = link(&chars[k..])
+        {
+            flush(&mut out, &mut buf, tone);
+            out.push(Span {
+                text: label,
+                tone: Tone::Link,
+            });
+            out.push(Span {
+                text: format!(" ({url})"),
+                tone: Tone::Dim,
+            });
+            k += used;
+            continue;
+        }
+        let toggle = match c {
+            '`' => Some(Tone::Code),
+            '*' if chars.get(k + 1) == Some(&'*') => {
+                k += 1;
+                Some(Tone::Strong)
+            }
+            '*' | '_'
+                if tone == Tone::Italic || chars.get(k + 1).is_some_and(|n| !n.is_whitespace()) =>
+            {
+                Some(Tone::Italic)
+            }
+            _ => None,
         };
         match toggle {
             Some(t) => {
-                if !buf.is_empty() {
-                    out.push(Span {
-                        text: std::mem::take(&mut buf),
-                        tone,
-                    });
-                }
+                flush(&mut out, &mut buf, tone);
                 tone = if tone == t { base } else { t };
             }
             None => buf.push(c),
         }
+        k += 1;
     }
-    if !buf.is_empty() {
-        out.push(Span { text: buf, tone });
-    }
+    flush(&mut out, &mut buf, tone);
     out
+}
+
+/// `[文字](地址)` → (文字, 地址, 用掉的字符数)。
+fn link(chars: &[char]) -> Option<(String, String, usize)> {
+    let close = chars.iter().position(|c| *c == ']')?;
+    if chars.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = close + 2 + chars[close + 2..].iter().position(|c| *c == ')')?;
+    let label: String = chars[1..close].iter().collect();
+    let url: String = chars[close + 2..end].iter().collect();
+    Some((label, url, end + 1))
 }
 
 #[cfg(test)]
@@ -221,20 +398,34 @@ mod tests {
     }
 
     #[test]
-    fn markdown_bullets_code_and_inline() {
-        let md = "# 标题\n- 一项 `x`\n```\nfn a() {}\n```\n**粗**";
-        let ls = markdown(md, 40, &Line::plain("⏺ "), &Line::plain("  "));
+    fn markdown_blocks() {
+        let md = "# 标题\n- 一项 `x`\n  - 嵌套\n1. 第一\n- [x] 完成\n- [ ] 待做\n> 引用\n---\n```rust\nfn a() {}\n```\n**粗** *斜* [文档](https://e.x)";
+        let ls = markdown(md, 60, &Line::plain("⏺ "), &Line::plain("  "));
         let t = texts(&ls);
         assert_eq!(t[0], "⏺ 标题");
         assert_eq!(t[1], "  • 一项 x");
-        assert_eq!(t[2], "  fn a() {}");
-        assert_eq!(t[3], "  粗");
-        assert!(ls[1].spans.iter().any(|s| s.tone == Tone::Code));
-        assert!(
-            ls[2]
-                .spans
-                .iter()
-                .all(|s| s.text.trim().is_empty() || s.tone == Tone::Code)
-        );
+        assert_eq!(t[2], "    ◦ 嵌套");
+        assert_eq!(t[3], "  1. 第一");
+        assert_eq!(t[4], "  ☒ 完成");
+        assert_eq!(t[5], "  ☐ 待做");
+        assert_eq!(t[6], "  ▎ 引用");
+        assert!(t[7].contains("────"));
+        assert_eq!(t[8], "  ┌─ rust");
+        assert_eq!(t[9], "  │ fn a() {}");
+        assert_eq!(t[10], "  └─");
+        assert_eq!(t[11], "  粗 斜 文档 (https://e.x)");
+        assert!(ls[11].spans.iter().any(|s| s.tone == Tone::Link));
+        assert!(ls[11].spans.iter().any(|s| s.tone == Tone::Italic));
+    }
+
+    #[test]
+    fn tables_align_by_display_width() {
+        let md = "| 方案 | 风险 |\n|---|---|\n| 直接替换 | 高 |\n| 双写 | 低 |";
+        let ls = markdown(md, 60, &Line::plain("⏺ "), &Line::plain("  "));
+        let t = texts(&ls);
+        assert_eq!(t[0], "⏺ 方案     │ 风险");
+        assert!(t[1].contains("─┼─"));
+        assert_eq!(t[2], "  直接替换 │ 高  ");
+        assert_eq!(t.len(), 4);
     }
 }

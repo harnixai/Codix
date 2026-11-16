@@ -23,6 +23,8 @@ pub enum Tone {
     Attention,
     /// 转录里用户输入那一块的淡底色（与 Claude Code 一致）。
     UserMsg,
+    Italic,
+    Link,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -159,20 +161,10 @@ pub struct TabLabel {
 }
 
 impl TabLabel {
-    /// 标签头上显示的文字：` 会话 ② `。layout 用它算宽度做命中测试。
+    /// 标签头上显示的文字：` 会话 `。不带数字：有待处理时整个标签改成提醒色。
+    /// layout 用它算宽度做命中测试。
     pub fn display(&self) -> String {
-        if self.badge == 0 {
-            format!(" {} ", self.label)
-        } else {
-            format!(" {} {} ", self.label, circled(self.badge))
-        }
-    }
-}
-
-fn circled(n: u32) -> String {
-    match n {
-        1..=20 => char::from_u32(0x2460 + n - 1).unwrap().to_string(),
-        _ => format!("({n})"),
+        format!(" {} ", self.label)
     }
 }
 
@@ -217,7 +209,10 @@ pub struct Overlay {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InstancesScreen {
     pub title: Line,
+    /// 视口内的行（最多 6 行，交互 §2.2）；上下还有更多时由 `more_above` / `more_below` 标出。
     pub rows: Vec<Line>,
+    pub more_above: bool,
+    pub more_below: bool,
     pub selected: Option<usize>,
     pub message: Option<Line>,
 }

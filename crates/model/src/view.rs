@@ -38,7 +38,7 @@ pub(crate) fn chat_layout(s: &State) -> (LayoutSpec, Vec<String>) {
     };
     if let Some(chat) = layout::compute(s.ui.size, &spec, &labels).chat {
         let w = chat.composer_inner.w as usize;
-        spec.composer_rows = match ask_lines(s, w) {
+        spec.composer_rows = match ask_lines(s, w.saturating_sub(2)) {
             Some((lines, _)) => lines.len() as u16,
             None => s.ui.composer.layout(w, PLACEHOLDER).0.len() as u16,
         };
@@ -215,7 +215,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     };
     let (lines, cursor) = s.ui.composer.layout(composer_w, &placeholder);
     let picker = s.picker_candidates();
-    let ask = ask_lines(s, composer_w);
+    let ask = ask_lines(s, composer_w.saturating_sub(2));
     let running = conv.is_some_and(|c| c.running);
     let hint_left = if s.ui.esc_armed_ms.is_some() && !s.ui.composer.is_empty() {
         Line::toned("再按一次 Esc 清空", Tone::Warn)
@@ -613,65 +613,50 @@ fn pad(text: &str, width: usize) -> String {
 fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
     let host = p.list.first().map(|i| i.host.as_str()).unwrap_or("本机");
     let now = s.ui.now_ms;
-    let mut rows: Vec<Line> = p
-        .list
-        .iter()
-        .map(|i| {
-            let (glyph, tone) = match (i.state, i.holder.is_some()) {
-                (port::InstanceState::Running, true) => ("🔒", Tone::Warn),
-                (port::InstanceState::Running, false) => ("● ", Tone::Ok),
-                (port::InstanceState::Stopped, _) => ("○ ", Tone::Dim),
-                (port::InstanceState::Stale, _) => ("✗ ", Tone::Error),
-            };
-            let project = i.project.as_deref().unwrap_or("");
-            let mut line = Line::toned(format!("{glyph} "), tone)
-                .push(pad(i.name.as_str(), 12), Tone::Strong)
-                .push(pad(project, 16), Tone::Dim);
-            match i.state {
-                port::InstanceState::Running => {
-                    let up = i.started_ms.map(|t| fmt_duration(now.saturating_sub(t)));
-                    line = line
-                        .push(
-                            pad(&format!("运行 {}", up.unwrap_or_default()), 13),
-                            Tone::Normal,
-                        )
-                        .push(pad(&format!("会话 {}", i.sessions), 9), Tone::Normal);
-                    if i.waiting > 0 {
-                        line =
-                            line.push(pad(&format!("◐ 等你 {}", i.waiting), 10), Tone::Attention);
-                    }
-                    if i.jobs > 0 {
-                        line = line.push(pad(&format!("作业 {}", i.jobs), 8), Tone::Dim);
-                    }
-                    if let Some(h) = &i.holder {
-                        line = line.push(
-                            format!(
-                                "已被 {} 接入，空闲 {}",
-                                h.label(),
-                                fmt_duration(now.saturating_sub(h.last_input_ms))
-                            ),
-                            Tone::Warn,
-                        );
-                    }
+    let mut all: Vec<Line> = vec![Line::toned("＋ 新建实例", Tone::Accent)];
+    all.extend(p.list.iter().map(|i| {
+        let (glyph, tone) = match (i.state, i.holder.is_some()) {
+            (port::InstanceState::Running, true) => ("🔒", Tone::Warn),
+            (port::InstanceState::Running, false) => ("● ", Tone::Ok),
+            (port::InstanceState::Stopped, _) => ("○ ", Tone::Dim),
+            (port::InstanceState::Stale, _) => ("✗ ", Tone::Error),
+        };
+        let project = i.project.as_deref().unwrap_or("");
+        let mut line = Line::toned(format!("{glyph} "), tone)
+            .push(pad(i.name.as_str(), 10), Tone::Strong)
+            .push(pad(project, 14), Tone::Dim);
+        match i.state {
+            port::InstanceState::Running => {
+                let up = i.started_ms.map(|t| fmt_duration(now.saturating_sub(t)));
+                line = line
+                    .push(
+                        pad(&format!("运行 {}", up.unwrap_or_default()), 11),
+                        Tone::Normal,
+                    )
+                    .push(pad(&format!("会话 {}", i.sessions), 9), Tone::Normal);
+                if i.waiting > 0 {
+                    line = line.push(pad(&format!("◐ 等你 {}", i.waiting), 10), Tone::Attention);
                 }
-                port::InstanceState::Stopped => {
-                    line = line.push("已停止 · Enter 启动", Tone::Dim);
-                }
-                port::InstanceState::Stale => {
-                    line = line.push("残留（进程已不在）· Enter 重新启动", Tone::Error);
+                if let Some(h) = &i.holder {
+                    line = line.push(
+                        format!(
+                            "被 {} 接入，空闲 {}",
+                            h.label(),
+                            fmt_duration(now.saturating_sub(h.last_input_ms))
+                        ),
+                        Tone::Warn,
+                    );
                 }
             }
-            line
-        })
-        .collect();
-    rows.push(Line::default());
-    rows.push(Line::toned("＋ 新建实例", Tone::Accent));
-    // "新建实例"前面空了一行，选中下标要跳过它。
-    let selected = if p.selected >= p.list.len() {
-        p.list.len() + 1
-    } else {
-        p.selected
-    };
+            port::InstanceState::Stopped => line = line.push("已停止 · Enter 启动", Tone::Dim),
+            port::InstanceState::Stale => {
+                line = line.push("残留（进程已不在）· Enter 重新启动", Tone::Error)
+            }
+        }
+        line
+    }));
+    let n = crate::state::PICKER_ROWS;
+    let scroll = p.scroll.min(all.len().saturating_sub(n));
     let message = if p.loading && p.list.is_empty() {
         Some(Line::toned("正在列出本机的实例 …", Tone::Dim))
     } else {
@@ -681,8 +666,10 @@ fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
     };
     tui::InstancesScreen {
         title: Line::plain(format!("Codix · 选择实例 · 主机 {host}")),
-        rows,
-        selected: Some(selected),
+        more_above: scroll > 0,
+        more_below: scroll + n < all.len(),
+        selected: p.selected.checked_sub(scroll).filter(|i| *i < n),
+        rows: all.into_iter().skip(scroll).take(n).collect(),
         message,
     }
 }

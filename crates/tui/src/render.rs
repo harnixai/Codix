@@ -50,6 +50,8 @@ fn style(t: Tone) -> Style {
         Tone::Selected => s.add_modifier(Modifier::REVERSED),
         Tone::Attention => s.fg(Color::Yellow).add_modifier(Modifier::BOLD),
         Tone::UserMsg => s.bg(Color::Indexed(237)),
+        Tone::Italic => s.add_modifier(Modifier::ITALIC),
+        Tone::Link => s.fg(Color::Blue).add_modifier(Modifier::UNDERLINED),
     }
 }
 
@@ -207,7 +209,13 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
             .border_type(BorderType::Rounded)
             .border_style(style(Tone::Warn));
         f.render_widget(block, rr(c.composer));
-        lines(f, c.composer_inner, ask, p.ask_selected);
+        let inner = Rect::new(
+            c.composer.x + 1,
+            c.composer_inner.y,
+            c.composer.w.saturating_sub(2),
+            c.composer_inner.h,
+        );
+        lines(f, inner, ask, p.ask_selected);
     } else {
         let border = if p.composer.focused {
             style(Tone::Accent)
@@ -215,8 +223,7 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
             style(Tone::Dim)
         };
         let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .borders(Borders::TOP | Borders::BOTTOM)
             .border_style(border);
         f.render_widget(block, rr(c.composer));
         lines(f, c.composer_inner, &p.composer.lines, None);
@@ -248,37 +255,59 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
 }
 
 fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
-    let upper_focused = p.upper.focused;
-    f.render_widget(frame_block(upper_focused), rr(s.upper_frame));
-    for (i, (tab, hit)) in p.tabs.iter().zip(&s.tab_hits).enumerate() {
+    let up = p.upper.focused;
+    let down = p.lower.focused;
+    f.render_widget(frame_block(up), rr(s.upper_frame));
+    f.render_widget(frame_block(down), rr(s.lower_frame));
+    // 共用的那条分隔线：上半或下半有焦点都亮（交互 §2.3）。
+    let mid = s.lower_frame.y;
+    let line_tone = if up || down { Tone::Accent } else { Tone::Dim };
+    let rule = format!("├{}┤", "─".repeat(s.area.w.saturating_sub(2) as usize));
+    lines(
+        f,
+        Rect::new(s.area.x, mid, s.area.w, 1),
+        &[Line::toned(rule, line_tone)],
+        None,
+    );
+    for (tab, hit) in p.tabs.iter().zip(&s.tab_hits) {
+        // 上半的字不加底色：当前标签只换颜色。
         let st = if tab.active {
-            bar(true)
+            let st = Style::default().add_modifier(Modifier::BOLD);
+            if up { st.fg(Color::Cyan) } else { st }
         } else if tab.badge > 0 {
-            bar(false).fg(Color::Yellow)
+            style(Tone::Attention)
         } else {
-            bar(false)
+            style(Tone::Dim)
         };
         f.render_widget(
             Paragraph::new(RLine::from(RSpan::styled(tab.display(), st))),
             rr(*hit),
         );
-        if i + 1 < p.tabs.len() && hit.right() < s.upper_frame.right() - 1 {
-            f.render_widget(
-                Paragraph::new(RLine::from(RSpan::styled("│", bar(false)))),
-                rr(Rect::new(hit.right(), hit.y, 1, 1)),
-            );
-        }
     }
     section(f, s.upper, &p.upper);
-    f.render_widget(frame_block(p.lower.focused), rr(s.lower_frame));
-    let title = Line::plain(p.lower.title.clone().unwrap_or_default());
-    let right = p
-        .lower
-        .title_right
-        .clone()
-        .map(Line::plain)
-        .unwrap_or_default();
-    titles(f, s.lower_frame, &title, &right, p.lower.focused);
+    // 下半的标题：有焦点时字也亮（带底色），否则是淡色的字。
+    let title = p.lower.title.clone().unwrap_or_default();
+    if down {
+        titles(
+            f,
+            s.lower_frame,
+            &Line::plain(title),
+            &p.lower
+                .title_right
+                .clone()
+                .map(Line::plain)
+                .unwrap_or_default(),
+            true,
+        );
+    } else if !title.is_empty() {
+        let t = truncate_to_width(&format!(" {title} "), s.area.w.saturating_sub(4) as usize);
+        lines(
+            f,
+            Rect::new(s.area.x + 2, mid, display_width(&t) as u16, 1),
+            &[Line::toned(t, Tone::Dim)],
+            None,
+        );
+    }
     section(f, s.lower, &p.lower);
 }
 
@@ -372,28 +401,41 @@ fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
     lines(f, inner, &o.lines, None);
 }
 
+/// 实例选择：屏幕中间的小框（交互 §2.2）。
 fn instances(f: &mut Frame, size: Size, s: &InstancesScreen) {
-    let w = size.cols.saturating_sub(2).min(118);
-    let h = size.rows.saturating_sub(2);
-    let frame = Rect::new((size.cols - w) / 2, 0, w, h);
+    let w = size.cols.saturating_sub(4).min(88);
+    let h = (s.rows.len() as u16 + 6).min(size.rows.saturating_sub(1));
+    let frame = Rect::new(
+        (size.cols - w) / 2,
+        size.rows.saturating_sub(1).saturating_sub(h) / 2,
+        w,
+        h,
+    );
+    f.render_widget(Clear, rr(frame));
     f.render_widget(frame_block(true), rr(frame));
     titles(f, frame, &s.title, &Line::default(), true);
-    let list = Rect::new(
-        frame.x + 2,
-        frame.y + 2,
-        w.saturating_sub(4),
-        h.saturating_sub(5),
+    let x = frame.x + 2;
+    let iw = w.saturating_sub(4);
+    let up = if s.more_above { "▲" } else { "" };
+    lines(
+        f,
+        Rect::new(x, frame.y + 1, iw, 1),
+        &[Line::toned(up, Tone::Dim)],
+        None,
     );
+    let list = Rect::new(x, frame.y + 2, iw, s.rows.len() as u16);
     lines(f, list, &s.rows, s.selected);
+    let down = if s.more_below { "▼" } else { "" };
+    lines(
+        f,
+        Rect::new(x, list.bottom(), iw, 1),
+        &[Line::toned(down, Tone::Dim)],
+        None,
+    );
     if let Some(m) = &s.message {
         lines(
             f,
-            Rect::new(
-                frame.x + 2,
-                frame.bottom().saturating_sub(2),
-                w.saturating_sub(4),
-                1,
-            ),
+            Rect::new(x, frame.bottom().saturating_sub(2), iw, 1),
             std::slice::from_ref(m),
             None,
         );

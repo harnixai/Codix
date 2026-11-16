@@ -322,3 +322,41 @@ async fn m16_storm_relayouts_one_block_per_delta() {
     assert!(h.transcript().contains("字字字"));
     assert!(spent <= 1_100, "1000 个增量重排了 {spent} 个块");
 }
+
+#[tokio::test(start_paused = true)]
+async fn showcase_history_renders_every_block_kind() {
+    let mut h = Harness::new("showcase", SIZE).await;
+    h.open_session("Codix 展示").await;
+    let t = h.transcript();
+    for want in [
+        "> ",
+        "✻ 思考了",
+        "┌─ ",
+        "│ ",
+        "─┼─",
+        "☒ ",
+        "▎ ",
+        "◦ ",
+        "⏺ Read(",
+        "读取了",
+        "⏺ Edit(",
+        "更新了",
+        "⏺ Write(",
+        "新建了",
+        "⏺ TodoWrite",
+        "Error:",
+        "上下文已压缩",
+    ] {
+        assert!(t.contains(want), "缺 {want}");
+    }
+    h.snapshot("showcase-history");
+    ask(&mut h, "继续").await;
+    h.advance(5_000).await;
+    assert!(
+        h.text().contains("git push origin feature/oauth"),
+        "停在审批上"
+    );
+    h.keys("1").await;
+    h.advance(5_000).await;
+    assert!(!h.core.state.conv().unwrap().running);
+}

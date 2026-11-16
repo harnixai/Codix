@@ -28,7 +28,7 @@ async fn m21_picker_lists_every_state() {
         "ops",
         "research",
         "old",
-        "已被 me@pts/3",
+        "被 me@pts/3 (ssh 10.0.0.7)",
         "已停止",
         "残留",
         "＋ 新建实例",

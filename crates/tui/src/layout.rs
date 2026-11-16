@@ -103,7 +103,7 @@ pub struct ChatRegions {
     pub hints: Rect,
 }
 
-/// 右栏是上下两个框，平分高度；标签头写在上框的上沿。
+/// 右栏是上下两个框，平分高度，中间共用一条分隔线；标签头写在上框的上沿。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SideRegions {
     pub area: Rect,
@@ -198,7 +198,13 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
         Rect::new(a.x, above, a.w, 1)
     });
     let transcript = Rect::new(a.x, a.y + 1, a.w, above.saturating_sub(a.y + 1));
-    let composer_inner = inner(composer);
+    // 输入框照 Claude Code 只有上下两条横线，内容区占满宽度。
+    let composer_inner = Rect::new(
+        composer.x,
+        composer.y + 1.min(composer.h),
+        composer.w,
+        composer.h.saturating_sub(2),
+    );
     ChatRegions {
         frame,
         owner,
@@ -213,7 +219,8 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
 
 fn side(area: Rect, tab_labels: &[String]) -> SideRegions {
     let upper_h = area.h / 2;
-    let upper_frame = Rect::new(area.x, area.y, area.w, upper_h);
+    // 两框共用中间那一行：上框的下沿就是下框的上沿。
+    let upper_frame = Rect::new(area.x, area.y, area.w, (upper_h + 1).min(area.h));
     let lower_frame = Rect::new(area.x, area.y + upper_h, area.w, area.h - upper_h);
     let mut x = area.x + 2;
     let tab_hits = tab_labels
@@ -274,8 +281,13 @@ mod tests {
         assert_eq!(chat.status.unwrap().bottom(), chat.composer.y);
         assert_eq!(chat.transcript.bottom(), chat.status.unwrap().y);
         assert_eq!(chat.transcript.y, chat.owner.bottom());
-        assert_eq!(side.upper_frame.h, 21);
-        assert_eq!(side.lower_frame.h, 22, "平分，奇数多给下面");
+        assert_eq!(
+            side.upper_frame.bottom() - 1,
+            side.lower_frame.y,
+            "共用一条分隔线"
+        );
+        assert_eq!(side.upper.h, 20);
+        assert_eq!(side.lower.h, 20, "上下两半内容区一样高");
         assert_eq!(side.lower_frame.bottom(), 44);
         assert_eq!(side.tab_hits[0].y, side.upper_frame.y, "标签在上框的上沿");
         assert_eq!(side.tab_hits[1].x, side.tab_hits[0].right() + 1);
@@ -303,6 +315,7 @@ mod tests {
         s.composer_rows = 50;
         let chat = compute(Size::new(80, 32), &s, &[]).chat.unwrap();
         assert_eq!(chat.composer_inner.h, 9);
+        assert_eq!(chat.composer_inner.w, chat.composer.w, "没有左右边框");
         assert!(chat.transcript.h >= 1);
     }
 

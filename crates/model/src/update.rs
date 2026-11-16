@@ -360,10 +360,25 @@ fn picker_action(s: &mut State, a: Action) -> Vec<Effect> {
         return vec![];
     };
     let rows = p.list.len() + 1;
-    let chosen = p.list.get(p.selected).cloned();
+    let chosen = p
+        .selected
+        .checked_sub(1)
+        .and_then(|i| p.list.get(i))
+        .cloned();
     match a {
-        Action::Up => p.selected = p.selected.saturating_sub(1),
-        Action::Down => p.selected = (p.selected + 1).min(rows - 1),
+        Action::Up | Action::Down => {
+            p.selected = if a == Action::Up {
+                p.selected.saturating_sub(1)
+            } else {
+                (p.selected + 1).min(rows - 1)
+            };
+            let n = crate::state::PICKER_ROWS;
+            if p.selected < p.scroll {
+                p.scroll = p.selected;
+            } else if p.selected >= p.scroll + n {
+                p.scroll = p.selected + 1 - n;
+            }
+        }
         Action::Quit => return vec![Effect::Quit { detach: true }],
         Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
         Action::New => return create(s),
@@ -432,6 +447,10 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
             let Screen::Instances(p) = &mut s.ui.screen else {
                 return vec![];
             };
+            // 第一次列出来时选中第一个实例（"新建"在它上面一行）。
+            if p.loading && p.list.is_empty() && !list.is_empty() {
+                p.selected = 1;
+            }
             p.loading = false;
             p.selected = p.selected.min(list.len());
             p.list = list;
