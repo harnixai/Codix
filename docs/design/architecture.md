@@ -4,12 +4,12 @@
 
 ## 1. 总览
 
-Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux 的 server / client 类似。
+Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux 的 server / client 类似，区别在于：**一个实例同一时刻只接受一个 TUI。**
 
 ```
 本机（远程时就是 ssh 登录上去的那台机器）
 
-┌──── codix（TUI 进程，可以有几个）────────────────────────────────┐
+┌──── codix（TUI 进程；接入同一实例的只能有一个）──────────────────┐
 │  终端（按键 / 鼠标 / 尺寸）──► keys ──► app 事件循环              │
 │                                         │                        │
 │               model::update / model::view ──► tui::render        │
@@ -23,7 +23,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 │  会话代理 ── Agix 客户端 ──► agix::embed（同进程，data_root = ~/.codix）│
 │  流程（3rds/harnix-flow 内核 + runner，FlowEngine 由 Agix 实现）   │
 │  作业调度                                                         │
-│  多客户端广播；状态落盘在 ~/.codix/instances/<名字>/              │
+│  单一接入：占用、强制接入、空闲脱离、心跳；状态落盘在实例目录     │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,7 +45,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 | `mock` | 2 | `MockInstances` 与 `ScriptedBackend`：用种子数据和场景脚本驱动 | port |
 | `app` | 2 | 二进制 `codix`：命令行解析、终端生命周期（尺寸协商、鼠标捕获）、事件循环、实例选择列表 | 以上全部 |
 | `wire` | 3 | Agix 协议的 serde 类型（协议 §4、§7）。遇到不认识的 `kind` 一律跳过 | serde |
-| `host` | 3 | 实例进程：Agix 客户端、把 Agix 帧翻译成领域事件、流程（`FlowEngine` 的实现）、作业调度、socket 服务与多客户端管理、实例锁与发现文件 | port, wire, agix, 3rds/harnix-flow |
+| `host` | 3 | 实例进程：Agix 客户端、把 Agix 帧翻译成领域事件、流程（`FlowEngine` 的实现）、作业调度、socket 服务与单一接入（占用、强制接入、心跳）、实例锁与发现文件 | port, wire, agix, 3rds/harnix-flow |
 | `client` | 3 | `SocketInstances` 与 `SocketBackend`：扫描实例、拉起实例、通过 socket 接入 | port |
 
 **依赖边界**（阶段 2 起用测试守住）：
@@ -64,7 +64,9 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 pub trait Instances: Send + Sync + 'static {
     async fn list(&self, all: bool) -> Result<Vec<InstanceInfo>, PortError>;
     async fn create(&self, opts: NewInstance) -> Result<Arc<dyn Backend>, PortError>;
-    async fn attach(&self, name: &str) -> Result<Arc<dyn Backend>, PortError>;
+    /// 实例已被别的 TUI 接入时返回 `PortError::Occupied { holder, idle_ms }`；
+    /// `force` 为 true 则踢掉占用者再接入。
+    async fn attach(&self, name: &str, opts: Attach) -> Result<Arc<dyn Backend>, PortError>;
     async fn start(&self, name: &str) -> Result<Arc<dyn Backend>, PortError>;
     async fn stop(&self, name: &str) -> Result<(), PortError>;
 }
@@ -76,14 +78,16 @@ pub trait Backend: Send + Sync + 'static {
 }
 ```
 
-- `InstanceInfo` 包含：名字、PID、主机名、项目、启动时间、版本、会话数、在等人的数量、已接入的客户端数、状态（运行中 / 已停止 / 残留）。
+- `InstanceInfo` 包含：名字、PID、主机名、项目、启动时间、版本、会话数、在等人的数量、状态（运行中 / 已停止 / 残留），以及 `holder: Option<ClientInfo>`，即当前接入者。
+- `ClientInfo` 包含：用户、PID、终端（tty）、ssh 来源（取自 `SSH_CONNECTION`）、接入时刻、最后一次输入的时刻。
+- `Attach` 包含：`force`，以及 `idle_timeout`（可选，覆盖配置里的值）。
 - app 把每次 `call` 都 spawn 出去，结果通过 `Msg::Reply` 投回事件循环，没有哪个调用会卡住界面（N-03）。
 
 ### 3.2 命令（`Command`）
 
 | 组 | 命令 |
 |---|---|
-| 连接 | `Hello{client}`：返回实例信息和能力位；`Detach`；`StopInstance` |
+| 连接 | `Hello{client, force}`：返回实例信息和能力位；`Heartbeat{last_input_ms}`；`Detach`；`StopInstance` |
 | 会话 | `ListSessions{filter}`、`CreateSession{project, scene, model}`、`OpenSession{id}`（需要时先恢复）、`Watch{id}` / `Unwatch{id}`、`History{id, before}`、`Rename`、`Close` |
 | 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
 | goal | `SetGoal`、`UpdateGoal{action: Pause \| Resume \| Edit \| Clear}` |
@@ -95,11 +99,11 @@ pub trait Backend: Send + Sync + 'static {
 
 | 组 | 事件 |
 |---|---|
-| 连接 | `Connection(Connected \| Lost \| Reconnecting \| Resynced)`、`Clients{count}`（有别的 TUI 接入或脱离时推送） |
+| 连接 | `Connection(Connected \| Lost \| Reconnecting \| Resynced)`、`Kicked{by: ClientInfo, at}`（被强制接入的一方踢掉）、`IdleDetached{after_ms}` |
 | 会话列表 | `SessionUpserted(SessionSummary)`、`SessionRemoved(id)` |
 | 一轮（仅限被 Watch 的会话） | `TurnStarted`、`StepRestarted{step}`、`TextDelta`、`ThinkingDelta`、`ToolStarted`、`ToolInput`、`ToolProgress`、`ToolFinished`、`TurnEnded{stop, usage}`、`TurnFailed` |
 | 插话 | `SteerDelivered`、`SteerReturned{messages}` |
-| 提问 | `PromptPending(Prompt)`、`PromptResolved{id, resolution}`。多个客户端接入时，一处回答了，其他各处都会收到 `PromptResolved` |
+| 提问 | `PromptPending(Prompt)`、`PromptResolved{id, resolution}` |
 | 会话状态 | `GoalChanged`、`TodosChanged`、`Compacted`、`CommandsChanged`、`Notice{level, text}` |
 | 任务 | `TaskUpserted(Task)`、`TaskOutput{task, bytes, from, next}` |
 | 流程 | `RunUpserted(RunSummary)`、`RunDetail(RunView)` |
@@ -120,20 +124,21 @@ pub trait Backend: Send + Sync + 'static {
 ```
 State
 ├── domain        后端事实，只由 Event / Reply 写入
-│   ├── instance      当前接入的实例信息、能力位、客户端数
+│   ├── instance      当前接入的实例信息、能力位
 │   ├── sessions      会话摘要与归属；被 Watch 的会话另有 Transcript / AskQueue / Tasks / Goal / Todos
 │   ├── flows / runs  流程定义、运行摘要、选中运行的详情
 │   ├── jobs          作业与触发历史
 │   └── conn          连接状态
 └── ui            界面状态，只由输入（按键、鼠标）和 Tick 写入
-    ├── screen        实例选择列表 / 工作台
+    ├── screen        实例选择 / 工作台 / 已脱离（被踢、空闲超时）
     ├── layout        并排或单栏、两栏比例、右栏是否收起、当前显示哪一栏（单栏时）
     ├── focus         Composer / Transcript / Side(Upper | Lower) / Dialog
     ├── context       对话区的上下文栈（面包屑）
     ├── tabs          当前标签；每个标签各自的展开、选中、滚动状态
     ├── composer      草稿、光标、历史、补全
     ├── transcript    每个上下文各自的滚动位置、选中块、折叠集合、拖选范围
-    └── mouse         是否捕获鼠标、正在拖动的对象（分隔线 / 选区）
+    ├── mouse         是否捕获鼠标、正在拖动的对象（分隔线 / 选区）
+    └── idle          最后一次输入的时刻；空闲超时的时长
 ```
 
 **`FrameState` 只有 `view` 一个写者。**
@@ -195,7 +200,8 @@ loop {
 | `codix` | 本机有在跑的实例时，先显示实例选择列表；没有就新建一个并接入 |
 | `codix new [--name] [--project]` | 新建实例并接入 |
 | `codix list [--all]` | 用纯文本列出实例，不进入 TUI |
-| `codix attach <名字>` / `start <名字>` / `stop <名字>` | 接入 / 启动 / 停止指定实例 |
+| `codix attach <名字> [--force] [--idle-timeout <时长>]` | 接入指定实例；`--force` 踢掉当前接入者 |
+| `codix start <名字>` / `stop <名字>` | 启动 / 停止指定实例 |
 | `codix --mock <场景>` | 阶段 2：使用 mock 的实例和后端 |
 | `codix host --name <名字>` | 内部使用：实例进程的入口，由 `new` / `start` 拉起，用户不直接调用 |
 
@@ -216,25 +222,26 @@ loop {
 ### 8.1 数据目录
 
 ```
-~/.codix/                       （由 CODIX_HOME 指定时以它为准；同时作为 Agix 的 data_root）
-├── settings.json  scenes/  …   Agix 的全局数据，布局由 Agix 决定
-├── codix/
-│   ├── config.toml             Codix 的配置：缺省终端尺寸、鼠标、比例等
-│   ├── keybindings.json
-│   ├── flows/                  流程包（流程、skills、规则、策略、门禁、钩子），所有实例共用
-│   └── instances/<名字>/
-│       ├── instance.json       发现文件：pid、socket、项目、启动时间、版本
-│       ├── instance.lock       flock，防止同名实例跑两个
-│       ├── host.sock           0600，所在目录 0700
-│       ├── groups.json         Agix 的 groups_file，用于回收孤儿进程组
-│       ├── runs/               本实例的流程运行（harnix-flow 的 FileStore）
-│       ├── jobs/               本实例的作业定义和触发历史
-│       └── host.log
+~/.codix/                         CODIX_HOME 指定时以它为准；同时也是 Agix 的 data_root
+├── settings.json                 ┐
+├── projects/  sessions/  memory/ │ Agix 的全局数据，布局归 Agix（ARCHITECTURE.md §8）。
+├── scenes/  daemon/  …           ┘ 模型、provider、权限等配置都沿用这里的 settings.json
+├── codix.toml                    Codix 自己的配置：界面（缺省尺寸、比例、鼠标）、实例（空闲超时、心跳）
+├── keybindings.json              快捷键覆盖
+├── flows/                        流程包（流程、skills、规则、策略、门禁、钩子），所有实例共用
+└── instances/<名字>/
+    ├── instance.json             发现文件：pid、socket、项目、启动时间、版本、当前接入者
+    ├── instance.lock             flock，防止同名实例跑两个
+    ├── host.sock                 0600，目录 0700
+    ├── groups.json               Agix 的 groups_file，用于回收孤儿进程组
+    ├── runs/                     本实例的流程运行（harnix-flow 的 FileStore）
+    ├── jobs/                     本实例的作业定义与触发历史
+    └── host.log
 ```
 
-- Codix 自己的东西都放在 `codix/` 子目录下，不和 Agix 的布局混在一起。
+- Codix 自己的文件和 Agix 的放在同一个目录，用 Codix 自己的名字（`codix.toml`、`keybindings.json`、`flows/`、`instances/`），都不和 Agix 的顶层名字冲突。**不往 Agix 的 `settings.json` 里写 Codix 的配置**：Agix 对不认识的键会告警，而且两边的配置应当各管各的。
 - **流程包所有实例共用；运行和作业属于各自的实例。** 这样两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时，会把它的运行和作业接着跑起来。
-- 项目层仍然使用 `<项目>/.agix/`，这是 Agix 写死的（见需求 §7）。
+- 项目层目录：Agix#86 落地之前沿用 `<项目>/.agix/`，落地之后通过 `EmbedConfig.project_dir` 改成 `.codix/`。Codix 自己目前不在项目里放任何东西。
 
 ### 8.2 实例进程
 
@@ -244,7 +251,11 @@ loop {
   - 日志过滤用 `agix::process::log_filter`，否则 rmcp 会把 OAuth 令牌写进日志
   - 安装 panic 钩子
   - 收到 SIGTERM 时依次关闭会话、流程、作业，再删掉 socket 和发现文件
-- 多个客户端：实例维护一张连接表，事件广播给所有客户端，`Watch` 按连接各自记录。连接断开不影响任何正在进行的工作。
+- **单一接入**：
+  - 实例同时只服务一个 TUI 连接。另一个 `Hello` 到来时，如果不带 `force`，就回 `Occupied{holder, idle_ms}`；带 `force` 时，先给当前连接推一条 `Kicked{by, at}`，再关闭它，然后接受新连接。
+  - 被踢、空闲脱离、连接断开，都不影响实例里正在进行的工作。
+  - **心跳**：TUI 每 10 秒发一次 `Heartbeat`，带上最后一次输入的时刻。实例连续 3 次没收到心跳，就断开这个连接，处理 TUI 僵死、ssh 半开这类情况。
+  - **空闲脱离**：由 TUI 自己判断。超过 `idle_timeout` 没有任何输入，就发 `Detach` 并进入"已脱离"界面，终端不退出，按任意键重新接入。实例那边再以心跳里的 `last_input_ms` 兜底：如果客户端没执行空闲脱离（比如是旧版本），实例按配置把它断开。
 - 残留检测：`list` 时遇到 pid 已经不在、或者 socket 连不上的实例，标记为"残留"，并清理掉 socket 和发现文件；运行和作业的状态保留，可以用 `start` 再拉起来。
 - 对端校验：accept 之后用 `getpeereid` / `SO_PEERCRED` 检查对端 uid，必须与实例进程的 uid 一致。
 
@@ -295,7 +306,8 @@ loop {
 
 | 问题 | 倾向 |
 |---|---|
-| 项目层目录要不要也改成 `.codix` | 先沿用 Agix 的 `.agix/`。要改的话需要给 Agix 提 issue，请维护者决定 |
+| 项目层目录 | 已提 Agix#86，落地后改成 `.codix/` |
+| 空闲超时的缺省值 | 30 分钟（`codix.toml` 的 `instance.idle_timeout`），设为 `0` 表示不超时 |
 | 缺省终端尺寸 | 160×45，写在 `config.toml`，可以设为 `off` |
 | 宽屏下左右两栏的缺省比例 | 60 : 40，可调，并记住 |
 | 实例开机自启 | P2：在手册里给出 systemd user unit 和 launchd plist 的示例 |
