@@ -151,6 +151,9 @@ pub enum Event {
 
     // 作业
     JobUpserted(Job),
+    JobRemoved {
+        job: JobId,
+    },
     JobFired {
         job: JobId,
         entry: JobEntry,

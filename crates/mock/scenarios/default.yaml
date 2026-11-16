@@ -1,0 +1,3 @@
+# 只加载 default 种子，不跑时间线。
+name: default
+seed: default

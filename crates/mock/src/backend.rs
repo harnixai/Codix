@@ -1,0 +1,860 @@
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use port::{
+    Backend, Command, Event, GoalAction, GoalPhase, JobEntry, JobOutcome, JobTarget, Millis,
+    PortError, Reply, Resolution, RunOp, RunStatus, RunSummary, RunView, SessionId, SessionState,
+    SessionSummary, StationStatus, StopReason, SubmitMode, TaskStatus, Usage,
+};
+use tokio::sync::mpsc;
+use tokio::time::Instant;
+
+use crate::scenario::{RuleReply, Scenario, Step, StepAction};
+use crate::state::MockState;
+
+/// 测试断言用：后端收到过的每一条命令，按到达顺序。
+pub type CallLog = Arc<Mutex<Vec<Command>>>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct MockOptions {
+    /// 时间线加速倍数（`codix --mock … --speed 4`）。
+    pub speed: f64,
+    /// 场景里写的毫秒数以这个时刻为"墙上时间"的零点，用于填 `*_ms` 字段。
+    pub epoch_ms: Millis,
+}
+
+impl Default for MockOptions {
+    fn default() -> Self {
+        MockOptions {
+            speed: 1.0,
+            epoch_ms: 1_763_280_000_000,
+        }
+    }
+}
+
+enum Sched {
+    At {
+        due: Instant,
+        tag: Option<SessionId>,
+        event: Box<Event>,
+    },
+    /// 取消某会话还没发生的事件：中断一轮时用。
+    Cancel(SessionId),
+}
+
+pub struct ScriptedBackend {
+    state: Arc<Mutex<MockState>>,
+    scenario: Scenario,
+    used_rules: Mutex<HashSet<usize>>,
+    sched: mpsc::UnboundedSender<Sched>,
+    events: Mutex<Option<mpsc::UnboundedReceiver<Event>>>,
+    calls: CallLog,
+    seq: AtomicU64,
+    opts: MockOptions,
+    started: Instant,
+}
+
+impl ScriptedBackend {
+    /// 必须在 tokio 运行时里调用：时间线从这一刻开始走。
+    pub fn new(state: MockState, scenario: Scenario, opts: MockOptions) -> Arc<Self> {
+        let state = Arc::new(Mutex::new(state));
+        let (ev_tx, ev_rx) = mpsc::unbounded_channel();
+        let (sched_tx, sched_rx) = mpsc::unbounded_channel();
+        tokio::spawn(scheduler(sched_rx, state.clone(), ev_tx));
+        let me = Arc::new(ScriptedBackend {
+            state,
+            scenario,
+            used_rules: Mutex::new(HashSet::new()),
+            sched: sched_tx,
+            events: Mutex::new(Some(ev_rx)),
+            calls: CallLog::default(),
+            seq: AtomicU64::new(1),
+            opts,
+            started: Instant::now(),
+        });
+        let timeline: Vec<_> = me
+            .scenario
+            .timeline
+            .iter()
+            .map(|t| (t.at, t.action.clone()))
+            .collect();
+        for (at, action) in timeline {
+            me.schedule_action(me.started + me.scaled(at), &action, 0);
+        }
+        me
+    }
+
+    pub fn calls(&self) -> CallLog {
+        self.calls.clone()
+    }
+
+    pub fn state(&self) -> MockState {
+        self.state.lock().unwrap().clone()
+    }
+
+    fn scaled(&self, ms: Millis) -> Duration {
+        Duration::from_secs_f64(ms as f64 / 1000.0 / self.opts.speed.max(0.01))
+    }
+
+    fn now_ms(&self) -> Millis {
+        self.opts.epoch_ms + self.started.elapsed().as_millis() as Millis
+    }
+
+    fn next_id(&self, prefix: &str) -> String {
+        format!("{prefix}{}", self.seq.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn emit_now(&self, event: Event) {
+        self.emit_at(Instant::now(), event);
+    }
+
+    fn emit_at(&self, due: Instant, event: Event) {
+        let tag = event.session().cloned();
+        let _ = self.sched.send(Sched::At {
+            due,
+            tag,
+            event: Box::new(event),
+        });
+    }
+
+    fn cancel(&self, session: &SessionId) {
+        let _ = self.sched.send(Sched::Cancel(session.clone()));
+    }
+
+    /// 排一串步骤，返回最后一步的时刻：`after` 相对上一步，`play` 的下一步接在片段结束之后。
+    fn schedule_steps(
+        &self,
+        start: Instant,
+        steps: &[Step],
+        session: Option<&SessionId>,
+    ) -> Instant {
+        let mut t = start;
+        for step in steps {
+            t += self.scaled(step.after);
+            t = self.schedule_one(t, &step.action, session, 0);
+        }
+        t
+    }
+
+    fn schedule_action(&self, at: Instant, action: &StepAction, depth: u8) {
+        self.schedule_one(at, action, None, depth);
+    }
+
+    fn schedule_one(
+        &self,
+        at: Instant,
+        action: &StepAction,
+        session: Option<&SessionId>,
+        depth: u8,
+    ) -> Instant {
+        match action {
+            StepAction::Event(ev) => {
+                self.emit_at(at, substitute(ev, session));
+                at
+            }
+            StepAction::Play(name) if depth < 8 => match self.scenario.scripts.get(name) {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    let mut t = at;
+                    for step in &steps {
+                        t += self.scaled(step.after);
+                        t = self.schedule_one(t, &step.action, session, depth + 1);
+                    }
+                    t
+                }
+                None => {
+                    self.emit_at(
+                        at,
+                        Event::Notice {
+                            level: port::NoticeLevel::Error,
+                            text: format!("mock：场景里没有片段 {name}"),
+                        },
+                    );
+                    at
+                }
+            },
+            StepAction::Play(_) => at,
+        }
+    }
+
+    fn react(&self, cmd: &Command) -> Result<Reply, PortError> {
+        let session = command_session(cmd);
+        let rule = {
+            let mut used = self.used_rules.lock().unwrap();
+            let hit = self
+                .scenario
+                .rules
+                .iter()
+                .enumerate()
+                .find(|(i, r)| r.on.matches(cmd) && !(r.once && used.contains(i)));
+            if let Some((i, _)) = hit {
+                used.insert(i);
+            }
+            hit.map(|(_, r)| r.clone())
+        };
+        match rule {
+            Some(rule) => {
+                self.schedule_steps(Instant::now(), &rule.then, session.as_ref());
+                match rule.reply {
+                    Some(RuleReply::Ok) => Ok(Reply::Ok),
+                    Some(RuleReply::Error(e)) => Err(PortError::Failed(e)),
+                    None => self.default_reply(cmd, false),
+                }
+            }
+            None => self.default_reply(cmd, true),
+        }
+    }
+
+    /// 缺省反应。`effects` 为假时只给结果、不推事件（规则已经接管了后续）。
+    fn default_reply(&self, cmd: &Command, effects: bool) -> Result<Reply, PortError> {
+        use Command::*;
+        let st = || self.state.lock().unwrap();
+        match cmd {
+            Hello { .. } => Ok(Reply::Hello {
+                instance: st().instance.clone(),
+                flows: true,
+                jobs: true,
+            }),
+            Heartbeat { .. } | Detach | Unwatch { .. } | Rename { .. } => {
+                if let (Rename { session, title }, true) = (cmd, effects)
+                    && let Some(mut s) = self.summary(session)
+                {
+                    s.title = title.clone();
+                    self.emit_now(Event::SessionUpserted(s));
+                }
+                Ok(Reply::Ok)
+            }
+            StopInstance => {
+                if effects {
+                    self.emit_now(Event::InstanceStopped {
+                        reason: "已由你停止".into(),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            ListSessions { .. } => Ok(Reply::Sessions(st().summaries())),
+            CreateSession {
+                project,
+                scene,
+                model,
+            } => {
+                let s = self.new_session(
+                    "新会话",
+                    project.clone(),
+                    scene.clone(),
+                    model.clone(),
+                    port::Origin::User,
+                );
+                self.emit_now(Event::SessionUpserted(s.clone()));
+                Ok(Reply::Session(s))
+            }
+            Watch { session } => st()
+                .watched(session)
+                .map(|w| Reply::Watched(Box::new(w)))
+                .ok_or_else(|| PortError::Failed(format!("没有会话 {session}"))),
+            Close { session } => {
+                if effects {
+                    self.emit_now(Event::SessionRemoved {
+                        session: session.clone(),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            Submit {
+                session,
+                text,
+                mode,
+            } => {
+                let message = port::MessageId(self.next_id("m"));
+                if effects {
+                    let running = st().sessions.get(session).is_some_and(|s| s.running);
+                    if running && *mode == SubmitMode::Steer {
+                        self.emit_at(
+                            Instant::now() + self.scaled(300),
+                            Event::SteerDelivered {
+                                session: session.clone(),
+                                message: message.clone(),
+                            },
+                        );
+                    } else {
+                        self.default_answer(session, text);
+                    }
+                }
+                Ok(Reply::Submitted { message })
+            }
+            Interrupt { session } => {
+                if effects {
+                    self.cancel(session);
+                    self.emit_now(Event::TurnEnded {
+                        session: session.clone(),
+                        stop: StopReason::Cancelled,
+                        usage: Usage::default(),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            Answer {
+                session, prompt, ..
+            } => {
+                if effects {
+                    self.emit_now(Event::PromptResolved {
+                        session: session.clone(),
+                        id: prompt.clone(),
+                        resolution: Resolution::Answered,
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            SetModel { session, model } => {
+                if effects && let Some(mut s) = self.summary(session) {
+                    s.provenance.model = model.clone();
+                    self.emit_now(Event::SessionUpserted(s));
+                }
+                Ok(Reply::Ok)
+            }
+            Commands { .. } => Ok(Reply::Commands(st().commands.clone())),
+            SideQuestion { text, .. } => {
+                if effects {
+                    self.emit_now(Event::Notice {
+                        level: port::NoticeLevel::Info,
+                        text: format!("（mock）侧问：{text}"),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            SetGoal {
+                session,
+                objective,
+                max_rounds,
+            } => {
+                if effects {
+                    self.emit_now(Event::GoalChanged {
+                        session: session.clone(),
+                        goal: Some(port::Goal {
+                            objective: objective.clone(),
+                            phase: GoalPhase::Active,
+                            rounds_started: 0,
+                            max_rounds: max_rounds.unwrap_or(256),
+                            blocked_reason: None,
+                        }),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            UpdateGoal { session, action } => {
+                if effects {
+                    let goal = st().sessions.get(session).and_then(|s| s.goal.clone());
+                    let next = match (goal, action) {
+                        (_, GoalAction::Clear) | (None, _) => None,
+                        (Some(mut g), GoalAction::Pause) => {
+                            g.phase = GoalPhase::Paused;
+                            Some(g)
+                        }
+                        (Some(mut g), GoalAction::Resume) => {
+                            g.phase = GoalPhase::Active;
+                            g.blocked_reason = None;
+                            Some(g)
+                        }
+                        (
+                            Some(mut g),
+                            GoalAction::Edit {
+                                objective,
+                                max_rounds,
+                            },
+                        ) => {
+                            g.objective = objective.clone();
+                            if let Some(m) = max_rounds {
+                                g.max_rounds = *m;
+                            }
+                            Some(g)
+                        }
+                    };
+                    self.emit_now(Event::GoalChanged {
+                        session: session.clone(),
+                        goal: next,
+                    });
+                }
+                Ok(Reply::Ok)
+            }
+            StopTask { task } => {
+                if effects && let Some(mut t) = st().tasks.get(task).cloned() {
+                    t.status = TaskStatus::Stopped;
+                    t.ended_ms = Some(self.now_ms());
+                    self.emit_now(Event::TaskUpserted(t));
+                }
+                Ok(Reply::Ok)
+            }
+            MessageTask { .. } => Ok(Reply::Ok),
+            TaskOutput { task, from_byte } => {
+                let st = st();
+                let all = st.task_output.get(task).cloned().unwrap_or_default();
+                let from = (*from_byte as usize).min(all.len());
+                let from = (0..=from)
+                    .rev()
+                    .find(|i| all.is_char_boundary(*i))
+                    .unwrap_or(0);
+                let finished = st.tasks.get(task).is_some_and(|t| t.status.finished());
+                Ok(Reply::TaskOutput {
+                    text: all[from..].to_string(),
+                    next_byte: all.len() as u64,
+                    finished,
+                })
+            }
+            ListFlows => Ok(Reply::Flows(st().flow_summaries())),
+            GetFlow { name } => st()
+                .flows
+                .iter()
+                .find(|f| &f.summary.name == name)
+                .map(|f| Reply::Flow(Box::new(f.detail())))
+                .ok_or_else(|| PortError::Failed(format!("没有流程 {name}"))),
+            ListRuns { flow } => {
+                let mut runs: Vec<_> = st()
+                    .runs
+                    .values()
+                    .filter(|r| &r.summary.flow == flow)
+                    .map(|r| r.summary.clone())
+                    .collect();
+                runs.sort_by_key(|r| std::cmp::Reverse(r.started_ms));
+                Ok(Reply::Runs(runs))
+            }
+            GetRun { run } => st()
+                .runs
+                .get(run)
+                .map(|r| Reply::Run(Box::new(r.clone())))
+                .ok_or_else(|| PortError::Failed(format!("没有运行 {run}"))),
+            StartRun { flow, subject, .. } => {
+                let view = self.start_run(flow, subject)?;
+                let summary = view.summary.clone();
+                self.emit_now(Event::RunDetail(Box::new(view)));
+                Ok(Reply::RunStarted(summary))
+            }
+            RunOp { run, op } => {
+                if effects {
+                    let mut view = st()
+                        .runs
+                        .get(run)
+                        .cloned()
+                        .ok_or_else(|| PortError::Failed(format!("没有运行 {run}")))?;
+                    apply_run_op(&mut view, op);
+                    self.emit_now(Event::RunUpserted(view.summary.clone()));
+                    self.emit_now(Event::RunDetail(Box::new(view)));
+                }
+                Ok(Reply::Ok)
+            }
+            OpenAuthoring { flow } => {
+                let title = match flow {
+                    Some(f) => format!("编写：{f}"),
+                    None => "新流程".to_string(),
+                };
+                let s = self.new_session(
+                    &title,
+                    None,
+                    Some("flow-author".into()),
+                    None,
+                    port::Origin::User,
+                );
+                self.emit_now(Event::SessionUpserted(s.clone()));
+                Ok(Reply::Session(s))
+            }
+            ListJobs => Ok(Reply::Jobs(
+                st().jobs.values().map(|(j, _)| j.clone()).collect(),
+            )),
+            JobHistory { job } => Ok(Reply::JobHistory(
+                st().jobs
+                    .get(job)
+                    .map(|(_, h)| h.clone())
+                    .unwrap_or_default(),
+            )),
+            SaveJob { job } => {
+                self.emit_now(Event::JobUpserted(job.clone()));
+                Ok(Reply::Job(job.clone()))
+            }
+            DeleteJob { job } => {
+                if effects {
+                    self.emit_now(Event::JobRemoved { job: job.clone() });
+                }
+                Ok(Reply::Ok)
+            }
+            SetJobEnabled { job, enabled } => {
+                if effects && let Some((mut j, _)) = st().jobs.get(job).cloned() {
+                    j.enabled = *enabled;
+                    self.emit_now(Event::JobUpserted(j));
+                }
+                Ok(Reply::Ok)
+            }
+            RunJobNow { job } => {
+                if effects && let Some((j, _)) = st().jobs.get(job).cloned() {
+                    let target = match &j.kind {
+                        port::JobKind::Simple { .. } => {
+                            let s = self.new_session(
+                                &format!("{} {}", j.name, "（立即运行）"),
+                                None,
+                                None,
+                                None,
+                                port::Origin::Job {
+                                    job: j.id.clone(),
+                                    name: j.name.clone(),
+                                    fired_ms: self.now_ms(),
+                                },
+                            );
+                            self.emit_now(Event::SessionUpserted(s.clone()));
+                            JobTarget::Session {
+                                id: s.id,
+                                title: s.title,
+                            }
+                        }
+                        port::JobKind::Flow { flow, subject, .. } => {
+                            let view = self.start_run(flow, subject)?;
+                            let t = JobTarget::Run {
+                                id: view.summary.id.clone(),
+                                subject: view.summary.subject.clone(),
+                            };
+                            self.emit_now(Event::RunDetail(Box::new(view)));
+                            t
+                        }
+                    };
+                    self.emit_at(
+                        Instant::now() + self.scaled(800),
+                        Event::JobFired {
+                            job: job.clone(),
+                            entry: JobEntry {
+                                fired_ms: self.now_ms(),
+                                outcome: JobOutcome::Done,
+                                elapsed_ms: 800,
+                                usage: Usage {
+                                    input: 3_000,
+                                    output: 400,
+                                    ..Usage::default()
+                                },
+                                target: Some(target),
+                            },
+                        },
+                    );
+                }
+                Ok(Reply::Ok)
+            }
+        }
+    }
+
+    fn summary(&self, id: &SessionId) -> Option<SessionSummary> {
+        self.state
+            .lock()
+            .unwrap()
+            .sessions
+            .get(id)
+            .map(|s| s.summary.clone())
+    }
+
+    fn new_session(
+        &self,
+        title: &str,
+        project: Option<String>,
+        scene: Option<String>,
+        model: Option<String>,
+        origin: port::Origin,
+    ) -> SessionSummary {
+        let st = self.state.lock().unwrap();
+        SessionSummary {
+            id: SessionId(self.next_id("s-new-")),
+            title: title.to_string(),
+            state: SessionState::Idle,
+            waiting: 0,
+            usage: Usage::default(),
+            provenance: port::Provenance {
+                instance: st.instance.name.clone(),
+                host: st.instance.host.clone(),
+                project: project.or_else(|| st.instance.project.clone()),
+                scene: scene.unwrap_or_else(|| "code".into()),
+                model: model.unwrap_or_else(|| "claude-sonnet-5-5".into()),
+                origin,
+            },
+            updated_ms: self.now_ms(),
+            held_by: None,
+        }
+    }
+
+    fn start_run(&self, flow: &str, subject: &str) -> Result<RunView, PortError> {
+        let stations = {
+            let st = self.state.lock().unwrap();
+            st.flows
+                .iter()
+                .find(|f| f.summary.name == flow)
+                .map(|f| f.stations.clone())
+                .ok_or_else(|| PortError::Failed(format!("没有流程 {flow}")))?
+        };
+        let main = self.new_session(subject, None, None, None, port::Origin::User);
+        let id = port::RunId(self.next_id("r-new-"));
+        let mut main = main;
+        main.title = format!("{subject}（主会话）");
+        self.emit_now(Event::SessionUpserted(main.clone()));
+        let mut view = RunView {
+            summary: RunSummary {
+                id,
+                flow: flow.to_string(),
+                subject: subject.to_string(),
+                status: RunStatus::Running,
+                current: None,
+                stations_done: 0,
+                stations_total: stations.len() as u32,
+                started_ms: self.now_ms(),
+                ended_ms: None,
+                usage: Usage::default(),
+            },
+            main_session: main.id,
+            stations: stations
+                .into_iter()
+                .map(|mut s| {
+                    s.status = StationStatus::Pending;
+                    s.tasks.clear();
+                    s.elapsed_ms = 0;
+                    s.usage = Usage::default();
+                    s
+                })
+                .collect(),
+        };
+        advance(&mut view);
+        Ok(view)
+    }
+
+    /// 没有规则接管时对一句提交的回答：`default-answer` 片段（`$session` 会被换掉），
+    /// 没有就回显一句。
+    fn default_answer(&self, session: &SessionId, text: &str) {
+        if self.scenario.scripts.contains_key("default-answer") {
+            self.schedule_one(
+                Instant::now(),
+                &StepAction::Play("default-answer".into()),
+                Some(session),
+                0,
+            );
+            return;
+        }
+        let reply = format!("（mock）收到：{text}");
+        let chars: Vec<char> = reply.chars().collect();
+        let mut steps = vec![Step {
+            after: 0,
+            action: StepAction::Event(Box::new(Event::TurnStarted {
+                session: session.clone(),
+            })),
+        }];
+        for chunk in chars.chunks(6) {
+            steps.push(Step {
+                after: 40,
+                action: StepAction::Event(Box::new(Event::TextDelta {
+                    session: session.clone(),
+                    text: chunk.iter().collect(),
+                })),
+            });
+        }
+        steps.push(Step {
+            after: 40,
+            action: StepAction::Event(Box::new(Event::TurnEnded {
+                session: session.clone(),
+                stop: StopReason::EndTurn,
+                usage: Usage {
+                    input: 1_200,
+                    output: chars.len() as u64,
+                    ..Usage::default()
+                },
+            })),
+        });
+        self.schedule_steps(Instant::now(), &steps, Some(session));
+    }
+}
+
+#[async_trait]
+impl Backend for ScriptedBackend {
+    async fn call(&self, cmd: Command) -> Result<Reply, PortError> {
+        self.calls.lock().unwrap().push(cmd.clone());
+        self.react(&cmd)
+    }
+
+    fn events(&self) -> mpsc::UnboundedReceiver<Event> {
+        self.events
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| mpsc::unbounded_channel().1)
+    }
+}
+
+/// 片段里写 `$session` 的地方换成实际的会话：同一个片段可以对任意会话回放。
+fn substitute(ev: &Event, session: Option<&SessionId>) -> Event {
+    let Some(session) = session else {
+        return ev.clone();
+    };
+    let Ok(text) = serde_json::to_string(ev) else {
+        return ev.clone();
+    };
+    if !text.contains("\"$session\"") {
+        return ev.clone();
+    }
+    let replaced = text.replace(
+        "\"$session\"",
+        &serde_json::to_string(session.as_str()).unwrap_or_default(),
+    );
+    serde_json::from_str(&replaced).unwrap_or_else(|_| ev.clone())
+}
+
+fn command_session(cmd: &Command) -> Option<SessionId> {
+    use Command::*;
+    match cmd {
+        Watch { session }
+        | Unwatch { session }
+        | Rename { session, .. }
+        | Close { session }
+        | Submit { session, .. }
+        | Interrupt { session }
+        | Answer { session, .. }
+        | SetModel { session, .. }
+        | Commands { session }
+        | SideQuestion { session, .. }
+        | SetGoal { session, .. }
+        | UpdateGoal { session, .. } => Some(session.clone()),
+        _ => None,
+    }
+}
+
+/// 进站：所有前置都已通过（或跳过）的待进入站开始进行；没有可做的且都结束了则运行完成。
+fn advance(view: &mut RunView) {
+    let done =
+        |s: &port::StationView| matches!(s.status, StationStatus::Passed | StationStatus::Skipped);
+    let finished: HashSet<_> = view
+        .stations
+        .iter()
+        .filter(|s| done(s))
+        .map(|s| s.id.clone())
+        .collect();
+    let mut prev: Option<port::StationId> = None;
+    let ids: Vec<_> = view.stations.iter().map(|s| s.id.clone()).collect();
+    for (i, s) in view.stations.iter_mut().enumerate() {
+        let needs: Vec<_> = if s.needs.is_empty() {
+            prev.iter().cloned().collect()
+        } else {
+            s.needs.clone()
+        };
+        if matches!(s.status, StationStatus::Pending | StationStatus::Stale)
+            && needs.iter().all(|n| finished.contains(n))
+        {
+            s.status = StationStatus::Working;
+        }
+        prev = Some(ids[i].clone());
+    }
+    let total = view.stations.len() as u32;
+    let passed = view.stations.iter().filter(|s| done(s)).count() as u32;
+    view.summary.stations_done = passed;
+    view.summary.current = view
+        .stations
+        .iter()
+        .find(|s| !done(s))
+        .map(|s| s.title.clone());
+    if passed == total && total > 0 {
+        view.summary.status = RunStatus::Finished;
+        view.summary.current = None;
+    } else if let Some(h) = view
+        .stations
+        .iter()
+        .find(|s| matches!(s.status, StationStatus::Held | StationStatus::Unmet))
+    {
+        view.summary.status = RunStatus::Waiting {
+            reason: match h.status {
+                StationStatus::Held => format!("搁置：{}", h.title),
+                _ => format!("未达标：{}", h.title),
+            },
+        };
+    }
+}
+
+fn apply_run_op(view: &mut RunView, op: &RunOp) {
+    let station = |view: &mut RunView, id: &port::StationId| -> Option<usize> {
+        view.stations.iter().position(|s| &s.id == id)
+    };
+    match op {
+        RunOp::Pause => view.summary.status = RunStatus::Paused,
+        RunOp::Resume => view.summary.status = RunStatus::Running,
+        RunOp::Cancel => view.summary.status = RunStatus::Cancelled,
+        RunOp::Confirm { station: id }
+        | RunOp::Release { station: id }
+        | RunOp::Force { station: id, .. } => {
+            if let Some(i) = station(view, id) {
+                view.stations[i].status = if matches!(op, RunOp::Release { .. }) {
+                    StationStatus::Working
+                } else {
+                    StationStatus::Passed
+                };
+                view.stations[i].unmet = None;
+            }
+            view.summary.status = RunStatus::Running;
+            advance(view);
+        }
+        RunOp::Retry { station: id } => {
+            if let Some(i) = station(view, id) {
+                view.stations[i].status = StationStatus::Working;
+                view.stations[i].unmet = None;
+            }
+            view.summary.status = RunStatus::Running;
+        }
+        RunOp::Rework { to } => {
+            if let Some(i) = station(view, to) {
+                for s in &mut view.stations[i..] {
+                    if s.status != StationStatus::Skipped {
+                        s.status = StationStatus::Stale;
+                    }
+                }
+                view.stations[i].status = StationStatus::Working;
+            }
+            view.summary.status = RunStatus::Running;
+            advance(view);
+        }
+    }
+}
+
+async fn scheduler(
+    mut rx: mpsc::UnboundedReceiver<Sched>,
+    state: Arc<Mutex<MockState>>,
+    tx: mpsc::UnboundedSender<Event>,
+) {
+    let mut heap: BinaryHeap<Reverse<(Instant, u64)>> = BinaryHeap::new();
+    let mut pending: BTreeMap<u64, (Option<SessionId>, Event)> = BTreeMap::new();
+    let mut seq = 0u64;
+    loop {
+        let next = heap.peek().map(|Reverse((due, _))| *due);
+        tokio::select! {
+            biased;
+            msg = rx.recv() => match msg {
+                None => return,
+                Some(Sched::At { due, tag, event }) => {
+                    seq += 1;
+                    heap.push(Reverse((due, seq)));
+                    pending.insert(seq, (tag, *event));
+                }
+                Some(Sched::Cancel(session)) => {
+                    pending.retain(|_, (tag, _)| tag.as_ref() != Some(&session));
+                }
+            },
+            _ = tokio::time::sleep_until(next.unwrap_or_else(Instant::now)), if next.is_some() => {
+                let now = Instant::now();
+                while let Some(Reverse((due, id))) = heap.peek().copied() {
+                    if due > now {
+                        break;
+                    }
+                    heap.pop();
+                    let Some((_, event)) = pending.remove(&id) else { continue };
+                    let changed = state.lock().unwrap().apply(&event);
+                    if tx.send(event).is_err() {
+                        return;
+                    }
+                    if let Some(id) = changed {
+                        let summary = state.lock().unwrap().sessions.get(&id).map(|s| s.summary.clone());
+                        if let Some(s) = summary {
+                            let _ = tx.send(Event::SessionUpserted(s));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

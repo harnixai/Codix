@@ -1,0 +1,5 @@
+# 什么都没有：新用户第一次打开（场景 m20）。
+commands:
+  - {name: help, description: 列出可用命令, source: builtin}
+  - {name: clear, description: 清空当前会话, source: builtin}
+  - {name: compact, description: 压缩上下文, source: builtin}
