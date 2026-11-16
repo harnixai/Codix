@@ -1,5 +1,668 @@
-# 什么都没有：新用户第一次打开（场景 m20）。
+# 默认种子：实例 dev@ops-01，对应 docs/design/interaction.md §2.3 / §5.2-5.4 的画面。
+# “现在”约为 1763280000000。
+
 commands:
   - {name: help, description: 列出可用命令, source: builtin}
   - {name: clear, description: 清空当前会话, source: builtin}
   - {name: compact, description: 压缩上下文, source: builtin}
+  - {name: cost, description: 查看本会话用量, source: builtin}
+  - {name: skills, description: 列出可用技能, source: builtin}
+  - {name: review, description: 审查当前改动, source: user}
+  - {name: deploy, description: 按项目流程发布到预发环境, source: project}
+  - {name: log-triage, description: 巡检并归类错误日志, source: plugin}
+
+sessions:
+  # ---------------------------------------------------------------- s1
+  - summary:
+      id: s1
+      title: 重构认证模块
+      state: waiting
+      waiting: 1
+      usage: {input: 18200, output: 6100, cache_read: 15400, cache_write: 1300}
+      provenance: {instance: dev, host: ops-01, project: ~/work/auth, scene: code, model: claude-sonnet-5-5, origin: user}
+      updated_ms: 1763279940000
+    running: true
+    goal: {objective: 迁到 OAuth，测试全绿, phase: active, rounds_started: 2, max_rounds: 256}
+    todos:
+      - {text: 梳理现有认证入口, status: done}
+      - {text: 调研 OAuth 库, status: done}
+      - {text: 实现 provider, status: in_progress}
+      - {text: 迁移 session 存储, status: pending}
+      - {text: 改写登录与回调路由, status: pending}
+      - {text: 补齐集成测试, status: pending}
+      - {text: 更新文档与迁移说明, status: pending}
+    prompts:
+      - id: p1
+        kind: {permission: {tool: Bash, summary: cargo test --workspace}}
+        from: {label: reviewer（子 Agent）, task: t1}
+        asked_ms: 1763279900000
+    history:
+      - user: {text: 帮我把认证迁到 OAuth}
+      - assistant:
+          text: |
+            我先看一下现有的认证入口，再决定怎么切。
+
+            目前的思路分三步：
+
+            - 保留 `AuthProvider` trait，新增 `OAuthProvider` 实现
+            - 会话存储从内存表换成带过期的存储
+            - 登录与回调路由改走授权码流程
+
+            新 provider 的骨架大致是这样：
+
+            ```rust
+            pub struct OAuthProvider {
+                client: BasicClient,
+                scopes: Vec<Scope>,
+            }
+
+            impl AuthProvider for OAuthProvider {
+                fn authorize_url(&self) -> (Url, CsrfToken) {
+                    self.client.authorize_url(CsrfToken::new_random).url()
+                }
+            }
+            ```
+
+            先读代码，再动手。
+      - thinking: {text: 现有 mod.rs 里 token 校验和会话管理混在一起，先拆出 provider 再换实现，改动面更小。}
+      - tool:
+          id: tu1
+          name: Read
+          input: src/auth/mod.rs
+          content: |
+            use std::collections::HashMap;
+            use std::sync::RwLock;
+            use std::time::{Duration, Instant};
+
+            pub mod token;
+
+            pub struct Session {
+                pub user: String,
+                pub expires: Instant,
+            }
+
+            pub trait AuthProvider: Send + Sync {
+                fn verify(&self, token: &str) -> Result<String, AuthError>;
+            }
+
+            pub struct StaticProvider {
+                tokens: HashMap<String, String>,
+            }
+
+            impl AuthProvider for StaticProvider {
+                fn verify(&self, token: &str) -> Result<String, AuthError> {
+                    self.tokens
+                        .get(token)
+                        .cloned()
+                        .ok_or(AuthError::InvalidToken)
+                }
+            }
+
+            #[derive(Debug)]
+            pub enum AuthError {
+                InvalidToken,
+                Expired,
+            }
+
+            pub struct SessionStore {
+                inner: RwLock<HashMap<String, Session>>,
+                ttl: Duration,
+            }
+
+            impl SessionStore {
+                pub fn new(ttl: Duration) -> Self {
+                    Self { inner: RwLock::new(HashMap::new()), ttl }
+                }
+
+                pub fn insert(&self, id: String, user: String) {
+                    let expires = Instant::now() + self.ttl;
+                    self.inner.write().unwrap().insert(id, Session { user, expires });
+                }
+
+                pub fn get(&self, id: &str) -> Option<String> {
+                    let map = self.inner.read().unwrap();
+                    map.get(id)
+                        .filter(|s| s.expires > Instant::now())
+                        .map(|s| s.user.clone())
+                }
+            }
+      - tool:
+          id: tu2
+          name: Grep
+          input: "AuthProvider|StaticProvider"
+          content: |
+            src/auth/mod.rs:13:pub trait AuthProvider: Send + Sync {
+            src/auth/mod.rs:21:impl AuthProvider for StaticProvider {
+            src/routes/login.rs:8:use crate::auth::AuthProvider;
+            src/routes/login.rs:22:    provider: &dyn AuthProvider,
+            tests/auth.rs:5:use auth::StaticProvider;
+      - tool:
+          id: tu3
+          name: Edit
+          input: src/auth/mod.rs
+          content: 已修改 src/auth/mod.rs（+8 -2）
+          file_changes:
+            - path: src/auth/mod.rs
+              kind: modified
+              diff: |
+                --- a/src/auth/mod.rs
+                +++ b/src/auth/mod.rs
+                @@ -10,9 +10,15 @@ pub struct Session {
+                     pub expires: Instant,
+                 }
+
+                -pub trait AuthProvider: Send + Sync {
+                -    fn verify(&self, token: &str) -> Result<String, AuthError>;
+                -}
+                +pub trait AuthProvider: Send + Sync {
+                +    fn verify(&self, token: &str) -> Result<String, AuthError>;
+                +    /// 授权码流程的入口；静态 provider 不支持。
+                +    fn authorize_url(&self) -> Option<(Url, CsrfToken)> {
+                +        None
+                +    }
+                +}
+                +
+                +pub mod oauth;
+
+                 pub struct StaticProvider {
+                     tokens: HashMap<String, String>,
+      - tool:
+          id: tu4
+          name: Bash
+          input: cargo test auth
+          content: |
+            running 18 tests
+            test auth::token::tests::parses_bearer ... ok
+            test auth::token::tests::rejects_empty ... ok
+            test auth::tests::static_provider_accepts_known ... ok
+            test auth::tests::static_provider_rejects_unknown ... ok
+            test auth::tests::session_expires ... ok
+            test auth::tests::session_roundtrip ... ok
+            test auth::oauth::tests::builds_authorize_url ... ok
+            test auth::oauth::tests::state_is_random ... ok
+            test auth::oauth::tests::scopes_are_joined ... ok
+            test auth::oauth::tests::callback_rejects_bad_state ... ok
+            test auth::oauth::tests::callback_exchanges_code ... ok
+            test auth::oauth::tests::refresh_extends_session ... ok
+            test routes::login::tests::redirects_to_provider ... ok
+            test routes::login::tests::callback_sets_cookie ... ok
+            test routes::login::tests::logout_clears_cookie ... ok
+            test routes::login::tests::unknown_provider_404 ... ok
+            test auth::oauth::tests::token_endpoint_timeout ... ok
+            test routes::login::tests::callback_without_code ... ok
+
+            test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured
+      - tool:
+          id: tu5
+          name: Bash
+          input: cargo test --test integration
+          is_error: true
+          content: |
+            error[E0432]: unresolved import `auth::oauth::MockProvider`
+             --> tests/integration.rs:4:5
+              |
+            4 | use auth::oauth::MockProvider;
+              |     ^^^^^^^^^^^^^^^^^^^^^^^^^ no `MockProvider` in `auth::oauth`
+
+            error: could not compile `auth` (test "integration") due to 1 previous error
+
+  # ------------------------------------------------------- s1-reviewer
+  - summary:
+      id: s1-reviewer
+      title: 审查认证改动
+      state: waiting
+      waiting: 1
+      usage: {input: 6400, output: 1800, cache_read: 3600, cache_write: 200}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/auth
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {sub_agent: {parent: s1, parent_title: 重构认证模块, task: t1}}
+      updated_ms: 1763279900000
+    history:
+      - user: {text: 审查 src/auth 下刚做的改动，重点看 token 校验与会话过期，并跑一遍测试。}
+      - assistant: {text: 我先读一下改动后的入口文件，然后跑 workspace 的测试确认没有回归。}
+      - tool:
+          id: rv1
+          name: Read
+          input: src/auth/oauth.rs
+          content: |
+            pub struct OAuthProvider {
+                client: BasicClient,
+                scopes: Vec<Scope>,
+            }
+
+            impl OAuthProvider {
+                pub fn new(client: BasicClient) -> Self {
+                    Self { client, scopes: vec![Scope::new("openid".into())] }
+                }
+            }
+
+  # ---------------------------------------------------- s1-researcher
+  - summary:
+      id: s1-researcher
+      title: 调研 OAuth 库
+      state: idle
+      usage: {input: 4200, output: 2300, cache_read: 1400, cache_write: 100}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/auth
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {sub_agent: {parent: s1, parent_title: 重构认证模块, task: t3}}
+      updated_ms: 1763279400000
+    history:
+      - user: {text: 调研适合本项目的 Rust OAuth 库，比较维护状态、异步支持和依赖体量。}
+      - tool:
+          id: rs1
+          name: Bash
+          input: cargo search oauth2
+          content: |
+            oauth2 = "4.4.2"    # An extensible, strongly-typed implementation of OAuth2
+            openidconnect = "3.5.0"    # OpenID Connect Client library for Rust
+      - assistant:
+          text: |
+            推荐 `oauth2`：维护活跃、支持 async、依赖较少。`openidconnect` 在它之上多了 OIDC 发现与 ID token 校验，目前用不到，后面需要再加。
+
+  # ---------------------------------------------------------------- s2
+  - summary:
+      id: s2
+      title: 日志巡检
+      state: idle
+      usage: {input: 5200, output: 900, cache_read: 2000, cache_write: 100}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: /srv/ops
+        scene: ops
+        model: claude-sonnet-5-5
+        origin: {job: {job: j1, name: 每日巡检, fired_ms: 1763254800000}}
+      updated_ms: 1763254900000
+    history:
+      - user: {text: 检查昨天的错误日志并总结}
+      - tool:
+          id: op1
+          name: Bash
+          input: "journalctl -u app --since yesterday -p err --no-pager | tail -n 12"
+          content: |
+            11-15 02:14:07 ops-01 app[1203]: ERROR upstream timeout: payments (3000ms)
+            11-15 02:14:09 ops-01 app[1203]: ERROR upstream timeout: payments (3000ms)
+            11-15 09:41:55 ops-01 app[1203]: ERROR db pool exhausted, waiting 5s
+            11-15 09:42:01 ops-01 app[1203]: ERROR db pool exhausted, waiting 5s
+            11-15 14:03:22 ops-01 app[1203]: ERROR failed to render template: missing key `plan`
+            11-15 23:58:40 ops-01 app[1203]: ERROR upstream timeout: payments (3000ms)
+      - assistant:
+          text: |
+            昨天共 6 条错误，分三类：
+
+            - 支付上游超时 3 条，集中在凌晨 02 点和深夜，建议核对对方维护窗口
+            - 数据库连接池耗尽 2 条，发生在上午高峰
+            - 模板缺少 `plan` 字段 1 条，疑似新版本遗漏
+
+  # ---------------------------------------------------------------- s3
+  - summary:
+      id: s3
+      title: 昨天的调研
+      state: idle
+      usage: {input: 4800, output: 1900, cache_read: 1100, cache_write: 200}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/notes
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {fork: {from: s1, from_title: 重构认证模块}}
+      updated_ms: 1763190000000
+    history:
+      - user: {text: 把 OAuth 迁移的几种做法整理成一页对比。}
+      - assistant:
+          text: |
+            整理好了，三种做法：
+
+            - 直接替换：改动最小，但需要停机切换
+            - 双写过渡：两套并存一周，风险最低
+            - 网关代理：不动业务代码，但多一层依赖
+
+  # ---------------------------------------------------------------- s4
+  - summary:
+      id: s4
+      title: 支付重试（主会话）
+      state: running
+      usage: {input: 21000, output: 7800, cache_read: 30000, cache_write: 2200}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/pay
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {flow_station: {run: r1, flow_title: 需求到上线, subject: 支付重试, station: impl, station_title: 实现}}
+      updated_ms: 1763279950000
+    running: true
+    history:
+      - user: {text: 进入「实现」站：后端与前端分别交给子 Agent 完成。}
+      - assistant: {text: 已派出两个子 Agent：后端负责重试队列与退避策略，前端负责失败后的重试入口。}
+
+  # ---------------------------------------------------------------- s5
+  - summary:
+      id: s5
+      title: 导出 CSV（主会话）
+      state: waiting
+      waiting: 1
+      usage: {input: 15000, output: 4000, cache_read: 9000, cache_write: 800}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/report
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {flow_station: {run: r2, flow_title: 需求到上线, subject: 导出 CSV, station: review, station_title: 评审}}
+      updated_ms: 1763278000000
+    prompts:
+      - id: p2
+        kind: {question: {question: 评审通过后是否直接上线？, header: 评审, options: [直接上线, 先放预发观察一天]}}
+        from: {label: 流程「需求到上线」› 导出 CSV › 评审}
+        asked_ms: 1763277900000
+    history:
+      - user: {text: 进入「评审」站，请汇总前面三站的结论供人确认。}
+      - assistant: {text: 收集、设计、实现均已通过，评审站等待人工确认后放行。}
+
+  # ---------------------------------------------------------------- s6
+  - summary:
+      id: s6
+      title: 老项目会话
+      state: idle
+      usage: {input: 2000, output: 600}
+      provenance: {instance: dev, host: ops-01, project: ~/notes, scene: code, model: claude-sonnet-5-5, origin: user}
+      updated_ms: 1762900000000
+      held_by: research
+    history:
+      - user: {text: 把笔记目录里的重复条目找出来。}
+      - assistant: {text: 找到 4 组重复条目，列表已写入 duplicates.md。}
+
+tasks:
+  - id: t1
+    owner: s1
+    kind: agent
+    status: waiting
+    label: 审查认证改动
+    agent_type: reviewer
+    agent_session: s1-reviewer
+    started_ms: 1763279520000
+    usage: {input: 6400, output: 1800, cache_read: 3600, cache_write: 200}
+    waiting_for: [p1]
+  - id: t2
+    owner: s1-reviewer
+    kind: shell
+    status: running
+    label: cargo test
+    started_ms: 1763279880000
+  - id: t3
+    owner: s1
+    kind: agent
+    status: done
+    label: 调研 OAuth 库
+    agent_type: researcher
+    agent_session: s1-researcher
+    started_ms: 1763278800000
+    ended_ms: 1763279400000
+    usage: {input: 4200, output: 2300, cache_read: 1400, cache_write: 100}
+  - id: t4
+    owner: s1
+    kind: monitor
+    status: running
+    label: tail -f app.log
+    started_ms: 1763279100000
+  - id: t5
+    owner: s1-researcher
+    kind: shell
+    status: done
+    label: cargo search oauth2
+    started_ms: 1763278900000
+    ended_ms: 1763278915000
+  - id: t6
+    owner: s4
+    kind: agent
+    status: running
+    label: 后端
+    started_ms: 1763279700000
+    usage: {input: 9000, output: 3000, cache_read: 12000, cache_write: 900}
+  - id: t7
+    owner: s4
+    kind: agent
+    status: done
+    label: 前端
+    started_ms: 1763279700000
+    ended_ms: 1763279890000
+    usage: {input: 5000, output: 2000, cache_read: 6000, cache_write: 400}
+
+task_output:
+  t2: |
+    Compiling auth v0.1.0 (/home/me/work/auth)
+        Finished test [unoptimized + debuginfo] target(s) in 6.84s
+         Running unittests src/lib.rs
+
+    running 24 tests
+    test auth::token::tests::parses_bearer ... ok
+    test auth::token::tests::rejects_empty ... ok
+    test auth::tests::session_expires ... ok
+    test auth::oauth::tests::builds_authorize_url ... ok
+    test auth::oauth::tests::callback_exchanges_code ... ok
+    test auth::oauth::tests::refresh_extends_session ... ok
+    test routes::login::tests::redirects_to_provider ... ok
+    test routes::login::tests::callback_sets_cookie ... ok
+    test routes::login::tests::logout_clears_cookie ... ok
+    test db::tests::migrates_sessions ... ok
+    test db::tests::pool_reuses_connection ...
+  t4: |
+    2025-11-16T08:58:01Z INFO  server listening on 0.0.0.0:8080
+    2025-11-16T08:58:14Z INFO  GET /healthz 200 1ms
+    2025-11-16T08:59:02Z INFO  GET /login 302 4ms
+    2025-11-16T08:59:03Z INFO  GET /oauth/callback 200 183ms
+    2025-11-16T08:59:40Z WARN  slow query: sessions lookup 412ms
+    2025-11-16T09:00:11Z INFO  GET /healthz 200 1ms
+    2025-11-16T09:01:27Z ERROR token endpoint timeout after 3000ms
+    2025-11-16T09:01:28Z INFO  retrying token exchange (attempt 2)
+    2025-11-16T09:01:28Z INFO  GET /oauth/callback 200 241ms
+  t5: |
+    oauth2 = "4.4.2"    # An extensible, strongly-typed implementation of OAuth2
+    openidconnect = "3.5.0"    # OpenID Connect Client library for Rust
+    oauth2-test-server = "0.1.3"    # A tiny OAuth2 server for tests
+    ... and 41 crates more (use --limit N to see more)
+
+flows:
+  - summary: {name: feature-to-ship, title: 需求到上线, origin: builtin, active_runs: 2}
+    stations:
+      - {id: collect, title: 收集需求, work: session, status: pending}
+      - {id: design, title: 设计, needs: [collect], work: session, status: pending}
+      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: pending}
+      - {id: review, title: 评审, needs: [impl], work: confirm, status: pending}
+      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+    yaml: |
+      name: feature-to-ship
+      title: 需求到上线
+      inputs:
+        subject: {type: string, description: 需求的一句话说明}
+      stations:
+        - id: collect
+          title: 收集需求
+          executor: {kind: session}
+          skill: collect
+          output: {type: object, required: [requirements]}
+          exit: [{kind: output}]
+        - id: design
+          title: 设计
+          needs: [collect]
+          executor: {kind: session}
+          skill: design
+          output: {type: object, required: [plan]}
+          exit: [{kind: output}]
+        - id: impl
+          title: 实现
+          needs: [design]
+          tasks:
+            - {id: backend, executor: {kind: agent}, skill: impl-backend}
+            - {id: frontend, executor: {kind: agent}, skill: impl-frontend}
+          exit: [{kind: output}]
+        - id: review
+          title: 评审
+          needs: [impl]
+          exit: [{kind: confirm}]
+        - id: ship
+          title: 上线
+          needs: [review]
+          exit: [{kind: gate, gate: ci}]
+  - summary: {name: weekly-report, title: 周报, origin: user, active_runs: 0}
+    stations:
+      - {id: collect, title: 收集, work: session, status: pending}
+      - {id: summarize, title: 汇总, needs: [collect], work: session, status: pending}
+      - {id: confirm, title: 待确认, needs: [summarize], work: confirm, status: pending}
+    yaml: |
+      name: weekly-report
+      title: 周报
+      stations:
+        - id: collect
+          title: 收集
+          executor: {kind: session}
+          skill: collect-tickets
+          output: {type: object}
+          exit: [{kind: output}]
+        - id: summarize
+          title: 汇总
+          needs: [collect]
+          executor: {kind: session}
+          skill: summarize-week
+          output: {type: object}
+          exit: [{kind: output}]
+        - id: confirm
+          title: 待确认
+          needs: [summarize]
+          exit: [{kind: confirm}]
+
+runs:
+  - summary:
+      id: r1
+      flow: feature-to-ship
+      subject: 支付重试
+      status: running
+      current: 实现
+      stations_done: 2
+      stations_total: 5
+      started_ms: 1763275200000
+      usage: {input: 21000, output: 7800, cache_read: 30000, cache_write: 2200}
+    main_session: s4
+    stations:
+      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 420000, usage: {input: 3000, output: 900, cache_read: 2000}}
+      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 900000, usage: {input: 6000, output: 2400, cache_read: 9000}}
+      - id: impl
+        title: 实现
+        needs: [design]
+        work: agent × 2
+        status: working
+        elapsed_ms: 580000
+        usage: {input: 12000, output: 4500, cache_read: 19000, cache_write: 2200}
+        tasks:
+          - {id: t6, label: 后端, status: running, session: s4}
+          - {id: t7, label: 前端, status: done, session: s4}
+      - {id: review, title: 评审, needs: [impl], work: confirm, status: pending}
+      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+  - summary:
+      id: r2
+      flow: feature-to-ship
+      subject: 导出 CSV
+      status: {waiting: {reason: 待确认：评审}}
+      current: 评审
+      stations_done: 3
+      stations_total: 5
+      started_ms: 1763190000000
+      usage: {input: 15000, output: 4000, cache_read: 9000, cache_write: 800}
+    main_session: s5
+    stations:
+      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 300000, usage: {input: 2500, output: 700}}
+      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 1200000, usage: {input: 4500, output: 1300, cache_read: 3000}}
+      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: passed, elapsed_ms: 3600000, usage: {input: 8000, output: 2000, cache_read: 6000, cache_write: 800}}
+      - {id: review, title: 评审, needs: [impl], work: confirm, status: held}
+      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+  - summary:
+      id: r3
+      flow: feature-to-ship
+      subject: 登录限流
+      status: finished
+      current: 上线
+      stations_done: 5
+      stations_total: 5
+      started_ms: 1763020000000
+      ended_ms: 1763100000000
+      usage: {input: 32000, output: 11000, cache_read: 40000, cache_write: 3000}
+    main_session: s6
+    stations:
+      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 360000, usage: {input: 3000, output: 800}}
+      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 1500000, usage: {input: 7000, output: 2500, cache_read: 8000}}
+      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: passed, elapsed_ms: 5400000, usage: {input: 17000, output: 6500, cache_read: 25000, cache_write: 3000}}
+      - {id: review, title: 评审, needs: [impl], work: confirm, status: passed, elapsed_ms: 7200000}
+      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: passed, elapsed_ms: 600000, usage: {input: 5000, output: 1200, cache_read: 7000}}
+
+jobs:
+  - job:
+      id: j1
+      name: 每日巡检
+      cron: "0 9 * * *"
+      kind:
+        simple:
+          prompt: 检查昨天的错误日志并总结
+          skills: [log-triage]
+          project: /srv/ops
+          scene: ops
+      enabled: true
+      catch_up: true
+      next_fire_ms: 1763341200000
+      last: done
+    history:
+      - fired_ms: 1763254800000
+        outcome: done
+        elapsed_ms: 98000
+        usage: {input: 5200, output: 900, cache_read: 2000, cache_write: 100}
+        target: {session: {id: s2, title: 日志巡检}}
+      - fired_ms: 1763168400000
+        outcome: done
+        elapsed_ms: 87000
+        usage: {input: 4800, output: 760, cache_read: 1800}
+        target: {session: {id: s2-prev, title: 日志巡检}}
+      - fired_ms: 1763082000000
+        outcome: {failed: {message: provider 返回 429}}
+        elapsed_ms: 3000
+  - job:
+      id: j2
+      name: 周报流程
+      cron: "0 10 * * 1"
+      kind:
+        flow:
+          flow: weekly-report
+          subject: "第 {week} 周工单"
+          inputs: {}
+      enabled: true
+      next_fire_ms: 1763604000000
+      last: {failed: {message: 收集站任务超时}}
+    history:
+      - fired_ms: 1762855200000
+        outcome: {failed: {message: 收集站任务超时}}
+        elapsed_ms: 1800000
+        target: {run: {id: r-wk45, subject: 第 45 周工单}}
+      - fired_ms: 1762250400000
+        outcome: done
+        elapsed_ms: 640000
+        usage: {input: 9000, output: 2800, cache_read: 5000}
+        target: {run: {id: r-wk44, subject: 第 44 周工单}}
+  - job:
+      id: j3
+      name: 月度归档
+      cron: "0 0 1 * *"
+      kind:
+        flow:
+          flow: weekly-report
+          subject: "{month} 月归档"
+          inputs: {}
+      enabled: false
+    history: []
