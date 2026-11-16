@@ -1,0 +1,26 @@
+# Rust
+/target
+**/*.rs.bk
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 本地配置与凭据
+.env
+.env.local
+*.pem
+
+# 旧实现（AttaCode）的本地参考副本，不入库
+archive/
+
+# 过程文档：分析、评估、草稿，不入库
+.local/
+
+# 第三方代码：只有索引入库，代码按索引拷到本地
+3rds/*
+!3rds/INDEX.md
+
+*.log
