@@ -226,7 +226,8 @@ loop {
 ├── settings.json                 ┐
 ├── projects/  sessions/  memory/ │ Agix 的全局数据，布局归 Agix（ARCHITECTURE.md §8）。
 ├── scenes/  daemon/  …           ┘ 模型、provider、权限等配置都沿用这里的 settings.json
-├── codix.toml                    Codix 自己的配置：界面（缺省尺寸、比例、鼠标）、实例（空闲超时、心跳）
+├── codix.yaml                    Codix 自己的配置（YAML）：界面（缺省尺寸、比例、主题配色、语法高亮主题、
+│                                 工具结果显示几行）、实例（空闲超时）；不存在时写一份带注释的缺省配置
 ├── keybindings.json              快捷键覆盖
 ├── flows/                        流程包（流程、skills、规则、策略、门禁、钩子），所有实例共用
 └── instances/<名字>/
@@ -239,7 +240,7 @@ loop {
     └── host.log
 ```
 
-- Codix 自己的文件和 Agix 的放在同一个目录，用 Codix 自己的名字（`codix.toml`、`keybindings.json`、`flows/`、`instances/`），都不和 Agix 的顶层名字冲突。**不往 Agix 的 `settings.json` 里写 Codix 的配置**：Agix 对不认识的键会告警，而且两边的配置应当各管各的。
+- Codix 自己的文件和 Agix 的放在同一个目录，用 Codix 自己的名字（`codix.yaml`、`keybindings.json`、`flows/`、`instances/`），都不和 Agix 的顶层名字冲突。**不往 Agix 的 `settings.json` 里写 Codix 的配置**：Agix 对不认识的键会告警，而且两边的配置应当各管各的。
 - **流程包所有实例共用；运行和作业属于各自的实例。** 这样两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时，会把它的运行和作业接着跑起来。
 - 项目层目录：Agix#86 落地之前沿用 `<项目>/.agix/`，落地之后通过 `EmbedConfig.project_dir` 改成 `.codix/`。Codix 自己目前不在项目里放任何东西。
 
@@ -307,7 +308,7 @@ loop {
 | 问题 | 倾向 |
 |---|---|
 | 项目层目录 | 已提 Agix#86，落地后改成 `.codix/` |
-| 空闲超时的缺省值 | 30 分钟（`codix.toml` 的 `instance.idle_timeout`），设为 `0` 表示不超时 |
+| 空闲超时的缺省值 | 30 分钟（`codix.yaml` 的 `instance.idle_timeout`），设为 `0` 表示不超时 |
 | 缺省终端尺寸 | 160×45，写在 `config.toml`，可以设为 `off` |
 | 宽屏下左右两栏的缺省比例 | 60 : 40，可调，并记住 |
 | 实例开机自启 | P2：在手册里给出 systemd user unit 和 launchd plist 的示例 |

@@ -33,4 +33,4 @@
 
 
 
- Enter 打开 · n 新建 · f 强制 · s 停止 · q 退出                                                                       Ctrl+B 切栏 · F1 帮助
+ Enter 打开 · n 新建 · f 强制 · s 停止 · q 退出                                                         Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助

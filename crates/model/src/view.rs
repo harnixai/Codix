@@ -80,6 +80,7 @@ pub fn view(s: &State) -> FrameState {
     let footer = footer(s);
     if size.cols < MIN_COLS || size.rows < MIN_ROWS {
         return FrameState {
+            theme: s.settings.theme.clone(),
             body: Body::TooSmall {
                 need_cols: MIN_COLS,
             },
@@ -90,6 +91,7 @@ pub fn view(s: &State) -> FrameState {
     match &s.ui.screen {
         Screen::Instances(p) => {
             return FrameState {
+                theme: s.settings.theme.clone(),
                 body: Body::Instances(picker(s, p)),
                 footer,
                 overlay: s.ui.overlay.as_ref().map(|o| overlay(s, o)),
@@ -97,6 +99,7 @@ pub fn view(s: &State) -> FrameState {
         }
         Screen::Detached(r) => {
             return FrameState {
+                theme: s.settings.theme.clone(),
                 body: Body::Detached(tui::DetachedScreen {
                     lines: detached(s, r),
                 }),
@@ -113,6 +116,7 @@ pub fn view(s: &State) -> FrameState {
     let chat = regions.chat.as_ref().map(|r| chat_pane(s, r));
     let side = regions.side.as_ref().map(|r| side_pane(s, tabs, r));
     FrameState {
+        theme: s.settings.theme.clone(),
         body: Body::Workbench(Box::new(Workbench {
             layout: spec,
             header: header(s),
@@ -544,6 +548,42 @@ fn footer(s: &State) -> tui::Footer {
 
 fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
     match o {
+        Overlay::Exit { selected } => {
+            let name = s.ui.attached.clone().unwrap_or_else(|| "当前实例".into());
+            let options = [
+                (
+                    "后台运行".to_string(),
+                    format!("实例 {name} 继续运行，之后用 codix attach {name} 接回"),
+                ),
+                (
+                    "直接退出".to_string(),
+                    format!("停止实例 {name}，里面的会话、流程、作业都会停下"),
+                ),
+                ("返回".to_string(), String::new()),
+            ];
+            let mut lines = vec![Line::plain("要怎么退出？"), Line::default()];
+            for (i, (label, desc)) in options.iter().enumerate() {
+                let mark = if i == *selected { "❯ " } else { "  " };
+                let mut l = Line::plain(format!("{mark}{}. ", i + 1))
+                    .push(format!("{label}  "), Tone::Strong)
+                    .push(desc.clone(), Tone::Dim);
+                if i == *selected {
+                    l = l.with_tone(Tone::Selected);
+                }
+                lines.push(l);
+            }
+            lines.push(Line::default());
+            lines.push(Line::toned(
+                "↑↓ / 数字选择 · Enter 确认 · Esc 返回",
+                Tone::Dim,
+            ));
+            tui::Overlay {
+                title: "退出".into(),
+                height: lines.len() as u16 + 2,
+                lines,
+                width: 72,
+            }
+        }
         Overlay::Help { scroll } => {
             let mut ctxs = s.key_contexts_without_overlay();
             ctxs.push(keys::Context::Global);

@@ -9,7 +9,7 @@ use port::{
 };
 use tui::{Line, Tone};
 
-use crate::text::{markdown, wrap_text};
+use crate::text::wrap_text;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phase {
@@ -440,7 +440,7 @@ impl Conversation {
     }
 
     /// 重排缓存与宽度、详略不符的块；返回重排了几块（testing.md §1 用计数验性能）。
-    pub fn relayout(&mut self, width: usize, detail: bool) -> u64 {
+    pub fn relayout(&mut self, width: usize, detail: bool, opts: &RenderOpts) -> u64 {
         let mut n = 0;
         let summary = self.summary.clone();
         for b in &mut self.blocks {
@@ -450,7 +450,7 @@ impl Conversation {
                 .as_ref()
                 .is_some_and(|c| c.width == width && c.detail == detail && c.expanded == expanded);
             if !ok {
-                let mut lines = render(&b.kind, width, detail || expanded, &summary);
+                let mut lines = render(&b.kind, width, detail || expanded, &summary, opts);
                 lines.push(Line::default());
                 b.cache = Some(Cache {
                     width,
@@ -531,15 +531,27 @@ pub(crate) fn fmt_k(n: u64) -> String {
     }
 }
 
-const COMPACT_TOOL_LINES: usize = 3;
 const COMPACT_DIFF_LINES: usize = 10;
+
+/// 排版时要用到的设置。设置改了要让全部块重排（`dirty_all`）。
+#[derive(Debug, Clone)]
+pub struct RenderOpts {
+    pub compact_tool_lines: usize,
+    pub syntax_theme: String,
+}
 
 fn more(n: usize) -> Line {
     Line::toned(format!("     … +{n} 行 (ctrl+o 展开)"), Tone::Dim)
 }
 
 /// 一个块在某宽度下的全部行（交互 §4.2 的画法，照 Claude Code）。
-fn render(kind: &BlockKind, width: usize, full: bool, summary: &SessionSummary) -> Vec<Line> {
+fn render(
+    kind: &BlockKind,
+    width: usize,
+    full: bool,
+    summary: &SessionSummary,
+    opts: &RenderOpts,
+) -> Vec<Line> {
     let w = width.max(8);
     match kind {
         BlockKind::Welcome => crate::welcome::block(summary, w),
@@ -564,7 +576,13 @@ fn render(kind: &BlockKind, width: usize, full: bool, summary: &SessionSummary) 
             }
             ls.into_iter().map(|l| l.with_tone(Tone::UserMsg)).collect()
         }
-        BlockKind::Assistant { text } => markdown(text, w, &Line::plain("⏺ "), &Line::plain("  ")),
+        BlockKind::Assistant { text } => crate::text::markdown_with(
+            text,
+            w,
+            &Line::plain("⏺ "),
+            &Line::plain("  "),
+            &opts.syntax_theme,
+        ),
         BlockKind::Thinking { text, secs, .. } => {
             let head = match secs {
                 None => "✻ 思考中…".to_string(),
@@ -700,7 +718,7 @@ fn render(kind: &BlockKind, width: usize, full: bool, summary: &SessionSummary) 
             let shown = if full {
                 lines.len()
             } else {
-                lines.len().min(COMPACT_TOOL_LINES)
+                lines.len().min(opts.compact_tool_lines)
             };
             for (i, l) in lines[..shown].iter().enumerate() {
                 let first = if i == 0 { lead() } else { cont() };

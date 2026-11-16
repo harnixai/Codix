@@ -91,8 +91,9 @@ mod tests {
         for b in km.bindings() {
             assert!(!b.action.help().is_empty());
         }
-        let [toggle, help] = km.essential();
+        let [toggle, exit, help] = km.essential();
         assert_eq!(toggle.0, "Ctrl+B");
+        assert_eq!(exit.0, "Ctrl+X");
         assert_eq!(help.0, "F1");
     }
 

@@ -22,6 +22,7 @@ pub enum Action {
     ToggleDetail,
     ToggleTodos,
     CycleMode,
+    Exit,
 
     // 输入框
     Submit,
@@ -112,6 +113,7 @@ impl Action {
             ToggleDetail => "转录精简 / 详细",
             ToggleTodos => "显示 / 隐藏 todo",
             CycleMode => "切换权限模式",
+            Exit => "退出",
             Submit => "提交",
             Newline => "换行",
             Complete => "补全",

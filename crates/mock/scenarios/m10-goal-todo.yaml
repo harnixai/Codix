@@ -1,0 +1,48 @@
+# 场景 m10：goal 轮次推进、待办逐项完成，约 15 秒时 goal 受阻。
+name: m10-goal-todo
+seed: default
+timeline:
+  - at: 500
+    goal_changed: {session: s1, goal: {objective: "迁到 OAuth，测试全绿", phase: active, rounds_started: 3, max_rounds: 256}}
+  - at: 600
+    turn_started: {session: s1}
+  - at: 1000
+    text_delta: {session: s1, text: "我接着推进 provider 的剩余部分。"}
+  - at: 1500
+    todos_changed: {session: s1, todos: [{text: "梳理现有认证入口", status: done}, {text: "调研 OAuth 库", status: done}, {text: "实现 provider", status: in_progress}, {text: "迁移 session 存储", status: pending}, {text: "改写登录与回调路由", status: pending}, {text: "补齐集成测试", status: pending}, {text: "更新文档与迁移说明", status: pending}]}
+  - at: 1800
+    text_delta: {session: s1, text: "\n\nprovider 的 token 刷新已补上，测试 3 项通过。"}
+  - at: 2700
+    turn_ended: {session: s1, stop: end_turn, usage: {input: 1800, output: 420}}
+  - at: 3600
+    goal_changed: {session: s1, goal: {objective: "迁到 OAuth，测试全绿", phase: active, rounds_started: 4, max_rounds: 256}}
+  - at: 3700
+    turn_started: {session: s1}
+  - at: 4100
+    text_delta: {session: s1, text: "下一步迁移 session 存储。"}
+  - at: 4600
+    todos_changed: {session: s1, todos: [{text: "梳理现有认证入口", status: done}, {text: "调研 OAuth 库", status: done}, {text: "实现 provider", status: done}, {text: "迁移 session 存储", status: pending}, {text: "改写登录与回调路由", status: pending}, {text: "补齐集成测试", status: pending}, {text: "更新文档与迁移说明", status: pending}]}
+  - at: 4900
+    text_delta: {session: s1, text: "\n\nsession 存储已换成带过期的实现，旧表保留待回滚。"}
+  - at: 5800
+    turn_ended: {session: s1, stop: end_turn, usage: {input: 1800, output: 420}}
+  - at: 6700
+    goal_changed: {session: s1, goal: {objective: "迁到 OAuth，测试全绿", phase: active, rounds_started: 5, max_rounds: 256}}
+  - at: 6800
+    turn_started: {session: s1}
+  - at: 7200
+    text_delta: {session: s1, text: "现在改写登录与回调路由。"}
+  - at: 7700
+    todos_changed: {session: s1, todos: [{text: "梳理现有认证入口", status: done}, {text: "调研 OAuth 库", status: done}, {text: "实现 provider", status: done}, {text: "迁移 session 存储", status: in_progress}, {text: "改写登录与回调路由", status: pending}, {text: "补齐集成测试", status: pending}, {text: "更新文档与迁移说明", status: pending}]}
+  - at: 8000
+    text_delta: {session: s1, text: "\n\n路由已改走授权码流程，回调会校验 state。"}
+  - at: 8900
+    turn_ended: {session: s1, stop: end_turn, usage: {input: 1800, output: 420}}
+  - at: 10800
+    todos_changed: {session: s1, todos: [{text: "梳理现有认证入口", status: done}, {text: "调研 OAuth 库", status: done}, {text: "实现 provider", status: done}, {text: "迁移 session 存储", status: done}, {text: "改写登录与回调路由", status: in_progress}, {text: "补齐集成测试", status: pending}, {text: "更新文档与迁移说明", status: pending}]}
+  - at: 13000
+    todos_changed: {session: s1, todos: [{text: "梳理现有认证入口", status: done}, {text: "调研 OAuth 库", status: done}, {text: "实现 provider", status: done}, {text: "迁移 session 存储", status: done}, {text: "改写登录与回调路由", status: done}, {text: "补齐集成测试", status: pending}, {text: "更新文档与迁移说明", status: pending}]}
+  - at: 15000
+    goal_changed: {session: s1, goal: {objective: "迁到 OAuth，测试全绿", phase: blocked, rounds_started: 5, max_rounds: 256, blocked_reason: "需要你确认数据库迁移方案"}}
+  - at: 15200
+    notice: {level: warn, text: "目标受阻：需要你确认数据库迁移方案"}

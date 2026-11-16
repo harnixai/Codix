@@ -125,9 +125,14 @@ async fn main() -> Result<()> {
             }
         }
     };
-    let (cfg, cfg_err) = config::load();
-    let idle = idle_override.or_else(|| config::parse_duration_ms(&cfg.instance.idle_timeout));
-    run(Arc::new(instances), start, cfg, cfg_err, idle).await
+    let (cfg, mut problems) = config::load();
+    let (mut settings, more) = cfg.settings();
+    problems.extend(more);
+    if let Some(idle) = idle_override {
+        settings.idle_timeout_ms = idle;
+    }
+    let cfg_err = (!problems.is_empty()).then(|| problems.join("；"));
+    run(Arc::new(instances), start, cfg, cfg_err, settings).await
 }
 
 async fn run(
@@ -135,7 +140,7 @@ async fn run(
     start: Start,
     cfg: config::Config,
     cfg_err: Option<String>,
-    idle: Option<u64>,
+    settings: model::Settings,
 ) -> Result<()> {
     let mut t = CrosstermTerm::new()?;
     let negotiated = term::negotiate(
@@ -146,7 +151,7 @@ async fn run(
     );
     install_panic_hook();
     t.enter(true)?;
-    let result = event_loop(&mut t, instances, start, cfg_err, idle).await;
+    let result = event_loop(&mut t, instances, start, cfg_err, settings).await;
     t.leave()?;
     term::restore(&mut t, negotiated);
     result
@@ -173,10 +178,17 @@ async fn event_loop(
     instances: Arc<dyn Instances>,
     start: Start,
     cfg_err: Option<String>,
-    idle: Option<u64>,
+    settings: model::Settings,
 ) -> Result<()> {
     let keymap = Arc::new(keys::Keymap::default());
-    let (mut core, effects) = Core::new(instances, keymap, t.size(), Box::new(now_ms), start, idle);
+    let (mut core, effects) = Core::new(
+        instances,
+        keymap,
+        t.size(),
+        Box::new(now_ms),
+        start,
+        settings,
+    );
     if let Some(e) = cfg_err {
         core.handle(Msg::Event(Box::new(port::Event::Notice {
             level: port::NoticeLevel::Error,

@@ -4,7 +4,7 @@ use crate::layout::LayoutSpec;
 use crate::text::display_width;
 
 /// 语义色。颜色只加强、不承载信息（交互 §8）：去掉颜色靠符号也读得懂。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Tone {
     #[default]
     Normal,
@@ -25,6 +25,8 @@ pub enum Tone {
     UserMsg,
     Italic,
     Link,
+    /// 语法高亮给出的颜色。
+    Rgb(u8, u8, u8),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -79,6 +81,7 @@ impl Line {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameState {
+    pub theme: crate::Theme,
     pub body: Body,
     pub footer: Footer,
     pub overlay: Option<Overlay>,
@@ -185,7 +188,7 @@ pub struct Section {
 pub struct Footer {
     pub hints: Vec<Hint>,
     /// 永远在最右边的两项：切栏、帮助（需求 L-07）。
-    pub essential: [Hint; 2],
+    pub essential: [Hint; 3],
     /// 通知、错误或二次确认；有它时它占据提示区，`essential` 照样在。
     pub message: Option<Line>,
 }

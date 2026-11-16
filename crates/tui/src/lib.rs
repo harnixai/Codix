@@ -8,8 +8,10 @@ pub mod frame;
 pub mod layout;
 mod render;
 mod text;
+mod theme;
 
 pub use frame::*;
 pub use layout::{LayoutSpec, PaneMode, Rect, Regions, ShowPane, Size};
 pub use render::render;
 pub use text::{display_width, truncate_to_width};
+pub use theme::Theme;

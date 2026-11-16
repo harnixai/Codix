@@ -1,0 +1,72 @@
+# 场景 m09：会话树自己动起来（无需输入）。s1 的任务树随时间变化，t2、t4 持续追加输出，约 8 秒时 reviewer 来提问。
+name: m09-session-tree
+seed: default
+timeline:
+  - at: 1000
+    task_output: {task: t2, text: "test db::tests::pool_reuses_connection ... ok\n", next_byte: 900}
+  - at: 1500
+    task_output: {task: t4, text: "2025-11-16T09:05:40Z INFO  GET /healthz 200 1ms\n", next_byte: 1200}
+  - at: 2100
+    task_output: {task: t2, text: "test db::tests::session_ttl ... ok\n", next_byte: 960}
+  - at: 2800
+    task_output: {task: t4, text: "2025-11-16T09:06:02Z INFO  GET /login 302 3ms\n", next_byte: 1270}
+  - at: 3200
+    task_output: {task: t2, text: "test middleware::tests::attaches_user ... ok\n", next_byte: 1020}
+  - at: 3200
+    task_upserted: {id: t9, owner: s1-reviewer-lic, kind: shell, status: done, label: "cargo deny check licenses", started_ms: 1763279900000, ended_ms: 1763280003200}
+  - at: 4000
+    task_upserted: {id: t8, owner: s1-reviewer, kind: agent, status: running, label: "检查依赖许可", started_ms: 1763279860000, agent_session: s1-reviewer-lic, agent_type: general, usage: {input: 2600, output: 820, cache_read: 1100}}
+  - at: 4100
+    task_output: {task: t4, text: "2025-11-16T09:06:03Z INFO  GET /oauth/callback 200 176ms\n", next_byte: 1340}
+  - at: 4300
+    task_output: {task: t2, text: "test middleware::tests::rejects_expired ... ok\n", next_byte: 1080}
+  - at: 5000
+    task_upserted: {id: t8, owner: s1-reviewer, kind: agent, status: running, label: "检查依赖许可", started_ms: 1763279860000, agent_session: s1-reviewer-lic, agent_type: general, usage: {input: 3400, output: 1150, cache_read: 1500}}
+  - at: 5400
+    task_output: {task: t2, text: "test config::tests::loads_provider ... ok\n", next_byte: 1140}
+  - at: 5400
+    task_output: {task: t4, text: "2025-11-16T09:06:30Z WARN  slow query: sessions lookup 388ms\n", next_byte: 1410}
+  - at: 6200
+    task_upserted: {id: t8, owner: s1-reviewer, kind: agent, status: running, label: "检查依赖许可", started_ms: 1763279860000, agent_session: s1-reviewer-lic, agent_type: general, usage: {input: 4300, output: 1500, cache_read: 1900}}
+  - at: 6500
+    task_output: {task: t2, text: "test config::tests::env_override ... ok\n", next_byte: 1200}
+  - at: 6700
+    task_output: {task: t4, text: "2025-11-16T09:07:11Z INFO  GET /healthz 200 1ms\n", next_byte: 1480}
+  - at: 7000
+    task_upserted: {id: t8, owner: s1-reviewer, kind: agent, status: done, label: "检查依赖许可", started_ms: 1763279860000, ended_ms: 1763280007000, agent_session: s1-reviewer-lic, agent_type: general, usage: {input: 5200, output: 1900, cache_read: 2300}}
+  - at: 7600
+    task_output: {task: t2, text: "test e2e::tests::full_login_flow ... ok\n", next_byte: 1260}
+  - at: 8000
+    task_output: {task: t4, text: "2025-11-16T09:07:52Z ERROR token endpoint timeout after 3000ms\n", next_byte: 1550}
+  - at: 8000
+    prompt_pending: {session: s1, prompt: {id: p3, kind: {permission: {tool: Bash, summary: cargo audit}}, from: {label: "reviewer（子 Agent）", task: t1}, asked_ms: 1763280008000}}
+  - at: 8700
+    task_output: {task: t2, text: "test e2e::tests::refresh_flow ... ok\n", next_byte: 1320}
+  - at: 9300
+    task_output: {task: t4, text: "2025-11-16T09:07:53Z INFO  retrying token exchange (attempt 2)\n", next_byte: 1620}
+  - at: 9800
+    task_output: {task: t2, text: "\n", next_byte: 1380}
+  - at: 10000
+    session_upserted: {id: s1-tests, title: 补测试, state: running, provenance: {instance: dev, host: ops-01, project: ~/work/auth, scene: code, model: claude-sonnet-5-5, origin: {sub_agent: {parent: s1, parent_title: 重构认证模块, task: t13}}}, updated_ms: 1763280010000}
+  - at: 10500
+    task_upserted: {id: t13, owner: s1, kind: agent, status: running, label: "补测试", started_ms: 1763280010500, agent_session: s1-tests, agent_type: tester, usage: {input: 800, output: 200, cache_read: 0}}
+  - at: 10600
+    task_output: {task: t4, text: "2025-11-16T09:07:53Z INFO  GET /oauth/callback 200 233ms\n", next_byte: 1690}
+  - at: 10900
+    task_output: {task: t2, text: "test result: ok. 24 passed; 0 failed; 0 ignored\n", next_byte: 1440}
+  - at: 11500
+    task_upserted: {id: t14, owner: s1-tests, kind: shell, status: running, label: "cargo test oauth", started_ms: 1763280011500}
+  - at: 11900
+    task_output: {task: t4, text: "2025-11-16T09:08:40Z INFO  GET /healthz 200 1ms\n", next_byte: 1760}
+  - at: 13200
+    task_output: {task: t4, text: "2025-11-16T09:09:15Z INFO  POST /logout 204 5ms\n", next_byte: 1830}
+  - at: 13500
+    task_upserted: {id: t13, owner: s1, kind: agent, status: running, label: "补测试", started_ms: 1763280010500, agent_session: s1-tests, agent_type: tester, usage: {input: 2400, output: 900, cache_read: 600}}
+  - at: 15500
+    task_upserted: {id: t14, owner: s1-tests, kind: shell, status: done, label: "cargo test oauth", started_ms: 1763280011500, ended_ms: 1763280015500}
+  - at: 17000
+    task_upserted: {id: t13, owner: s1, kind: agent, status: running, label: "补测试", started_ms: 1763280010500, agent_session: s1-tests, agent_type: tester, usage: {input: 4100, output: 1600, cache_read: 1500}}
+  - at: 19000
+    task_upserted: {id: t13, owner: s1, kind: agent, status: done, label: "补测试", started_ms: 1763280010500, ended_ms: 1763280019000, agent_session: s1-tests, agent_type: tester, usage: {input: 5300, output: 2100, cache_read: 2200}}
+  - at: 19500
+    session_upserted: {id: s1-tests, title: 补测试, state: idle, provenance: {instance: dev, host: ops-01, project: ~/work/auth, scene: code, model: claude-sonnet-5-5, origin: {sub_agent: {parent: s1, parent_title: 重构认证模块, task: t13}}}, updated_ms: 1763280019500}

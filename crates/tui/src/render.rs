@@ -9,6 +9,7 @@ use crate::layout::{self, Rect, Regions, Size};
 use crate::text::{display_width, truncate_to_width};
 
 pub fn render(f: &mut Frame, state: &FrameState) {
+    THEME.with(|t| *t.borrow_mut() = state.theme.clone());
     let area = f.area();
     let size = Size::new(area.width, area.height);
     match &state.body {
@@ -34,50 +35,60 @@ fn rr(r: Rect) -> RRect {
     RRect::new(r.x, r.y, r.w, r.h)
 }
 
+thread_local! {
+    /// 这一帧的配色。`render` 进来时设好，整帧共用；渲染是单线程的。
+    static THEME: std::cell::RefCell<crate::Theme> = std::cell::RefCell::new(crate::Theme::default());
+}
+
+fn th() -> crate::Theme {
+    THEME.with(|t| t.borrow().clone())
+}
+
 fn style(t: Tone) -> Style {
+    let th = th();
     let s = Style::default();
     match t {
         Tone::Normal => s,
-        Tone::Dim => s.fg(Color::DarkGray),
+        Tone::Dim => s.fg(th.dim),
         Tone::Strong => s.add_modifier(Modifier::BOLD),
-        Tone::Accent => s.fg(Color::Cyan),
-        Tone::Ok => s.fg(Color::Green),
-        Tone::Warn => s.fg(Color::Yellow),
-        Tone::Error => s.fg(Color::Red),
-        Tone::Add => s.fg(Color::Green),
-        Tone::Del => s.fg(Color::Red),
-        Tone::Code => s.fg(Color::LightBlue),
-        Tone::Selected => s.add_modifier(Modifier::REVERSED),
-        Tone::Attention => s.fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        Tone::UserMsg => s.bg(Color::Indexed(237)),
+        Tone::Accent => s.fg(th.accent),
+        Tone::Ok => s.fg(th.ok),
+        Tone::Warn => s.fg(th.warn),
+        Tone::Error => s.fg(th.error),
+        Tone::Add => s.fg(th.add),
+        Tone::Del => s.fg(th.del),
+        Tone::Code => s.fg(th.code),
+        Tone::Selected => s.bg(th.selected_bg).fg(th.selected_fg),
+        Tone::Attention => s.fg(th.warn).add_modifier(Modifier::BOLD),
+        Tone::UserMsg => s.bg(th.user_bg),
         Tone::Italic => s.add_modifier(Modifier::ITALIC),
-        Tone::Link => s.fg(Color::Blue).add_modifier(Modifier::UNDERLINED),
+        Tone::Link => s.fg(th.link).add_modifier(Modifier::UNDERLINED),
+        Tone::Rgb(r, g, b) => s.fg(Color::Rgb(r, g, b)),
     }
 }
 
-/// 顶栏、底栏、框上沿标题条的底色。有焦点的那一块，标题条换成强调色。
-const BAR: Color = Color::Indexed(236);
-
 fn bar(focused: bool) -> Style {
+    let th = th();
     if focused {
         Style::default()
-            .bg(Color::Cyan)
-            .fg(Color::Black)
+            .bg(th.accent)
+            .fg(th.accent_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().bg(BAR).fg(Color::Gray)
+        Style::default().bg(th.bar_bg).fg(th.bar_fg)
     }
+}
+
+fn border_style(focused: bool) -> Style {
+    let th = th();
+    Style::default().fg(if focused { th.border_focus } else { th.border })
 }
 
 fn frame_block(focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if focused {
-            style(Tone::Accent)
-        } else {
-            style(Tone::Dim)
-        })
+        .border_style(border_style(focused))
 }
 
 /// 框上沿的标题条：左标题从第 2 列起，右标题贴右边，各自带底色。
@@ -156,7 +167,10 @@ fn workbench(f: &mut Frame, size: Size, wb: &Workbench) {
 }
 
 fn header(f: &mut Frame, r: Rect, h: &Header) {
-    f.render_widget(Block::default().style(Style::default().bg(BAR)), rr(r));
+    f.render_widget(
+        Block::default().style(Style::default().bg(th().bar_bg).fg(th().bar_fg)),
+        rr(r),
+    );
     let rw = h.right.width() as u16;
     lines(
         f,
@@ -217,11 +231,7 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
         );
         lines(f, inner, ask, p.ask_selected);
     } else {
-        let border = if p.composer.focused {
-            style(Tone::Accent)
-        } else {
-            style(Tone::Dim)
-        };
+        let border = border_style(p.composer.focused);
         let block = Block::default()
             .borders(Borders::TOP | Borders::BOTTOM)
             .border_style(border);
@@ -261,19 +271,16 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
     f.render_widget(frame_block(down), rr(s.lower_frame));
     // 共用的那条分隔线：上半或下半有焦点都亮（交互 §2.3）。
     let mid = s.lower_frame.y;
-    let line_tone = if up || down { Tone::Accent } else { Tone::Dim };
     let rule = format!("├{}┤", "─".repeat(s.area.w.saturating_sub(2) as usize));
-    lines(
-        f,
-        Rect::new(s.area.x, mid, s.area.w, 1),
-        &[Line::toned(rule, line_tone)],
-        None,
+    f.render_widget(
+        Paragraph::new(RLine::from(RSpan::styled(rule, border_style(up || down)))),
+        rr(Rect::new(s.area.x, mid, s.area.w, 1)),
     );
     for (tab, hit) in p.tabs.iter().zip(&s.tab_hits) {
         // 上半的字不加底色：当前标签只换颜色。
         let st = if tab.active {
             let st = Style::default().add_modifier(Modifier::BOLD);
-            if up { st.fg(Color::Cyan) } else { st }
+            if up { st.fg(th().accent) } else { st }
         } else if tab.badge > 0 {
             style(Tone::Attention)
         } else {
@@ -338,7 +345,10 @@ fn section(f: &mut Frame, r: Rect, sec: &Section) {
 
 fn footer(f: &mut Frame, size: Size, ft: &Footer) {
     let r = Rect::new(0, size.rows.saturating_sub(1), size.cols, 1.min(size.rows));
-    f.render_widget(Block::default().style(Style::default().bg(BAR)), rr(r));
+    f.render_widget(
+        Block::default().style(Style::default().bg(th().bar_bg).fg(th().bar_fg)),
+        rr(r),
+    );
     let r = Rect::new(r.x + 1, r.y, r.w.saturating_sub(2), r.h);
     let essential = ft
         .essential
@@ -389,8 +399,11 @@ fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(style(Tone::Accent))
-        .title(RLine::from(format!(" {} ", o.title)));
+        .border_style(border_style(true))
+        .title(RLine::from(RSpan::styled(
+            format!(" {} ", o.title),
+            bar(true),
+        )));
     f.render_widget(block, rr(r));
     let inner = Rect::new(
         r.x + 2,

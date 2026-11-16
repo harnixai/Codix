@@ -55,15 +55,12 @@ impl Core {
         size: Size,
         clock: Box<dyn Fn() -> u64 + Send>,
         start: Start,
-        idle_timeout_ms: Option<u64>,
+        settings: model::Settings,
     ) -> (Core, Vec<ShellEffect>) {
         let now = clock();
         let (replies_tx, replies) = mpsc::unbounded_channel();
         let (inst_tx, inst) = mpsc::unbounded_channel();
-        let mut state = State::new(keymap, size, now);
-        if let Some(t) = idle_timeout_ms {
-            state.ui.idle_timeout_ms = t;
-        }
+        let state = State::with_settings(keymap, size, now, settings);
         let mut core = Core {
             state,
             resolver: Resolver::default(),

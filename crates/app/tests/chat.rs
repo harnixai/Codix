@@ -297,6 +297,11 @@ async fn m08_ctrl_c_and_ctrl_d_like_claude_code() {
             .any(|e| matches!(e, ShellEffect::Quit { .. }))
     );
     h.keys("Ctrl+D").await;
+    assert!(matches!(
+        h.core.state.ui.overlay,
+        Some(model::Overlay::Exit { .. })
+    ));
+    h.keys("Enter").await;
     assert!(h.shell.contains(&ShellEffect::Quit { detach: true }));
 }
 

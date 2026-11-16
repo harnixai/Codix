@@ -336,6 +336,20 @@ fn idle_and_heartbeat(s: &mut State) -> Vec<Effect> {
     out
 }
 
+/// 退出框的三个选项（交互 §7）：0 后台运行（脱离，实例继续）、1 直接退出（停实例再退）、2 返回。
+fn exit_choice(s: &mut State, c: usize) -> Vec<Effect> {
+    s.ui.overlay = None;
+    match (c, s.ui.attached.clone()) {
+        (0, _) | (1, None) => vec![Effect::Quit { detach: true }],
+        (1, Some(name)) => {
+            s.ui.quitting = true;
+            s.notice(format!("正在停止实例 {name} …"), false);
+            vec![Effect::Instances(InstOp::Stop { name })]
+        }
+        _ => vec![],
+    }
+}
+
 fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
     match c {
         Confirm::ForceAttach(name) => {
@@ -379,7 +393,7 @@ fn picker_action(s: &mut State, a: Action) -> Vec<Effect> {
                 p.scroll = p.selected + 1 - n;
             }
         }
-        Action::Quit => return vec![Effect::Quit { detach: true }],
+        Action::Quit | Action::Exit => return vec![Effect::Quit { detach: true }],
         Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
         Action::New => return create(s),
         Action::Open => match chosen {
@@ -469,6 +483,7 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
             s.ui.focus = Focus::Composer;
             s.start()
         }
+        Ok(InstOk::Stopped) if s.ui.quitting => vec![Effect::Quit { detach: false }],
         Ok(InstOk::Stopped) => {
             if matches!(s.ui.screen, Screen::Instances(_)) {
                 set_picker_message(s, "已停止".into());
@@ -499,6 +514,25 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
 fn action(s: &mut State, a: Action) -> Vec<Effect> {
     if a != Action::Interrupt {
         s.ui.quit_armed_ms = None;
+    }
+    if let Some(Overlay::Exit { selected }) = &mut s.ui.overlay {
+        let choice = match a {
+            Action::Up => {
+                *selected = selected.saturating_sub(1);
+                None
+            }
+            Action::Down => {
+                *selected = (*selected + 1).min(2);
+                None
+            }
+            Action::Confirm | Action::Open | Action::Submit => Some(*selected),
+            Action::Back | Action::No => Some(2),
+            a => a.choice_index().filter(|i| *i < 3),
+        };
+        return match choice {
+            Some(c) => exit_choice(s, c),
+            None => vec![],
+        };
     }
     if let Some(Overlay::Help { scroll }) = &mut s.ui.overlay {
         match a {
@@ -606,16 +640,19 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 .quit_armed_ms
                 .is_some_and(|t| now.saturating_sub(t) <= QUIT_ARM_MS)
             {
-                return vec![Effect::Quit { detach: true }];
+                s.ui.quit_armed_ms = None;
+                s.ui.notice = None;
+                s.ui.overlay = Some(Overlay::Exit { selected: 0 });
+                return vec![];
             }
             s.ui.quit_armed_ms = Some(now);
             let key = s
                 .keymap
                 .key_for(keys::Context::Global, Action::Interrupt)
                 .unwrap_or_default();
-            s.notice(format!("再按一次 {key} 脱离（实例继续运行）"), false);
+            s.notice(format!("再按一次 {key} 退出"), false);
         }
-        Action::Detach => return vec![Effect::Quit { detach: true }],
+        Action::Detach | Action::Exit => s.ui.overlay = Some(Overlay::Exit { selected: 0 }),
         Action::Redraw => return vec![Effect::Redraw],
         _ => {}
     }

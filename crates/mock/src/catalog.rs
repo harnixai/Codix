@@ -28,6 +28,14 @@ const SCENARIOS: &[(&str, &str)] = &[
         include_str!("../scenarios/m06-step-restart.yaml"),
     ),
     ("m07-steer", include_str!("../scenarios/m07-steer.yaml")),
+    (
+        "m09-session-tree",
+        include_str!("../scenarios/m09-session-tree.yaml"),
+    ),
+    (
+        "m10-goal-todo",
+        include_str!("../scenarios/m10-goal-todo.yaml"),
+    ),
     ("m16-storm", include_str!("../scenarios/m16-storm.yaml")),
     ("showcase", include_str!("../scenarios/showcase.yaml")),
 ];

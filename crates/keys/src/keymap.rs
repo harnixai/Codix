@@ -153,14 +153,15 @@ impl Keymap {
             .collect()
     }
 
-    /// 底栏最右边永远在的两项：切栏与帮助（需求 L-07）。取实际绑定，用户改了键也跟着变。
-    pub fn essential(&self) -> [(String, &'static str); 2] {
+    /// 底栏最右边永远在的三项：切栏、退出、帮助（需求 L-07）。取实际绑定，用户改了键也跟着变。
+    pub fn essential(&self) -> [(String, &'static str); 3] {
         let k = |a: Action| {
             self.key_for(Context::Global, a)
                 .unwrap_or_else(|| "?".into())
         };
         [
             (k(Action::PaneToggle), Action::PaneToggle.help()),
+            (k(Action::Exit), Action::Exit.help()),
             (k(Action::Help), Action::Help.help()),
         ]
     }

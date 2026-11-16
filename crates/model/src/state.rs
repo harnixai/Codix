@@ -100,7 +100,13 @@ pub enum Confirm {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Overlay {
-    Help { scroll: usize },
+    Help {
+        scroll: usize,
+    },
+    /// 退出时的选择：后台运行 / 直接退出 / 返回（交互 §7）。
+    Exit {
+        selected: usize,
+    },
 }
 
 /// 一个标签自己的选中与滚动；切标签再切回来保持原样。
@@ -183,6 +189,7 @@ pub struct Ui {
     pub detach_armed_ms: Option<u64>,
     /// 测试用计数：重排了多少个块（testing.md §1 用计数验性能）。
     pub relayouts: u64,
+    pub quitting: bool,
 }
 
 impl Ui {
@@ -209,6 +216,7 @@ pub const HEARTBEAT_MS: u64 = 10_000;
 pub const IDLE_WARN_MS: u64 = 60_000;
 
 pub struct State {
+    pub settings: crate::Settings,
     pub domain: Domain,
     pub ui: Ui,
     pub keymap: Arc<Keymap>,
@@ -218,19 +226,31 @@ pub struct State {
 
 impl State {
     pub fn new(keymap: Arc<Keymap>, size: Size, now_ms: u64) -> State {
+        State::with_settings(keymap, size, now_ms, crate::Settings::default())
+    }
+
+    pub fn with_settings(
+        keymap: Arc<Keymap>,
+        size: Size,
+        now_ms: u64,
+        settings: crate::Settings,
+    ) -> State {
+        let ratio = settings.ratio_pct.clamp(40, 75);
+        let idle = settings.idle_timeout_ms;
         State {
+            settings,
             domain: Domain::default(),
             ui: Ui {
                 screen: Screen::Workbench,
                 confirm: None,
                 attached: None,
                 last_input_ms: now_ms,
-                idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
+                idle_timeout_ms: idle,
                 idle_warned: false,
                 next_heartbeat_ms: now_ms + HEARTBEAT_MS,
                 size,
                 now_ms,
-                ratio_pct: 60,
+                ratio_pct: ratio,
                 side_collapsed: false,
                 showing: ShowPane::Chat,
                 focus: Focus::Composer,
@@ -254,6 +274,7 @@ impl State {
                 esc_armed_ms: None,
                 detach_armed_ms: None,
                 relayouts: 0,
+                quitting: false,
             },
             keymap,
             pending: HashMap::new(),

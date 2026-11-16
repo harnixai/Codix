@@ -1,14 +1,14 @@
  Codix  实例 dev@ops-01                                                                                                                                ● 已连接
 ╭─ 会话 › 昨天的调研 ───────────────────────────────────────────────────────────────── ○ 空闲 ─╮╭─ 会话 ─ 流程 ─ 作业 ─────────────────────────────────────────╮
-│ dev@ops-01 · ~/notes · code · claude-sonnet-5-5 · 分叉自 重构认证模块                        ││ ● 支付重试（主会话）                                         │
-│   ⎿  src/auth/mod.rs:12:pub fn verify_token(token: &str) -> bool {                           ││ ◐ 重构认证模块                                               │
-│      src/auth/mod.rs:58:fn verify_signature(sig: &[u8]) -> Result<(), AuthError> {           ││ ◐ 导出 CSV（主会话）                                         │
-│      src/auth/session.rs:23:    fn verify(&self) -> bool {                                   ││ ○ 日志巡检                                                   │
-│      … +2 行 (ctrl+o 展开)                                                                   ││›○ 昨天的调研                                                 │
-│                                                                                              ││ ○ 老项目会话                                                 │
-│ ⏺ 找到了，接下来改校验逻辑。                                                                 ││                                                              │
-│                                                                                              ││                                                              │
-│ ⏺ Edit(src/auth/mod.rs)                                                                      ││                                                              │
+│ dev@ops-01 · ~/notes · code · claude-sonnet-5-5 · 分叉自 重构认证模块                        ││ ● 排查内存泄漏                                               │
+│   ⎿  src/auth/mod.rs:12:pub fn verify_token(token: &str) -> bool {                           ││ ● 支付重试（主会话）                                         │
+│      src/auth/mod.rs:58:fn verify_signature(sig: &[u8]) -> Result<(), AuthError> {           ││ ◐ 重构认证模块                                               │
+│      src/auth/session.rs:23:    fn verify(&self) -> bool {                                   ││ ◐ 导出 CSV（主会话）                                         │
+│      … +2 行 (ctrl+o 展开)                                                                   ││ ○ 日志巡检                                                   │
+│                                                                                              ││ ○ 翻译文档                                                   │
+│ ⏺ 找到了，接下来改校验逻辑。                                                                 ││ ○ 写周报                                                     │
+│                                                                                              ││›○ 昨天的调研                                                 │
+│ ⏺ Edit(src/auth/mod.rs)                                                                      ││ ○ 老项目会话                                                 │
 │   ⎿  更新了 src/auth/mod.rs，+6 −4                                                           ││                                                              │
 │      @@ -12,10 +12,14 @@ pub struct Claims {                                                 ││                                                              │
 │       pub fn verify_token(token: &str) -> bool {                                             ││                                                              │
@@ -42,4 +42,4 @@
 │ ──────────────────────────────────────────────────────────────────────────────────────────── ││                                                              │
 │   ? 快捷键                                                                                   ││                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
- F2 会话标签 · F6 切换焦点 · Ctrl+G 下一处待处理 · Ctrl+O 转录精简 / 详细 · F8 鼠标捕获                                                   Ctrl+B 切栏 · F1 帮助
+ F2 会话标签 · F6 切换焦点 · Ctrl+G 下一处待处理 · Ctrl+O 转录精简 / 详细 · F8 鼠标捕获                                     Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助

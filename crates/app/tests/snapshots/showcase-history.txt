@@ -1,15 +1,15 @@
  Codix  实例 dev@ops-01                                                                                                                                ● 已连接
 ╭─ 会话 › Codix 展示 ───────────────────────────────────────────────────────────────── ○ 空闲 ─╮╭─ 会话 ─ 流程 ─ 作业 ─────────────────────────────────────────╮
 │ dev@ops-01 · ~/work/codix · code · claude-sonnet-5-5 · 用户新建                              ││›○ Codix 展示                                                 │
-│      18 |         let client = self.client.clone();                                          ││ ● 支付重试（主会话）                                         │
-│         |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `   ││ ◐ 重构认证模块                                               │
-│      _client`                                                                                ││ ◐ 导出 CSV（主会话）                                         │
-│         |                                                                                    ││ ○ 日志巡检                                                   │
-│         = note: `-D warnings` implied by `-D clippy::all`                                    ││ ○ 昨天的调研                                                 │
-│      error: could not compile `codix-svc` due to 1 previous error                            ││ ○ 老项目会话                                                 │
-│                                                                                              ││                                                              │
-│   ⎿  上下文已压缩：82.4k → 12.1k tokens                                                      ││                                                              │
-│                                                                                              ││                                                              │
+│      18 |         let client = self.client.clone();                                          ││ ● 排查内存泄漏                                               │
+│         |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `   ││ ● 支付重试（主会话）                                         │
+│      _client`                                                                                ││ ◐ 重构认证模块                                               │
+│         |                                                                                    ││ ◐ 导出 CSV（主会话）                                         │
+│         = note: `-D warnings` implied by `-D clippy::all`                                    ││ ○ 日志巡检                                                   │
+│      error: could not compile `codix-svc` due to 1 previous error                            ││ ○ 翻译文档                                                   │
+│                                                                                              ││ ○ 写周报                                                     │
+│   ⎿  上下文已压缩：82.4k → 12.1k tokens                                                      ││ ○ 昨天的调研                                                 │
+│                                                                                              ││ ○ 老项目会话                                                 │
 │ ⏺ Agent(审查 OAuth 改动)                                                                     ││                                                              │
 │   ⎿  审查结论：整体结构合理，trait 边界清晰。                                                ││                                                              │
 │      1. oauth.rs 中 `client` 克隆后未使用，clippy 会报错。                                   ││                                                              │
@@ -42,4 +42,4 @@
 │ ──────────────────────────────────────────────────────────────────────────────────────────── ││                                                              │
 │   ? 快捷键                                                                                   ││                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
- F2 会话标签 · F6 切换焦点 · Ctrl+G 下一处待处理 · Ctrl+O 转录精简 / 详细 · F8 鼠标捕获                                                   Ctrl+B 切栏 · F1 帮助
+ F2 会话标签 · F6 切换焦点 · Ctrl+G 下一处待处理 · Ctrl+O 转录精简 / 详细 · F8 鼠标捕获                                     Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助

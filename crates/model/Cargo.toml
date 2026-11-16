@@ -17,3 +17,4 @@ keys.workspace = true
 unicode-width.workspace = true
 unicode-segmentation.workspace = true
 serde_json.workspace = true
+syntect.workspace = true

@@ -54,7 +54,10 @@ async fn m17_too_small_still_has_footer() {
     let mut h = Harness::new("default", Size::new(59, 20)).await;
     let text = h.text();
     assert!(text.contains("终端太小"), "{text}");
-    assert!(h.last_line().ends_with("Ctrl+B 切栏 · F1 帮助"));
+    assert!(
+        h.last_line()
+            .ends_with("Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助")
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -70,7 +73,7 @@ async fn m24_footer_always_ends_with_toggle_and_help() {
             }
             let last = h.last_line();
             assert!(
-                last.ends_with("Ctrl+B 切栏 · F1 帮助"),
+                last.ends_with("Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助"),
                 "{cols} 列、{step:?} 之后底栏是：{last:?}"
             );
         }
@@ -130,9 +133,38 @@ async fn ctrl_c_twice_detaches_and_f8_releases_the_mouse() {
     assert!(h.last_line().contains("再按一次"));
     h.keys("Ctrl+C").await;
     assert!(
-        h.shell
-            .contains(&app::core::ShellEffect::Quit { detach: true })
+        matches!(h.core.state.ui.overlay, Some(model::Overlay::Exit { .. })),
+        "连按两次 Ctrl+C 弹出退出框"
     );
+    h.keys("1").await;
+    assert!(
+        h.shell
+            .contains(&app::core::ShellEffect::Quit { detach: true }),
+        "1 = 后台运行"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ctrl_x_exit_dialog_background_stop_or_back() {
+    let mut h = Harness::new("default", WIDE).await;
+    h.keys("Ctrl+X").await;
+    let text = h.text();
+    assert!(text.contains("后台运行") && text.contains("直接退出") && text.contains("返回"));
+    h.snapshot("exit-dialog");
+    h.keys("Esc").await;
+    assert!(h.core.state.ui.overlay.is_none(), "Esc = 返回");
+    h.keys("Ctrl+X Down Enter").await;
+    h.settle().await;
+    assert!(
+        h.shell
+            .contains(&app::core::ShellEffect::Quit { detach: false }),
+        "直接退出：停掉实例再退"
+    );
+    let listed = port::Instances::list(h.instances.as_ref(), true)
+        .await
+        .unwrap();
+    let dev = listed.iter().find(|i| i.name.as_str() == "dev").unwrap();
+    assert_eq!(dev.state, port::InstanceState::Stopped);
 }
 
 #[tokio::test(start_paused = true)]

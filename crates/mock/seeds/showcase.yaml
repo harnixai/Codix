@@ -563,6 +563,30 @@ sessions:
           text: |
             推荐 `oauth2`：维护活跃、支持 async、依赖较少。`openidconnect` 在它之上多了 OIDC 发现与 ID token 校验，目前用不到，后面需要再加。
 
+  # ----------------------------------------------------- s1-reviewer-lic
+  - summary:
+      id: s1-reviewer-lic
+      title: 检查依赖许可
+      state: running
+      usage: {input: 2100, output: 640, cache_read: 900, cache_write: 80}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/auth
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {sub_agent: {parent: s1-reviewer, parent_title: 审查认证改动, task: t8}}
+      updated_ms: 1763279930000
+    running: true
+    history:
+      - user: {text: 检查新增依赖 oauth2 与 openidconnect 的许可证，确认与项目许可兼容。}
+      - assistant: {text: 我用 cargo-deny 扫一遍许可证清单。}
+      - tool:
+          id: lc1
+          name: Bash
+          input: cargo deny check licenses
+          content: ""
+
   # ---------------------------------------------------------------- s2
   - summary:
       id: s2
@@ -577,6 +601,11 @@ sessions:
         model: claude-sonnet-5-5
         origin: {job: {job: j1, name: 每日巡检, fired_ms: 1763254800000}}
       updated_ms: 1763254900000
+    goal: {objective: 每日巡检并归类错误日志, phase: blocked, rounds_started: 1, max_rounds: 32, blocked_reason: 日志目录没有读权限}
+    todos:
+      - {text: 读取昨天的错误日志, status: done}
+      - {text: 按类型归类并统计, status: in_progress}
+      - {text: 生成巡检摘要, status: pending}
     history:
       - user: {text: 检查昨天的错误日志并总结}
       - tool:
@@ -612,6 +641,12 @@ sessions:
         model: claude-sonnet-5-5
         origin: {fork: {from: s1, from_title: 重构认证模块}}
       updated_ms: 1763190000000
+    goal: {objective: 整理 OAuth 迁移方案对比, phase: paused, rounds_started: 3, max_rounds: 32}
+    todos:
+      - {text: 收集三种迁移做法, status: done}
+      - {text: 列出各自的风险, status: done}
+      - {text: 估算工作量, status: done}
+      - {text: 整理成一页对比, status: done}
     history:
       - user: {text: 把 OAuth 迁移的几种做法整理成一页对比。}
       - assistant:
@@ -678,6 +713,55 @@ sessions:
       - user: {text: 把笔记目录里的重复条目找出来。}
       - assistant: {text: 找到 4 组重复条目，列表已写入 duplicates.md。}
 
+  # ---------------------------------------------------------------- s7
+  - summary:
+      id: s7
+      title: 写周报
+      state: idle
+      usage: {input: 3100, output: 1200, cache_read: 800, cache_write: 90}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/notes
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {job: {job: j2, name: 周报流程, fired_ms: 1763193600000}}
+      updated_ms: 1763193900000
+    history:
+      - user: {text: 汇总本周的提交与评审，写一份周报草稿。}
+      - assistant:
+          text: |
+            周报草稿已生成：
+
+            - 完成认证模块的 OAuth 迁移设计与 provider 实现
+            - 评审 3 个合并请求，修复 2 处回归
+            - 下周计划：迁移 session 存储、补齐集成测试
+
+  # ---------------------------------------------------------------- s8
+  - summary:
+      id: s8
+      title: 排查内存泄漏
+      state: running
+      usage: {input: 12400, output: 3300, cache_read: 9800, cache_write: 700}
+      provenance: {instance: dev, host: ops-01, project: ~/work/gateway, scene: code, model: claude-sonnet-5-5, origin: user}
+      updated_ms: 1763279960000
+    running: true
+    history:
+      - user: {text: 网关进程 RSS 一天涨了 2GB，帮我找原因。}
+      - assistant: {text: 我先用 heaptrack 跑一段压测，再对比分配热点。}
+
+  # ---------------------------------------------------------------- s9
+  - summary:
+      id: s9
+      title: 翻译文档
+      state: idle
+      usage: {input: 2600, output: 2100, cache_read: 500, cache_write: 60}
+      provenance: {instance: dev, host: ops-01, project: ~/notes, scene: code, model: claude-sonnet-5-5, origin: {fork: {from: s3, from_title: 昨天的调研}}}
+      updated_ms: 1763195000000
+    history:
+      - user: {text: 把对比页翻译成英文，保留表格格式。}
+      - assistant: {text: 英文版已写入 comparison.en.md，术语沿用原文。}
+
 tasks:
   - id: t1
     owner: s1
@@ -695,6 +779,21 @@ tasks:
     status: running
     label: cargo test
     started_ms: 1763279880000
+  - id: t8
+    owner: s1-reviewer
+    kind: agent
+    status: running
+    label: 检查依赖许可
+    agent_type: general
+    agent_session: s1-reviewer-lic
+    started_ms: 1763279860000
+    usage: {input: 2100, output: 640, cache_read: 900, cache_write: 80}
+  - id: t9
+    owner: s1-reviewer-lic
+    kind: shell
+    status: running
+    label: cargo deny check licenses
+    started_ms: 1763279900000
   - id: t3
     owner: s1
     kind: agent
@@ -705,12 +804,6 @@ tasks:
     started_ms: 1763278800000
     ended_ms: 1763279400000
     usage: {input: 4200, output: 2300, cache_read: 1400, cache_write: 100}
-  - id: t4
-    owner: s1
-    kind: monitor
-    status: running
-    label: tail -f app.log
-    started_ms: 1763279100000
   - id: t5
     owner: s1-researcher
     kind: shell
@@ -718,6 +811,34 @@ tasks:
     label: cargo search oauth2
     started_ms: 1763278900000
     ended_ms: 1763278915000
+  - id: t4
+    owner: s1
+    kind: monitor
+    status: running
+    label: tail -f app.log
+    started_ms: 1763279100000
+  - id: t10
+    owner: s1
+    kind: code
+    status: done
+    label: 批量重命名 58 处调用
+    started_ms: 1763279200000
+    ended_ms: 1763279236000
+  - id: t11
+    owner: s1
+    kind: mcp
+    status: failed
+    label: "github: create_pull_request"
+    started_ms: 1763279600000
+    ended_ms: 1763279603000
+    error: "401 Unauthorized: token 缺少 repo 权限"
+  - id: t12
+    owner: s1
+    kind: shell
+    status: stopped
+    label: npm run build
+    started_ms: 1763279300000
+    ended_ms: 1763279342000
   - id: t6
     owner: s4
     kind: agent
@@ -733,6 +854,31 @@ tasks:
     started_ms: 1763279700000
     ended_ms: 1763279890000
     usage: {input: 5000, output: 2000, cache_read: 6000, cache_write: 400}
+  - id: t15
+    owner: s2
+    kind: monitor
+    status: running
+    label: journalctl -u app -f -p err
+    started_ms: 1763254950000
+  - id: t16
+    owner: s2
+    kind: shell
+    status: done
+    label: ls /var/log/app
+    started_ms: 1763254910000
+    ended_ms: 1763254912000
+  - id: t17
+    owner: s8
+    kind: shell
+    status: running
+    label: heaptrack ./target/release/gateway
+    started_ms: 1763279800000
+  - id: t18
+    owner: s8
+    kind: monitor
+    status: running
+    label: "watch -n 5 'ps -o rss= -p $(pgrep gateway)'"
+    started_ms: 1763279820000
 
 task_output:
   t2: |
@@ -762,11 +908,51 @@ task_output:
     2025-11-16T09:01:27Z ERROR token endpoint timeout after 3000ms
     2025-11-16T09:01:28Z INFO  retrying token exchange (attempt 2)
     2025-11-16T09:01:28Z INFO  GET /oauth/callback 200 241ms
+    2025-11-16T09:02:15Z INFO  GET /healthz 200 1ms
+    2025-11-16T09:03:02Z INFO  POST /logout 204 6ms
+    2025-11-16T09:03:44Z WARN  session store: 3 expired entries evicted
+    2025-11-16T09:04:19Z INFO  GET /login 302 3ms
+    2025-11-16T09:04:20Z INFO  GET /oauth/callback 200 197ms
+    2025-11-16T09:05:11Z INFO  GET /healthz 200 1ms
   t5: |
     oauth2 = "4.4.2"    # An extensible, strongly-typed implementation of OAuth2
     openidconnect = "3.5.0"    # OpenID Connect Client library for Rust
     oauth2-test-server = "0.1.3"    # A tiny OAuth2 server for tests
     ... and 41 crates more (use --limit N to see more)
+  t9: |
+    Checking licenses for 214 crates
+    ok: oauth2 4.4.2 (MIT OR Apache-2.0)
+    ok: openidconnect 3.5.0 (MIT)
+    ok: serde 1.0.215 (MIT OR Apache-2.0)
+    ok: tokio 1.41.1 (MIT)
+    ok: reqwest 0.12.9 (MIT OR Apache-2.0)
+    ok: url 2.5.4 (MIT OR Apache-2.0)
+    ok: rand 0.8.5 (MIT OR Apache-2.0)
+    ok: sha2 0.10.8 (MIT OR Apache-2.0)
+    ok: base64 0.22.1 (MIT OR Apache-2.0)
+    ok: ring 0.17.8 (ISC AND MIT AND OpenSSL)
+    ok: webpki-roots 0.26.7 (MPL-2.0)
+    ok: unicode-ident 1.0.14 (MIT OR Apache-2.0 OR Unicode-3.0)
+    ok: hyper 1.5.1 (MIT)
+    ok: http 1.1.0 (MIT OR Apache-2.0)
+    checked 118 of 214 ...
+  t12: |
+    > auth-web@0.4.0 build
+    > vite build
+
+    vite v5.4.11 building for production...
+    transforming (1) index.html
+    transforming (42) src/components/Login.tsx
+    transforming (118) src/api/session.ts
+    transforming (203) src/routes/callback.tsx
+    ✓ 241 modules transformed.
+    rendering chunks (3)...
+    computing gzip size...
+    dist/index.html                   0.46 kB
+    dist/assets/index-DiwrgTda.css   12.31 kB
+    dist/assets/index-BZq4uXk2.js   187.92 kB
+    ^C
+    npm run build: terminated by user (SIGINT)
 
 flows:
   - summary: {name: feature-to-ship, title: 需求到上线, origin: builtin, active_runs: 2}

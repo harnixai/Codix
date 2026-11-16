@@ -35,6 +35,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Global, "Alt+M", A::MouseToggle),
         b(C::Global, "Ctrl+C", A::Interrupt),
         b(C::Global, "Ctrl+D", A::Detach),
+        b(C::Global, "Ctrl+X", A::Exit),
         b(C::Global, "Ctrl+L", A::Redraw),
         b(C::Global, "Esc", A::Back),
         b(C::Global, "F12", A::EventLog),
@@ -104,6 +105,10 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Overlay, "PageUp", A::PageUp),
         b(C::Overlay, "PageDown", A::PageDown),
         b(C::Overlay, "q", A::Back),
+        b(C::Overlay, "Enter", A::Confirm),
+        b(C::Overlay, "1", A::Choose1),
+        b(C::Overlay, "2", A::Choose2),
+        b(C::Overlay, "3", A::Choose3),
     ];
     for (i, a) in [
         A::Choose1,

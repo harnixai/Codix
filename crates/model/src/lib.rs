@@ -6,7 +6,9 @@
 mod chat;
 mod chat_update;
 mod composer;
+mod highlight;
 mod mouse;
+mod settings;
 mod state;
 mod text;
 mod update;
@@ -15,7 +17,9 @@ mod welcome;
 
 pub use chat::{Block, BlockKind, Conversation, Phase};
 pub use composer::ComposerState;
+pub use highlight::theme_names;
 pub use mouse::{Mouse, MouseButton, MouseKind};
+pub use settings::Settings;
 pub use state::{
     Confirm, DEFAULT_IDLE_TIMEOUT_MS, DetachReason, Domain, Focus, Overlay, Picker, Screen, State,
     Tab, Ui,

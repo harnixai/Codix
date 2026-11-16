@@ -104,11 +104,21 @@ pub(crate) fn wrap_text(
 
 /// markdown：标题、列表（含嵌套、编号、任务）、引用、分隔线、代码块（带语言）、表格、
 /// 行内代码、粗体、斜体、链接。够让回答读起来像 Claude Code。
+#[cfg(test)]
 pub(crate) fn markdown(text: &str, width: usize, first: &Line, cont: &Line) -> Vec<Line> {
+    markdown_with(text, width, first, cont, crate::highlight::DEFAULT_THEME)
+}
+
+pub(crate) fn markdown_with(
+    text: &str,
+    width: usize,
+    first: &Line,
+    cont: &Line,
+    syntax_theme: &str,
+) -> Vec<Line> {
     let mut out = vec![];
     let raw: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
     let mut i = 0;
-    let mut code: Option<String> = None;
     let lead = |out: &Vec<Line>| {
         if out.is_empty() {
             first.clone()
@@ -120,35 +130,32 @@ pub(crate) fn markdown(text: &str, width: usize, first: &Line, cont: &Line) -> V
         let line = raw[i];
         let trimmed = line.trim_start();
         if let Some(lang) = trimmed.strip_prefix("```") {
-            match code.take() {
-                None => {
-                    let label = if lang.trim().is_empty() {
-                        "代码".to_string()
-                    } else {
-                        lang.trim().to_string()
-                    };
-                    out.push(lead(&out).push(format!("┌─ {label}"), Tone::Dim));
-                    code = Some(label);
-                }
-                Some(_) => out.push(lead(&out).push("└─", Tone::Dim)),
+            let lang = lang.trim();
+            let label = if lang.is_empty() { "代码" } else { lang };
+            out.push(lead(&out).push(format!("┌─ {label}"), Tone::Dim));
+            let mut body = vec![];
+            i += 1;
+            while i < raw.len() && !raw[i].trim_start().starts_with("```") {
+                body.push(raw[i]);
+                i += 1;
             }
-            i += 1;
-            continue;
-        }
-        if code.is_some() {
-            let bar = lead(&out).push("│ ", Tone::Dim);
-            let mut bar_cont = cont.clone();
-            bar_cont = bar_cont.push("│ ", Tone::Dim);
-            out.extend(wrap(
-                &[Span {
-                    text: line.to_string(),
-                    tone: Tone::Code,
-                }],
-                width,
-                &bar,
-                &bar_cont,
-            ));
-            i += 1;
+            let closed = i < raw.len();
+            i += usize::from(closed);
+            let colored = crate::highlight::highlight(lang, &body, syntax_theme);
+            for (k, l) in body.iter().enumerate() {
+                let spans = match &colored {
+                    Some(c) => c[k].clone(),
+                    None => vec![Span {
+                        text: l.to_string(),
+                        tone: Tone::Code,
+                    }],
+                };
+                let bar = cont.clone().push("│ ", Tone::Dim);
+                out.extend(wrap(&spans, width, &bar, &bar));
+            }
+            if closed {
+                out.push(cont.clone().push("└─", Tone::Dim));
+            }
             continue;
         }
         // 表格：连续的 `|` 行。

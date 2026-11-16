@@ -26,7 +26,7 @@ Codix 不跟 Claude Code 这类聊天式编程 CLI 拼打磨。它的位置是 A
 - **常驻实例 + 可接入的 TUI。** 实例是本机上一个常驻的 `codix host` 进程，引擎、流程、作业都跑在里面。TUI 通过本机 unix socket 接入实例，退出 TUI 就是脱离。**一个实例同时只允许一个 TUI 接入**：可以强制接入（踢掉对方），空闲超时会自动脱离。可以用 `codix list` 查看实例、`codix attach` 接入。
 - **不监听任何网络端口。** 远程使用就是 ssh 登录到那台机器后运行 `codix`，安全交给 ssh 和操作系统。
 - **引擎只走 Agix 的 JSON-RPC 协议**（`agix/docs/daemon_rpc_protocol.md`）：实例进程内部用 `agix::embed` 嵌入引擎，通过 duplex 通信。不使用 `agix::pool` 这一层 Rust 门面，因为它不承诺兼容。
-- **数据目录是 `~/.codix`**（可以用 `CODIX_HOME` 改），Agix 的 `data_root` 也指向这里，不使用 `~/.agix`。Codix 自己的文件用自己的名字（`codix.toml`、`flows/`、`instances/` 等），和 Agix 的文件放在一起，不往 Agix 的 `settings.json` 里写东西。项目里的 `.agix/` 目录名是 Agix 写死的，已提 openatta/Agix#86，在那之前先沿用。
+- **数据目录是 `~/.codix`**（可以用 `CODIX_HOME` 改），Agix 的 `data_root` 也指向这里，不使用 `~/.agix`。Codix 自己的文件用自己的名字（`codix.yaml`、`flows/`、`instances/` 等），和 Agix 的文件放在一起，不往 Agix 的 `settings.json` 里写东西。项目里的 `.agix/` 目录名是 Agix 写死的，已提 openatta/Agix#86，在那之前先沿用。
 - **TUI 与后端之间只有一个端口**：`Instances` 和 `Backend` 两个 trait 加上领域事件，定义见 `docs/design/architecture.md` §3。mock 与真实实现走的是同一个端口；端口的消息序列化之后就是 TUI 与实例之间的协议。
 - **流程来自 Harnix**：拷贝，不引用，见下面的 `3rds/`。流程格式与 Harnix 兼容。流程不放进 Agix。
 - **不做**：ACP（已作为需求提给 Agix：openatta/Agix#74）、Web 界面。

@@ -76,8 +76,12 @@ pub(crate) fn relayout(s: &mut State) {
     };
     let width = chat.transcript.w as usize;
     let detail = s.ui.detail;
+    let opts = crate::chat::RenderOpts {
+        compact_tool_lines: s.settings.compact_tool_lines,
+        syntax_theme: s.settings.syntax_theme.clone(),
+    };
     if let Some(conv) = s.conv_mut() {
-        let n = conv.relayout(width, detail);
+        let n = conv.relayout(width, detail, &opts);
         s.ui.relayouts += n;
     }
 }
@@ -290,10 +294,12 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
                 .detach_armed_ms
                 .is_some_and(|t| now - t <= DETACH_ARM_MS)
             {
-                return Some(vec![Effect::Quit { detach: true }]);
+                s.ui.detach_armed_ms = None;
+                s.ui.notice = None;
+                s.ui.overlay = Some(Overlay::Exit { selected: 0 });
             } else {
                 s.ui.detach_armed_ms = Some(now);
-                s.notice("再按一次 Ctrl+D 脱离（实例继续运行）", false);
+                s.notice("再按一次 Ctrl+D 退出", false);
             }
         }
         Action::NextAttention if s.ask_visible() => {
@@ -471,7 +477,10 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             s.ui.overlay = Some(Overlay::Help { scroll: 0 });
             vec![]
         }
-        "quit" | "exit" => vec![Effect::Quit { detach: true }],
+        "quit" | "exit" => {
+            s.ui.overlay = Some(Overlay::Exit { selected: 0 });
+            vec![]
+        }
         "new" => vec![s.call(
             Pending::CreateOnly,
             Command::CreateSession {
