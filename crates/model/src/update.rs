@@ -318,7 +318,7 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
                     s.ui.focus = Focus::Composer;
                 } else if chat.transcript.contains(col, row) {
                     s.ui.focus = Focus::Transcript;
-                } else if chat.area.contains(col, row) {
+                } else if chat.frame.contains(col, row) {
                     s.ui.focus = Focus::Composer;
                 }
             }
@@ -333,9 +333,9 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
         MouseKind::ScrollUp | MouseKind::ScrollDown => {
             let delta = if m.kind == MouseKind::ScrollUp { -3 } else { 3 };
             if let Some(side) = &r.side {
-                if side.upper.contains(col, row) {
+                if side.upper_frame.contains(col, row) {
                     move_selection(s, Focus::SideUpper, delta);
-                } else if side.lower.contains(col, row) {
+                } else if side.lower_frame.contains(col, row) {
                     move_selection(s, Focus::SideLower, delta);
                 }
             }

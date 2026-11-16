@@ -110,7 +110,10 @@ pub struct Header {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChatPane {
     pub focused: bool,
+    /// 框上沿左边的标题：面包屑。
     pub crumbs: Line,
+    /// 框上沿右边：这个会话的状态。
+    pub badge: Line,
     pub owner: Line,
     /// 视口内已排好的行，自上而下，条数不超过转录区高度。
     pub transcript: Vec<Line>,
@@ -118,7 +121,11 @@ pub struct ChatPane {
     /// 转录区底部的浮动提示，如 `↓ 有新内容 (End)`。
     pub below: Option<Line>,
     pub status: Option<Line>,
+    pub todos: Vec<Line>,
     pub composer: Composer,
+    /// 输入框下面那一行：左边 `? 快捷键`，右边权限模式（交互 §4.4）。
+    pub hint_left: Line,
+    pub hint_right: Line,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -127,7 +134,6 @@ pub struct Composer {
     pub lines: Vec<Line>,
     /// 相对输入框内容区左上角的光标位置（列、行）。
     pub cursor: Option<(u16, u16)>,
-    pub title: Option<Line>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -165,8 +171,10 @@ fn circled(n: u32) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Section {
     pub focused: bool,
-    /// 分隔线上的标题（下半用：选中项的名字）。
+    /// 框上沿的标题（下框用：上框选中项的名字）；上框的上沿是标签头。
     pub title: Option<String>,
+    /// 框上沿右边的摘要，如"2 个在跑"。
+    pub title_right: Option<String>,
     /// 视口内的行。
     pub rows: Vec<Line>,
     /// 选中行在 `rows` 里的下标。

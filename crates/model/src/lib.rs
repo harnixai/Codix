@@ -7,6 +7,7 @@ mod mouse;
 mod state;
 mod update;
 mod view;
+mod welcome;
 
 pub use mouse::{Mouse, MouseButton, MouseKind};
 pub use state::{Domain, Focus, Overlay, State, Tab, Ui};

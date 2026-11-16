@@ -17,7 +17,7 @@ pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
         ),
         composer_rows: 1,
         status: false,
-        upper_rows: s.upper_len().max(3) as u16,
+        todo_rows: 0,
     }
 }
 
@@ -107,28 +107,27 @@ fn chat_pane(s: &State, width: usize) -> ChatPane {
         ),
         None => String::new(),
     };
-    let welcome = [
-        "还没有打开会话。",
-        "",
-        "F2 会话 · F3 流程 · F4 作业 · Ctrl+O 切换焦点 · Ctrl+B 切栏 · F1 帮助",
-    ];
+    let composer_focused = s.ui.focus == Focus::Composer && s.ui.overlay.is_none();
     ChatPane {
         focused,
-        crumbs: Line::toned(truncate_to_width("会话 › （未打开）", width), Tone::Normal),
+        crumbs: Line::plain("会话 › 未打开"),
+        badge: Line::default(),
         owner: Line::toned(truncate_to_width(&owner, width), Tone::Dim),
-        transcript: welcome
-            .iter()
-            .map(|t| Line::toned(truncate_to_width(t, width), Tone::Dim))
-            .collect(),
+        transcript: crate::welcome::lines(s, width),
         transcript_focused: s.ui.focus == Focus::Transcript,
         below: None,
         status: None,
+        todos: vec![],
         composer: Composer {
-            focused: s.ui.focus == Focus::Composer && s.ui.overlay.is_none(),
-            lines: vec![Line::toned("›", Tone::Dim)],
+            focused: composer_focused,
+            lines: vec![
+                Line::toned("> ", Tone::Strong)
+                    .push("输入消息 · / 命令 · @ 文件 · ! 执行命令", Tone::Dim),
+            ],
             cursor: Some((2, 0)),
-            title: None,
         },
+        hint_left: Line::toned("? 快捷键", Tone::Dim),
+        hint_right: Line::default(),
     }
 }
 
@@ -151,6 +150,7 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
         upper: Section {
             focused: s.ui.focus == Focus::SideUpper && s.ui.overlay.is_none(),
             title: None,
+            title_right: None,
             rows: if all.is_empty() {
                 vec![Line::toned(empty_hint(s.ui.tab), Tone::Dim)]
             } else {
@@ -161,6 +161,7 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
         lower: Section {
             focused: s.ui.focus == Focus::SideLower && s.ui.overlay.is_none(),
             title: lower_title,
+            title_right: None,
             rows: vec![Line::toned(
                 truncate_to_width("（下半在 2.5–2.7 实现）", r.lower.w as usize),
                 Tone::Dim,

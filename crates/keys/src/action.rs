@@ -19,6 +19,9 @@ pub enum Action {
     Redraw,
     Back,
     EventLog,
+    ToggleDetail,
+    ToggleTodos,
+    CycleMode,
 
     // 输入框
     Submit,
@@ -106,6 +109,9 @@ impl Action {
             Redraw => "重绘",
             Back => "返回",
             EventLog => "事件日志（mock）",
+            ToggleDetail => "转录精简 / 详细",
+            ToggleTodos => "显示 / 隐藏 todo",
+            CycleMode => "切换权限模式",
             Submit => "提交",
             Newline => "换行",
             Complete => "补全",

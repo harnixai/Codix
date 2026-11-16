@@ -52,6 +52,68 @@ fn style(t: Tone) -> Style {
     }
 }
 
+/// 顶栏、底栏、框上沿标题条的底色。有焦点的那一块，标题条换成强调色。
+const BAR: Color = Color::Indexed(236);
+
+fn bar(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().bg(BAR).fg(Color::Gray)
+    }
+}
+
+fn frame_block(focused: bool) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if focused {
+            style(Tone::Accent)
+        } else {
+            style(Tone::Dim)
+        })
+}
+
+/// 框上沿的标题条：左标题从第 2 列起，右标题贴右边，各自带底色。
+fn titles(f: &mut Frame, frame: Rect, left: &Line, right: &Line, focused: bool) {
+    let room = frame.w.saturating_sub(4) as usize;
+    if room == 0 {
+        return;
+    }
+    let paint = |l: &Line| {
+        let text = format!(" {} ", l.text());
+        RLine::from(RSpan::styled(text, bar(focused)))
+    };
+    let rw = if right.spans.is_empty() {
+        0
+    } else {
+        (right.width() + 2).min(room / 2)
+    };
+    let lw = (left.width() + 2).min(room.saturating_sub(rw + 1));
+    if lw > 2 {
+        let l = Line::plain(truncate_to_width(&left.text(), lw - 2));
+        f.render_widget(
+            Paragraph::new(paint(&l)),
+            rr(Rect::new(frame.x + 2, frame.y, lw as u16, 1)),
+        );
+    }
+    if rw > 2 {
+        let r = Line::plain(truncate_to_width(&right.text(), rw - 2));
+        f.render_widget(
+            Paragraph::new(paint(&r)),
+            rr(Rect::new(
+                frame.right() - 2 - rw as u16,
+                frame.y,
+                rw as u16,
+                1,
+            )),
+        );
+    }
+}
+
 fn rline(l: &Line) -> RLine<'static> {
     RLine::from(
         l.spans
@@ -85,22 +147,24 @@ fn workbench(f: &mut Frame, size: Size, wb: &Workbench) {
     if let (Some(c), Some(pane)) = (regions.chat, &wb.chat) {
         chat(f, &c, pane);
     }
-    if let Some(d) = regions.divider {
-        let bar: Vec<Line> = (0..d.h).map(|_| Line::toned("┃", Tone::Dim)).collect();
-        lines(f, d, &bar, None);
-    }
     if let (Some(s), Some(pane)) = (&regions.side, &wb.side) {
         side(f, s, pane);
     }
 }
 
 fn header(f: &mut Frame, r: Rect, h: &Header) {
+    f.render_widget(Block::default().style(Style::default().bg(BAR)), rr(r));
     let rw = h.right.width() as u16;
-    lines(f, r, std::slice::from_ref(&h.left), None);
-    if rw < r.w {
+    lines(
+        f,
+        Rect::new(r.x + 1, r.y, r.w.saturating_sub(1), 1),
+        std::slice::from_ref(&h.left),
+        None,
+    );
+    if rw + 1 < r.w {
         lines(
             f,
-            Rect::new(r.right() - rw - 1, r.y, rw + 1, 1),
+            Rect::new(r.right() - rw - 1, r.y, rw, 1),
             std::slice::from_ref(&h.right),
             None,
         );
@@ -108,12 +172,8 @@ fn header(f: &mut Frame, r: Rect, h: &Header) {
 }
 
 fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
-    let crumbs = if p.focused {
-        p.crumbs.clone().with_tone(Tone::Strong)
-    } else {
-        p.crumbs.clone()
-    };
-    lines(f, c.crumbs, &[crumbs], None);
+    f.render_widget(frame_block(p.focused), rr(c.frame));
+    titles(f, c.frame, &p.crumbs, &p.badge, p.focused);
     lines(f, c.owner, std::slice::from_ref(&p.owner), None);
     lines(f, c.transcript, &p.transcript, None);
     if let Some(below) = &p.below
@@ -131,18 +191,18 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
     if let (Some(r), Some(s)) = (c.status, &p.status) {
         lines(f, r, std::slice::from_ref(s), None);
     }
+    if let Some(r) = c.todos {
+        lines(f, r, &p.todos, None);
+    }
     let border = if p.composer.focused {
         style(Tone::Accent)
     } else {
         style(Tone::Dim)
     };
-    let mut block = Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border);
-    if let Some(t) = &p.composer.title {
-        block = block.title(rline(t));
-    }
     f.render_widget(block, rr(c.composer));
     lines(f, c.composer_inner, &p.composer.lines, None);
     if p.composer.focused
@@ -152,38 +212,56 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
     {
         f.set_cursor_position((c.composer_inner.x + x, c.composer_inner.y + y));
     }
+    let h = c.hints;
+    lines(
+        f,
+        Rect::new(h.x + 2, h.y, h.w.saturating_sub(2), 1),
+        std::slice::from_ref(&p.hint_left),
+        None,
+    );
+    let rw = p.hint_right.width() as u16;
+    if rw + 2 < h.w {
+        lines(
+            f,
+            Rect::new(h.right() - rw - 1, h.y, rw, 1),
+            std::slice::from_ref(&p.hint_right),
+            None,
+        );
+    }
 }
 
 fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
-    for (tab, hit) in p.tabs.iter().zip(&s.tab_hits) {
-        let tone = if tab.active {
-            Tone::Selected
+    let upper_focused = p.upper.focused;
+    f.render_widget(frame_block(upper_focused), rr(s.upper_frame));
+    for (i, (tab, hit)) in p.tabs.iter().zip(&s.tab_hits).enumerate() {
+        let st = if tab.active {
+            bar(true)
         } else if tab.badge > 0 {
-            Tone::Attention
+            bar(false).fg(Color::Yellow)
         } else {
-            Tone::Dim
+            bar(false)
         };
-        lines(f, *hit, &[Line::toned(tab.display(), tone)], None);
+        f.render_widget(
+            Paragraph::new(RLine::from(RSpan::styled(tab.display(), st))),
+            rr(*hit),
+        );
+        if i + 1 < p.tabs.len() && hit.right() < s.upper_frame.right() - 1 {
+            f.render_widget(
+                Paragraph::new(RLine::from(RSpan::styled("│", bar(false)))),
+                rr(Rect::new(hit.right(), hit.y, 1, 1)),
+            );
+        }
     }
     section(f, s.upper, &p.upper);
-    let title = p.lower.title.clone().unwrap_or_default();
-    let tone = if p.lower.focused || p.upper.focused {
-        Tone::Accent
-    } else {
-        Tone::Dim
-    };
-    let mut rule = format!("──── {title} ");
-    let fill = (s.rule.w as usize).saturating_sub(display_width(&rule));
-    rule.push_str(&"─".repeat(fill));
-    lines(
-        f,
-        s.rule,
-        &[Line::toned(
-            truncate_to_width(&rule, s.rule.w as usize),
-            tone,
-        )],
-        None,
-    );
+    f.render_widget(frame_block(p.lower.focused), rr(s.lower_frame));
+    let title = Line::plain(p.lower.title.clone().unwrap_or_default());
+    let right = p
+        .lower
+        .title_right
+        .clone()
+        .map(Line::plain)
+        .unwrap_or_default();
+    titles(f, s.lower_frame, &title, &right, p.lower.focused);
     section(f, s.lower, &p.lower);
 }
 
@@ -214,6 +292,8 @@ fn section(f: &mut Frame, r: Rect, sec: &Section) {
 
 fn footer(f: &mut Frame, size: Size, ft: &Footer) {
     let r = Rect::new(0, size.rows.saturating_sub(1), size.cols, 1.min(size.rows));
+    f.render_widget(Block::default().style(Style::default().bg(BAR)), rr(r));
+    let r = Rect::new(r.x + 1, r.y, r.w.saturating_sub(2), r.h);
     let essential = ft
         .essential
         .iter()

@@ -74,8 +74,8 @@ pub struct LayoutSpec {
     /// 输入框内容的行数（不含边框）；会被限制在对话区高度的 1/3 以内。
     pub composer_rows: u16,
     pub status: bool,
-    /// 右栏上半想要的行数；最多给到右栏的一半。
-    pub upper_rows: u16,
+    /// 状态行与输入框之间的 todo 清单行数（Ctrl+T，交互 §4.3）。
+    pub todo_rows: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -83,32 +83,35 @@ pub struct Regions {
     pub header: Rect,
     pub footer: Rect,
     pub chat: Option<ChatRegions>,
+    /// 两栏相接的两道边框，拖动它调比例。
     pub divider: Option<Rect>,
     pub side: Option<SideRegions>,
 }
 
+/// 对话区是一个框：标题写在上沿，里面自上而下是归属行、转录、状态行、todo、输入框、
+/// 输入框下的提示行（交互 §2.3、§4.4）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChatRegions {
-    pub area: Rect,
-    pub crumbs: Rect,
+    pub frame: Rect,
     pub owner: Rect,
     pub transcript: Rect,
     pub status: Option<Rect>,
+    pub todos: Option<Rect>,
     /// 带边框的整个输入框。
     pub composer: Rect,
-    /// 输入框边框之内。
     pub composer_inner: Rect,
+    pub hints: Rect,
 }
 
+/// 右栏是上下两个框，平分高度；标签头写在上框的上沿。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SideRegions {
     pub area: Rect,
-    pub tabs: Rect,
-    /// 每个标签头的矩形，与传入的标签一一对应。
-    pub tab_hits: Vec<Rect>,
+    pub upper_frame: Rect,
     pub upper: Rect,
-    /// 上下两半之间的分隔线（带下半的标题）。
-    pub rule: Rect,
+    /// 每个标签头的矩形（在上框的上沿），与传入的标签一一对应。
+    pub tab_hits: Vec<Rect>,
+    pub lower_frame: Rect,
     pub lower: Rect,
 }
 
@@ -133,8 +136,7 @@ pub fn pane_mode_for(
 pub fn compute(size: Size, spec: &LayoutSpec, tab_labels: &[String]) -> Regions {
     let header = Rect::new(0, 0, size.cols, 1.min(size.rows));
     let footer = Rect::new(0, size.rows.saturating_sub(1), size.cols, 1.min(size.rows));
-    let body_h = size.rows.saturating_sub(2);
-    let body = Rect::new(0, 1, size.cols, body_h);
+    let body = Rect::new(0, 1, size.cols, size.rows.saturating_sub(2));
     let mut r = Regions {
         header,
         footer,
@@ -150,90 +152,86 @@ pub fn compute(size: Size, spec: &LayoutSpec, tab_labels: &[String]) -> Regions 
         } => r.chat = Some(chat(body, spec)),
         PaneMode::Single {
             showing: ShowPane::Side,
-        } => r.side = Some(side(body, spec, tab_labels)),
+        } => r.side = Some(side(body, tab_labels)),
         PaneMode::Wide { ratio_pct, .. } => {
             let chat_w = ((u32::from(body.w) * u32::from(ratio_pct)) / 100) as u16;
-            let chat_w = chat_w.clamp(20.min(body.w), body.w.saturating_sub(21));
-            let divider = Rect::new(chat_w, body.y, 1, body.h);
-            let side_area = Rect::new(chat_w + 1, body.y, body.w - chat_w - 1, body.h);
+            let chat_w = chat_w.clamp(20.min(body.w), body.w.saturating_sub(24));
             r.chat = Some(chat(Rect::new(0, body.y, chat_w, body.h), spec));
-            r.divider = Some(divider);
-            r.side = Some(side(side_area, spec, tab_labels));
+            r.divider = Some(Rect::new(chat_w.saturating_sub(1), body.y, 2, body.h));
+            r.side = Some(side(
+                Rect::new(chat_w, body.y, body.w - chat_w, body.h),
+                tab_labels,
+            ));
         }
     }
     r
 }
 
-fn chat(area: Rect, spec: &LayoutSpec) -> ChatRegions {
-    let crumbs = Rect::new(area.x, area.y, area.w, 1.min(area.h));
-    let owner = Rect::new(area.x, area.y + 1, area.w, 1.min(area.h.saturating_sub(1)));
-    let rest_h = area.h.saturating_sub(2);
-    let max_inner = (area.h / 3).max(1);
+fn inner(r: Rect) -> Rect {
+    Rect::new(
+        r.x + 1.min(r.w),
+        r.y + 1.min(r.h),
+        r.w.saturating_sub(2),
+        r.h.saturating_sub(2),
+    )
+}
+
+fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
+    let b = inner(frame);
+    // 左右各留一列，内容不贴框线。
+    let a = Rect::new(b.x + 1.min(b.w), b.y, b.w.saturating_sub(2), b.h);
+    let owner = Rect::new(a.x, a.y, a.w, 1.min(a.h));
+    let hints = Rect::new(a.x, a.bottom().saturating_sub(1), a.w, 1.min(a.h));
+    let rest_h = a.h.saturating_sub(2);
+    let max_inner = (a.h / 3).max(1);
     let inner_h = spec.composer_rows.clamp(1, max_inner);
     let box_h = (inner_h + 2).min(rest_h);
-    let composer = Rect::new(area.x, area.bottom() - box_h, area.w, box_h);
-    let status_h = u16::from(spec.status && rest_h > box_h + 1);
-    let status = (status_h == 1).then(|| Rect::new(area.x, composer.y - 1, area.w, 1));
-    let transcript = Rect::new(
-        area.x,
-        area.y + 2,
-        area.w,
-        rest_h.saturating_sub(box_h + status_h),
-    );
-    let composer_inner = Rect::new(
-        composer.x + 1,
-        composer.y + 1,
-        composer.w.saturating_sub(2),
-        composer.h.saturating_sub(2),
-    );
+    let composer = Rect::new(a.x, hints.y.saturating_sub(box_h), a.w, box_h);
+    let mut above = composer.y;
+    let room = |above: u16| above.saturating_sub(a.y + 1);
+    let todos = (spec.todo_rows > 0 && room(above) > spec.todo_rows + 2).then(|| {
+        above -= spec.todo_rows;
+        Rect::new(a.x, above, a.w, spec.todo_rows)
+    });
+    let status = (spec.status && room(above) > 2).then(|| {
+        above -= 1;
+        Rect::new(a.x, above, a.w, 1)
+    });
+    let transcript = Rect::new(a.x, a.y + 1, a.w, above.saturating_sub(a.y + 1));
+    let composer_inner = inner(composer);
     ChatRegions {
-        area,
-        crumbs,
+        frame,
         owner,
         transcript,
         status,
+        todos,
         composer,
         composer_inner,
+        hints,
     }
 }
 
-fn side(area: Rect, spec: &LayoutSpec, tab_labels: &[String]) -> SideRegions {
-    let tabs = Rect::new(area.x, area.y, area.w, 1.min(area.h));
-    let mut x = area.x;
+fn side(area: Rect, tab_labels: &[String]) -> SideRegions {
+    let upper_h = area.h / 2;
+    let upper_frame = Rect::new(area.x, area.y, area.w, upper_h);
+    let lower_frame = Rect::new(area.x, area.y + upper_h, area.w, area.h - upper_h);
+    let mut x = area.x + 2;
     let tab_hits = tab_labels
         .iter()
         .map(|t| {
-            let w = (display_width(t) as u16).min(area.right().saturating_sub(x));
+            let w = (display_width(t) as u16).min(area.right().saturating_sub(x + 1));
             let r = Rect::new(x, area.y, w, 1);
             x += w + 1;
             r
         })
         .collect();
-    let rest = area.h.saturating_sub(1);
-    let upper_h = spec
-        .upper_rows
-        .max(1)
-        .min((rest.saturating_sub(1) / 2).max(1));
-    let upper = Rect::new(area.x, area.y + 1, area.w, upper_h.min(rest));
-    let rule = Rect::new(
-        area.x,
-        upper.bottom(),
-        area.w,
-        1.min(rest.saturating_sub(upper.h)),
-    );
-    let lower = Rect::new(
-        area.x,
-        rule.bottom(),
-        area.w,
-        area.bottom().saturating_sub(rule.bottom()),
-    );
     SideRegions {
         area,
-        tabs,
+        upper_frame,
+        upper: inner(upper_frame),
         tab_hits,
-        upper,
-        rule,
-        lower,
+        lower_frame,
+        lower: inner(lower_frame),
     }
 }
 
@@ -246,7 +244,7 @@ mod tests {
             mode,
             composer_rows: 1,
             status: true,
-            upper_rows: 6,
+            todo_rows: 0,
         }
     }
 
@@ -266,17 +264,20 @@ mod tests {
         );
         let chat = r.chat.unwrap();
         let side = r.side.unwrap();
-        let div = r.divider.unwrap();
-        assert_eq!(chat.area.w, 96);
-        assert_eq!(div.x, 96);
-        assert_eq!(side.area.x, 97);
-        assert_eq!(chat.area.w + 1 + side.area.w, 160);
-        assert_eq!(chat.composer.bottom(), 44, "输入框贴着底栏");
+        assert_eq!(chat.frame.w, 96);
+        assert_eq!(side.area.x, 96);
+        assert_eq!(chat.frame.w + side.area.w, 160);
+        assert_eq!(r.divider.unwrap(), Rect::new(95, 1, 2, 43));
+        assert_eq!(chat.frame.bottom(), 44, "框贴着底栏");
+        assert_eq!(chat.hints.bottom(), 43, "提示行在框内最后一行");
+        assert_eq!(chat.composer.bottom(), chat.hints.y);
         assert_eq!(chat.status.unwrap().bottom(), chat.composer.y);
         assert_eq!(chat.transcript.bottom(), chat.status.unwrap().y);
-        assert_eq!(side.upper.h, 6);
-        assert_eq!(side.lower.bottom(), 44);
-        assert_eq!(side.tab_hits.len(), 3);
+        assert_eq!(chat.transcript.y, chat.owner.bottom());
+        assert_eq!(side.upper_frame.h, 21);
+        assert_eq!(side.lower_frame.h, 22, "平分，奇数多给下面");
+        assert_eq!(side.lower_frame.bottom(), 44);
+        assert_eq!(side.tab_hits[0].y, side.upper_frame.y, "标签在上框的上沿");
         assert_eq!(side.tab_hits[1].x, side.tab_hits[0].right() + 1);
     }
 
@@ -301,17 +302,19 @@ mod tests {
         });
         s.composer_rows = 50;
         let chat = compute(Size::new(80, 32), &s, &[]).chat.unwrap();
-        assert_eq!(chat.composer_inner.h, 10);
+        assert_eq!(chat.composer_inner.h, 9);
         assert!(chat.transcript.h >= 1);
     }
 
     #[test]
-    fn upper_never_takes_more_than_half() {
+    fn todos_sit_between_status_and_composer() {
         let mut s = spec(PaneMode::Single {
-            showing: ShowPane::Side,
+            showing: ShowPane::Chat,
         });
-        s.upper_rows = 100;
-        let side = compute(Size::new(80, 24), &s, &tabs()).side.unwrap();
-        assert!(side.upper.h <= side.lower.h + 1);
+        s.todo_rows = 4;
+        let chat = compute(Size::new(100, 40), &s, &[]).chat.unwrap();
+        let todos = chat.todos.unwrap();
+        assert_eq!(todos.bottom(), chat.composer.y);
+        assert_eq!(chat.status.unwrap().bottom(), todos.y);
     }
 }

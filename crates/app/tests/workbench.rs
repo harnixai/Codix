@@ -31,7 +31,7 @@ async fn m17_collapse_and_ratio() {
 #[tokio::test(start_paused = true)]
 async fn m17_drag_divider() {
     let mut h = Harness::new("default", WIDE).await;
-    let (col, row) = h.find("┃").expect("分隔线");
+    let (col, row) = h.find("╮╭").expect("两栏相接的边框");
     h.drag((col, row + 3), (80, row + 3));
     assert_eq!(h.core.state.ui.ratio_pct, 50);
     assert!(h.core.state.ui.drag.is_none(), "松开后不再拖动");
@@ -46,7 +46,7 @@ async fn m17_single_pane_switches_back_and_forth() {
     h.snapshot("m17-single-side-100x30");
     h.keys("Ctrl+B").await;
     assert_eq!(h.core.state.ui.focus, Focus::Composer);
-    assert!(h.find("还没有打开会话").is_some());
+    assert!(h.find("Codix 0.1.0").is_some(), "欢迎块");
 }
 
 #[tokio::test(start_paused = true)]
