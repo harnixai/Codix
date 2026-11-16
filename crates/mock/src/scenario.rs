@@ -260,7 +260,8 @@ scripts:
         assert!(sc.rules[1].on.matches(&Command::Submit {
             session: "x".into(),
             text: "t".into(),
-            mode: port::SubmitMode::Turn
+            mode: port::SubmitMode::Turn,
+            permission: None,
         }));
     }
 

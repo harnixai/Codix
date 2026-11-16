@@ -48,6 +48,9 @@ pub enum Command {
         session: SessionId,
         text: String,
         mode: SubmitMode,
+        /// Shift+Tab 选的权限模式，逐轮生效（需求 C-20）；`None` 用会话自己的。
+        #[serde(default)]
+        permission: Option<PermissionMode>,
     },
     Interrupt {
         session: SessionId,
@@ -194,6 +197,16 @@ pub enum SubmitMode {
     Turn,
     Steer,
     Queue,
+}
+
+/// 与 Agix 的 `permission_mode` 取值一致（协议 §4.5）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionMode {
+    Default,
+    AcceptEdits,
+    Plan,
+    BypassPermissions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -268,6 +268,7 @@ impl ScriptedBackend {
                 session,
                 text,
                 mode,
+                ..
             } => {
                 let message = port::MessageId(self.next_id("m"));
                 if effects {

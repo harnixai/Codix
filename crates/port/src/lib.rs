@@ -15,7 +15,9 @@ mod session;
 mod task;
 
 pub use backend::{Backend, Instances, PortError};
-pub use command::{Command, GoalAction, Reply, SessionFilter, SlashCommand, SubmitMode, Watched};
+pub use command::{
+    Command, GoalAction, PermissionMode, Reply, SessionFilter, SlashCommand, SubmitMode, Watched,
+};
 pub use common::{Millis, Usage};
 pub use event::{ConnState, Event, NoticeLevel};
 pub use flow::{

@@ -5,6 +5,7 @@
 
 mod mouse;
 mod state;
+mod text;
 mod update;
 mod view;
 mod welcome;
