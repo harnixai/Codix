@@ -1,0 +1,27 @@
+# 场景 m04-prompts
+name: m04-prompts
+seed: default
+rules:
+  - on: {answer: {prompt: p1}}
+    then:
+      - {after: 0, prompt_resolved: {session: $session, id: p1, resolution: answered}}
+      - {after: 50, tool_started: {session: $session, id: t1, name: Bash}}
+      - {after: 30, tool_input: {session: $session, id: t1, summary: "cargo test --workspace"}}
+      - {after: 200, tool_finished: {session: $session, id: t1, content: "running 3 tests\ntest a ... ok\ntest b ... ok\ntest c ... ok\n\ntest result: ok. 3 passed"}}
+  - on: {answer: {prompt: p2}}
+    then:
+      - {after: 0, prompt_resolved: {session: $session, id: p2, resolution: answered}}
+      - {after: 50, text_delta: {session: $session, text: "好的，按你的选择来。"}}
+      - {after: 50, turn_ended: {session: $session, stop: end_turn, usage: {input: 900, output: 80}}}
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: ask}
+scripts:
+  ask:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 50, text_delta: {session: $session, text: "需要先跑一下测试。"}}
+    - {after: 50, prompt_pending: {session: $session, prompt: {id: p1, kind: {permission: {tool: Bash, summary: "cargo test --workspace"}}, from: {label: "reviewer（子 Agent）", task: t1}}}}
+    - {after: 200, prompt_pending: {session: $session, prompt: {id: p2, kind: {question: {question: "用哪个数据库？", header: "选型", options: ["Postgres", "SQLite"]}}}}}
+    - {after: 200, prompt_pending: {session: $session, prompt: {id: p3, kind: {permission: {tool: Write, summary: "config/app.toml"}}}}}
+    - {after: 8000, prompt_resolved: {session: $session, id: "p3", resolution: {withdrawn: {reason: timed_out}}}}

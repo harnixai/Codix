@@ -1,0 +1,36 @@
+# 场景 m07-steer
+name: m07-steer
+seed: default
+rules:
+  - on: {submit: {text: "太晚了"}}
+    once: true
+    then:
+      - {after: 100, steer_returned: {session: $session, messages: ["$message"]}}
+  - on: {submit: {text: "开始"}}
+    once: true
+    then:
+      - {after: 0, play: turn}
+scripts:
+  turn:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 100, text_delta: {session: $session, text: "第1段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第2段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第3段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第4段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第5段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第6段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第7段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第8段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第9段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第10段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第11段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第12段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第13段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第14段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第15段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第16段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第17段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第18段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第19段内容，"}}
+    - {after: 100, text_delta: {session: $session, text: "第20段内容，"}}
+    - {after: 100, turn_ended: {session: $session, stop: end_turn, usage: {input: 1200, output: 200}}}

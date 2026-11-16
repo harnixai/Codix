@@ -150,6 +150,59 @@ impl Harness {
         None
     }
 
+    /// 在输入框里打字（逐字，等同键盘输入）。
+    pub async fn type_str(&mut self, text: &str) {
+        for c in text.chars() {
+            let s = self.core.handle(Msg::Text(c));
+            self.shell.extend(s);
+        }
+        self.settle().await;
+    }
+
+    /// 在会话标签里选中标题为 `title` 的主 Agent 并打开它。
+    pub async fn open_session(&mut self, title: &str) {
+        let i = self
+            .core
+            .state
+            .main_sessions()
+            .position(|s| s.title == title)
+            .unwrap_or_else(|| panic!("没有会话 {title}"));
+        self.keys("F2").await;
+        let cur = self.core.state.ui.upper().selected;
+        let (key, n) = if i >= cur {
+            ("Down", i - cur)
+        } else {
+            ("Up", cur - i)
+        };
+        for _ in 0..n {
+            self.keys(key).await;
+        }
+        self.keys("Enter").await;
+        self.settle().await;
+    }
+
+    /// 当前会话转录的全部文字（已排好的行，不受视口限制）。
+    pub fn transcript(&self) -> String {
+        self.core
+            .state
+            .conv()
+            .map(|c| {
+                c.lines()
+                    .iter()
+                    .map(|l| l.text())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn calls(&self, instance: &str) -> Vec<port::Command> {
+        self.instances
+            .backend(instance)
+            .map(|b| b.calls().lock().unwrap().clone())
+            .unwrap_or_default()
+    }
+
     pub fn last_line(&mut self) -> String {
         self.text().lines().last().unwrap_or_default().to_string()
     }

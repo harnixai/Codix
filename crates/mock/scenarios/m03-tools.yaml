@@ -1,0 +1,32 @@
+# 场景 m03-tools
+name: m03-tools
+seed: default
+rules:
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: tools}
+scripts:
+  tools:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 40, text_delta: {session: $session, text: "我先看看现有的认证入口。"}}
+    - {after: 40, tool_started: {session: $session, id: "t1", name: "Read"}}
+    - {after: 30, tool_input: {session: $session, id: "t1", summary: "src/auth/mod.rs"}}
+    - {after: 30, tool_started: {session: $session, id: "t2", name: "Grep"}}
+    - {after: 30, tool_input: {session: $session, id: "t2", summary: "fn verify"}}
+    - {after: 60, tool_finished: {session: $session, id: "t2", content: "src/auth/mod.rs:12:pub fn verify_token(token: &str) -> bool {\nsrc/auth/mod.rs:58:fn verify_signature(sig: &[u8]) -> Result<(), AuthError> {\nsrc/auth/session.rs:23:    fn verify(&self) -> bool {\nsrc/api/login.rs:41:    if !auth::verify_token(&tok) {\ntests/auth.rs:9:fn verify_rejects_empty() {"}}
+    - {after: 60, tool_finished: {session: $session, id: "t1", content: "use std::time::{Duration, SystemTime};\npub enum AuthError {\n    Expired,\n    BadSignature,\n    Empty,\n}\n\npub struct Claims {\n    pub sub: String,\n    pub exp: SystemTime,\n}\n\npub fn verify_token(token: &str) -> bool {\n    if token.is_empty() {\n        return false;\n    }\n    match decode(token) {\n        Ok(claims) => claims.exp > SystemTime::now(),\n        Err(_) => false,\n    }\n}\n\nfn decode(token: &str) -> Result<Claims, AuthError> {\n    let mut parts = token.split('.');\n    let _header = parts.next().ok_or(AuthError::Empty)?;\n    let body = parts.next().ok_or(AuthError::Empty)?;\n    let sig = parts.next().ok_or(AuthError::Empty)?;\n    verify_signature(sig.as_bytes())?;\n    parse_claims(body)\n}\n\nfn verify_signature(sig: &[u8]) -> Result<(), AuthError> {\n    if sig.len() < 8 {\n        return Err(AuthError::BadSignature);\n    }\n    Ok(())\n}\n\nfn parse_claims(body: &str) -> Result<Claims, AuthError> {\n    let exp = SystemTime::now() + Duration::from_secs(3600);\n    Ok(Claims { sub: body.to_string(), exp })\n}"}}
+    - {after: 40, text_delta: {session: $session, text: "找到了，接下来改校验逻辑。"}}
+    - {after: 40, tool_started: {session: $session, id: "t3", name: "Edit"}}
+    - {after: 30, tool_input: {session: $session, id: "t3", summary: "src/auth/mod.rs"}}
+    - {after: 60, tool_finished: {session: $session, id: "t3", content: "ok", file_changes: [{path: src/auth/mod.rs, kind: modified, diff: "--- a/src/auth/mod.rs\n+++ b/src/auth/mod.rs\n@@ -12,10 +12,14 @@ pub struct Claims {\n pub fn verify_token(token: &str) -> bool {\n     if token.is_empty() {\n         return false;\n     }\n-    match decode(token) {\n-        Ok(claims) => claims.exp > SystemTime::now(),\n-        Err(_) => false,\n-    }\n+    let Ok(claims) = decode(token) else {\n+        return false;\n+    };\n+    // 留 30 秒时钟偏差\n+    let skew = Duration::from_secs(30);\n+    claims.exp + skew > SystemTime::now()\n }\n \n fn decode(token: &str) -> Result<Claims, AuthError> {\n"}]}}
+    - {after: 40, tool_started: {session: $session, id: "t4", name: "Bash"}}
+    - {after: 30, tool_input: {session: $session, id: "t4", summary: "cargo test auth"}}
+    - {after: 300, tool_progress: {session: $session, id: "t4", message: "编译中……"}}
+    - {after: 300, tool_progress: {session: $session, id: "t4", message: "运行 14 个测试"}}
+    - {after: 80, tool_finished: {session: $session, id: "t4", content: "   Compiling auth v0.1.0 (/work/auth)\n    Finished test [unoptimized + debuginfo] target(s) in 2.31s\n     Running unittests src/lib.rs (target/debug/deps/auth-1a2b3c)\n\nrunning 14 tests\ntest auth::tests::empty_token ... ok\ntest auth::tests::bad_signature ... ok\ntest auth::tests::expired ... ok\ntest auth::tests::skew_allowed ... ok\ntest auth::tests::roundtrip ... ok\ntest session::tests::new ... ok\ntest session::tests::verify ... ok\ntest session::tests::expire ... ok\ntest session::tests::refresh ... ok\ntest api::tests::login_ok ... ok\ntest api::tests::login_denied ... ok\ntest api::tests::logout ... ok\ntest api::tests::token_rotation ... ok\n\ntest result: ok. 14 passed; 0 failed; 0 ignored; 0 measured"}}
+    - {after: 40, tool_started: {session: $session, id: "t5", name: "Bash"}}
+    - {after: 30, tool_input: {session: $session, id: "t5", summary: "cargo clippy"}}
+    - {after: 80, tool_finished: {session: $session, id: "t5", is_error: true, content: "error: could not compile `auth` due to 1 previous error\n  --> src/auth/mod.rs:19:9\n   |\n19 |     let skew = Duration::from_secs(30);\n   |         ^^^^ unused variable"}}
+    - {after: 40, text_delta: {session: $session, text: "校验逻辑已改好，测试全部通过，但 clippy 还有一处报错需要处理。"}}
+    - {after: 40, turn_ended: {session: $session, stop: end_turn, usage: {input: 1200, output: 200}}}

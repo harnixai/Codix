@@ -53,7 +53,7 @@ impl State {
         out
     }
 
-    pub(crate) fn chat_regions(&self) -> Regions {
+    pub fn chat_regions(&self) -> Regions {
         let (spec, labels) = chat_layout(self);
         layout::compute(self.ui.size, &spec, &labels)
     }

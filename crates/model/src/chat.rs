@@ -458,6 +458,14 @@ impl Conversation {
         n
     }
 
+    /// 全部已排好的行（测试与守卫用）。
+    pub fn lines(&self) -> Vec<Line> {
+        self.blocks
+            .iter()
+            .flat_map(|b| b.cache.iter().flat_map(|c| c.lines.iter().cloned()))
+            .collect()
+    }
+
     pub fn total_lines(&self) -> usize {
         self.blocks
             .iter()

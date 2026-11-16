@@ -1,0 +1,16 @@
+# 场景 m06-step-restart
+name: m06-step-restart
+seed: default
+rules:
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: retry}
+scripts:
+  retry:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 50, text_delta: {session: $session, text: "第一次尝试的半句话，"}}
+    - {after: 100, model_retry: {session: $session, attempt: 1, delay_ms: 500, reason: "流中途断开"}}
+    - {after: 0, step_restarted: {session: $session, step: 0}}
+    - {after: 500, text_delta: {session: $session, text: "重新生成的完整回答。"}}
+    - {after: 50, turn_ended: {session: $session, stop: end_turn, usage: {input: 1200, output: 200}}}

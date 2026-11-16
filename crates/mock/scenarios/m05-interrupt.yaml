@@ -1,0 +1,72 @@
+# 场景 m05-interrupt
+name: m05-interrupt
+seed: default
+rules:
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: long}
+scripts:
+  long:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 100, text_delta: {session: $session, text: "首先需要理解整体"}}
+    - {after: 100, text_delta: {session: $session, text: "架构的几个层次，"}}
+    - {after: 100, text_delta: {session: $session, text: "每一层都有其"}}
+    - {after: 100, text_delta: {session: $session, text: "明确的职责边界。"}}
+    - {after: 100, text_delta: {session: $session, text: "接着看数据如何"}}
+    - {after: 100, text_delta: {session: $session, text: "在各层之间流动，"}}
+    - {after: 100, text_delta: {session: $session, text: "事件由后端产生"}}
+    - {after: 100, text_delta: {session: $session, text: "经过归约器处理"}}
+    - {after: 100, text_delta: {session: $session, text: "最终变成画面。"}}
+    - {after: 100, text_delta: {session: $session, text: "这样的分层让"}}
+    - {after: 100, text_delta: {session: $session, text: "测试变得容易，"}}
+    - {after: 100, text_delta: {session: $session, text: "也方便替换实现。"}}
+    - {after: 100, text_delta: {session: $session, text: "首先需要理解整体"}}
+    - {after: 100, text_delta: {session: $session, text: "架构的几个层次，"}}
+    - {after: 100, text_delta: {session: $session, text: "每一层都有其"}}
+    - {after: 100, text_delta: {session: $session, text: "明确的职责边界。"}}
+    - {after: 100, text_delta: {session: $session, text: "接着看数据如何"}}
+    - {after: 100, text_delta: {session: $session, text: "在各层之间流动，"}}
+    - {after: 100, text_delta: {session: $session, text: "事件由后端产生"}}
+    - {after: 100, text_delta: {session: $session, text: "经过归约器处理"}}
+    - {after: 100, text_delta: {session: $session, text: "最终变成画面。"}}
+    - {after: 100, text_delta: {session: $session, text: "这样的分层让"}}
+    - {after: 100, text_delta: {session: $session, text: "测试变得容易，"}}
+    - {after: 100, text_delta: {session: $session, text: "也方便替换实现。"}}
+    - {after: 100, text_delta: {session: $session, text: "首先需要理解整体"}}
+    - {after: 100, text_delta: {session: $session, text: "架构的几个层次，"}}
+    - {after: 100, text_delta: {session: $session, text: "每一层都有其"}}
+    - {after: 100, text_delta: {session: $session, text: "明确的职责边界。"}}
+    - {after: 100, text_delta: {session: $session, text: "接着看数据如何"}}
+    - {after: 100, text_delta: {session: $session, text: "在各层之间流动，"}}
+    - {after: 100, text_delta: {session: $session, text: "事件由后端产生"}}
+    - {after: 100, text_delta: {session: $session, text: "经过归约器处理"}}
+    - {after: 100, text_delta: {session: $session, text: "最终变成画面。"}}
+    - {after: 100, text_delta: {session: $session, text: "这样的分层让"}}
+    - {after: 100, text_delta: {session: $session, text: "测试变得容易，"}}
+    - {after: 100, text_delta: {session: $session, text: "也方便替换实现。"}}
+    - {after: 100, text_delta: {session: $session, text: "首先需要理解整体"}}
+    - {after: 100, text_delta: {session: $session, text: "架构的几个层次，"}}
+    - {after: 100, text_delta: {session: $session, text: "每一层都有其"}}
+    - {after: 100, text_delta: {session: $session, text: "明确的职责边界。"}}
+    - {after: 100, text_delta: {session: $session, text: "接着看数据如何"}}
+    - {after: 100, text_delta: {session: $session, text: "在各层之间流动，"}}
+    - {after: 100, text_delta: {session: $session, text: "事件由后端产生"}}
+    - {after: 100, text_delta: {session: $session, text: "经过归约器处理"}}
+    - {after: 100, text_delta: {session: $session, text: "最终变成画面。"}}
+    - {after: 100, text_delta: {session: $session, text: "这样的分层让"}}
+    - {after: 100, text_delta: {session: $session, text: "测试变得容易，"}}
+    - {after: 100, text_delta: {session: $session, text: "也方便替换实现。"}}
+    - {after: 100, text_delta: {session: $session, text: "首先需要理解整体"}}
+    - {after: 100, text_delta: {session: $session, text: "架构的几个层次，"}}
+    - {after: 100, text_delta: {session: $session, text: "每一层都有其"}}
+    - {after: 100, text_delta: {session: $session, text: "明确的职责边界。"}}
+    - {after: 100, text_delta: {session: $session, text: "接着看数据如何"}}
+    - {after: 100, text_delta: {session: $session, text: "在各层之间流动，"}}
+    - {after: 100, text_delta: {session: $session, text: "事件由后端产生"}}
+    - {after: 100, text_delta: {session: $session, text: "经过归约器处理"}}
+    - {after: 100, text_delta: {session: $session, text: "最终变成画面。"}}
+    - {after: 100, text_delta: {session: $session, text: "这样的分层让"}}
+    - {after: 100, text_delta: {session: $session, text: "测试变得容易，"}}
+    - {after: 100, text_delta: {session: $session, text: "也方便替换实现。"}}
+    - {after: 100, turn_ended: {session: $session, stop: end_turn, usage: {input: 1200, output: 200}}}

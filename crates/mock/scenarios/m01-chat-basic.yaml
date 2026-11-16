@@ -1,0 +1,25 @@
+# 场景 m01-chat-basic
+name: m01-chat-basic
+seed: default
+rules:
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: answer}
+scripts:
+  answer:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 100, thinking_delta: {session: $session, text: "用户想了解项目结构，"}}
+    - {after: 100, thinking_delta: {session: $session, text: "先梳理三个主要模块，"}}
+    - {after: 100, thinking_delta: {session: $session, text: "再给出简短的总结。"}}
+    - {after: 100, text_delta: {session: $session, text: "# 项目概览\n\n"}}
+    - {after: 50, text_delta: {session: $session, text: "- 前端：`ratatui` 负责渲染\n"}}
+    - {after: 50, text_delta: {session: $session, text: "- 后端：通过端口协议推送事件\n"}}
+    - {after: 50, text_delta: {session: $session, text: "- 模拟：场景文件驱动测试\n"}}
+    - {after: 50, text_delta: {session: $session, text: "\n"}}
+    - {after: 50, text_delta: {session: $session, text: "以上就是"}}
+    - {after: 50, text_delta: {session: $session, text: "整体的"}}
+    - {after: 50, text_delta: {session: $session, text: "结构，"}}
+    - {after: 50, text_delta: {session: $session, text: "如需细节"}}
+    - {after: 50, text_delta: {session: $session, text: "请继续提问。"}}
+    - {after: 50, turn_ended: {session: $session, stop: end_turn, usage: {input: 1800, output: 260}}}

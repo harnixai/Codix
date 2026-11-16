@@ -1,0 +1,18 @@
+# 场景 m02-text-hard
+name: m02-text-hard
+seed: default
+rules:
+  - on: submit
+    once: true
+    then:
+      - {after: 0, play: hard}
+scripts:
+  hard:
+    - {after: 0, turn_started: {session: $session}}
+    - {after: 40, text_delta: {session: $session, text: "这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。这是一段很长的中文段落，用来检验宽字符的换行与截断是否正确。段落到此结束。\n"}}
+    - {after: 40, text_delta: {session: $session, text: "发布状态：🚀 已上线，测试 ✅ 通过\n"}}
+    - {after: 40, text_delta: {session: $session, text: "名称\t数值\t备注\n"}}
+    - {after: 40, text_delta: {session: $session, text: "这一行用回车换行结尾\r\n"}}
+    - {after: 40, text_delta: {session: $session, text: "令牌：a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4\n"}}
+    - {after: 40, text_delta: {session: $session, text: "```rust\nfn main() {\n    let x = 42;\n    println!(\"{x}\");\n}\n```\n"}}
+    - {after: 40, turn_ended: {session: $session, stop: end_turn, usage: {input: 1200, output: 200}}}

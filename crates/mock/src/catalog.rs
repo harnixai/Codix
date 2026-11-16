@@ -8,6 +8,26 @@ const SEEDS: &[(&str, &str)] = &[
 const SCENARIOS: &[(&str, &str)] = &[
     ("default", include_str!("../scenarios/default.yaml")),
     ("m21-kicked", include_str!("../scenarios/m21-kicked.yaml")),
+    (
+        "m01-chat-basic",
+        include_str!("../scenarios/m01-chat-basic.yaml"),
+    ),
+    (
+        "m02-text-hard",
+        include_str!("../scenarios/m02-text-hard.yaml"),
+    ),
+    ("m03-tools", include_str!("../scenarios/m03-tools.yaml")),
+    ("m04-prompts", include_str!("../scenarios/m04-prompts.yaml")),
+    (
+        "m05-interrupt",
+        include_str!("../scenarios/m05-interrupt.yaml"),
+    ),
+    (
+        "m06-step-restart",
+        include_str!("../scenarios/m06-step-restart.yaml"),
+    ),
+    ("m07-steer", include_str!("../scenarios/m07-steer.yaml")),
+    ("m16-storm", include_str!("../scenarios/m16-storm.yaml")),
 ];
 
 pub fn seed(name: &str) -> Option<&'static str> {
