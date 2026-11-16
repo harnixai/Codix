@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["agix", "3rds", "archive"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+repository = "https://github.com/openatta/Codix"
+
+[workspace.dependencies]
+port  = { path = "crates/port" }
+tui   = { path = "crates/tui" }
+keys  = { path = "crates/keys" }
+model = { path = "crates/model" }
+mock  = { path = "crates/mock" }
+
+# 与 Harnix flow 用同一个 YAML 库：flow 拷进 3rds 后不多出第二个。
+serde_yaml  = "0.9"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+thiserror   = "2"
+anyhow      = "1"
+ratatui     = { version = "0.30", default-features = false }
+crossterm   = { version = "0.29", features = ["event-stream"] }
+futures     = "0.3"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+clap        = { version = "4", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+debug = "line-tables-only"

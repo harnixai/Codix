@@ -1,0 +1,31 @@
+[package]
+name = "app"
+description = "Codix 二进制：终端、事件循环、实例选择"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "codix"
+path = "src/main.rs"
+
+[dependencies]
+port.workspace = true
+tui = { workspace = true }
+keys.workspace = true
+model.workspace = true
+mock.workspace = true
+ratatui = { workspace = true, features = ["crossterm"] }
+crossterm.workspace = true
+tokio.workspace = true
+futures.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

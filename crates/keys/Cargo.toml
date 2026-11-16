@@ -1,0 +1,17 @@
+[package]
+name = "keys"
+description = "Codix 的快捷键：带上下文的绑定、和弦、用户覆盖"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+crossterm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
