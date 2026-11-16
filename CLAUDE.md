@@ -1,0 +1,76 @@
+# Codix
+
+Codix 是跑在终端里的 agent 工作台，引擎是 [Agix](https://github.com/openatta/Agix)。可以在本地用，也可以远程用，不限定于编程场景。
+
+- 左边是对话区。
+- 右边是三个标签：
+  - **会话**：主 Agent，下面挂着 goal / todo / 子 Agent / 任务
+  - **流程**：流程定义，以及它的运行实例
+  - **作业**：定时任务
+
+Codix 不跟 Claude Code 这类聊天式编程 CLI 拼打磨。它的位置是 Agix 的参考宿主，把 Agix 独有的能力摆到用户面前：一个进程跑多个会话、无人值守、子 Agent 与任务可观测、按流程执行。
+
+需求见 `docs/reqs/`，架构见 `docs/design/`。阶段 1 产出这两份，之后以它们为准。
+
+## 开发顺序：先打桩，后接缝
+
+1. **阶段 0**：仓库与约定。
+2. **阶段 1**：需求与设计文档，不写代码。
+3. **阶段 2**：TUI 接 **mock 后端**。不碰 Agix，也不碰流程；数据来自脚本化的场景，各种交互全部验证通过才算完。
+4. **阶段 3**：接缝。逐块把 mock 换成真实后端（Agix 协议客户端、远程连接、流程、作业、`codix serve`），mock 保留给测试用。
+
+**阶段 2 没验收，不接缝。** 每个阶段结束都要输出简报，由维护者决定是否进入下一阶段。
+
+## 已定的边界
+
+- **引擎只走 Agix 的 JSON-RPC 协议**（`agix/docs/daemon_rpc_protocol.md`）。缺省用 `agix::embed` 把引擎嵌在本进程，经 `tokio::io::duplex` 通信；`--connect` 连远端 `agixd`。不用 `agix::pool` 这层 Rust 门面，它不承诺兼容。
+- **TUI 与后端之间只有一个端口**：`Backend` trait 加领域事件，定义在 `docs/design/` 里。mock 和真实后端实现的是同一个端口。
+- **流程来自 Harnix**：拷贝，不引用，见下面的 `3rds/`。流程格式与 Harnix 兼容。流程不放进 Agix。
+- **不做**：ACP（已作为需求提给 Agix：openatta/Agix#74）、Web 界面。
+
+## 仓库布局
+
+```
+agix/          Agix submodule，跟 main
+3rds/          拷进来的第三方代码；只有 INDEX.md 入库
+docs/reqs/     需求规格
+docs/design/   架构与交互设计
+archive/       旧实现 AttaCode 的本地副本，不入库，只作参考
+.local/        过程文档（分析、评估、草稿），不入库
+```
+
+## 子模块 `agix/`
+
+- 跟 `origin/main`，不钉版本。gitlink 记录的仍然是具体 SHA，所以任何一次 checkout 都能复现。
+- 跟到最新：`git submodule update --remote --merge agix`，然后 `git -C agix checkout main`，不要停在 detached HEAD。
+- 升级之前读两个 Agix 标签之间的标签消息，嵌入面有变化的发布会单列出来。
+- Agix 本身不在这里改。缺什么就到 openatta/Agix 提 issue：标签 `codix`，标题 `[Codix NN] …`。
+
+## `3rds/`：拷贝来的代码
+
+- `3rds/INDEX.md` 记录每份代码的来源仓库、路径、版本、用途。代码本身不入库，按索引拷到本地。
+- **原样拷入，本地不改。** 需要调整就到来源仓库提 issue，等它发布后重新拷。Harnix 的 issue 标签是 `codix`，标题 `codix-NN：…`。
+- 来源有新版本时重新拷一次，并更新索引里的版本。
+
+## 旧实现
+
+`archive/attacode/` 是 AttaCode 在 `acc3ca4` 的代码；`archive/attacode.git` 是它原来的 git 目录。远端是 openatta/AttaCode，不再改动。
+
+旧代码可以拿来参考，**需要哪段就拷哪段**，不整体搬。旧实现踩过的坑写在 `docs/design/` 里。
+
+## 文档
+
+- `docs/` 只放两类：需求与设计（系统怎么构建、为什么），使用手册与规范。
+- 状态分析、对比、评估、迁移进度这类过程文档不入库，放在 `.local/` 或 scratchpad。结论要落到代码、提交消息或 `docs/` 的设计里。
+
+## 版本与提交
+
+- 版本标签：`Codix-v<x.y.z>-<YYYYMMDD><NN>`。`NN` 是当天第几次发布，从 `01` 开始。
+- `Cargo.toml` 的 `[workspace.package] version` 写成 `x.y.z-YYYYMMDDNN`。起始版本为 `0.1.0`。
+- 提交前缀：`Codix:`。小步提交，每一步都要能构建。
+- 子模块更新单独提交，消息为 `Codix: bump Agix to <sha>`。
+
+## 代码风格
+
+- `cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`。
+- 注释写"为什么不能写成看起来更自然的那样"，不复述代码。变更经过写进提交消息。
