@@ -10,8 +10,11 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     // 连接
+    /// 链路上的第一帧（architecture §8.3）。实例已被接入时，`force` 为真才踢掉对方。
     Hello {
         client: ClientInfo,
+        #[serde(default)]
+        force: bool,
     },
     Heartbeat {
         last_input_ms: u64,

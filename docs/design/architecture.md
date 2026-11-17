@@ -21,7 +21,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
                           │ 消息 = port 的 Command / Reply / Event，编码为 NDJSON
 ┌─────────────────────────▼──── codix host（实例进程，常驻）───────┐
 │  会话代理 ── Agix 客户端 ──► agix::embed（同进程，data_root = ~/.codix）│
-│  流程（3rds/harnix-flow 内核 + runner，FlowEngine 由 Agix 实现）   │
+│  流程（暂缓，§8.6；之后是 harnix-flow，FlowEngine 由 Agix 实现）│
 │  作业调度                                                         │
 │  单一接入：占用、强制接入、空闲脱离、心跳；状态落盘在实例目录     │
 └──────────────────────────────────────────────────────────────────┘
@@ -45,8 +45,8 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 | `mock` | 2 | `MockInstances` 与 `ScriptedBackend`：用种子数据和场景脚本驱动 | port |
 | `i18n` | 2 | 界面文字的语言资源与 `t!` 宏（§6.1） | serde_yaml |
 | `app` | 2 | 二进制 `codix`：命令行解析、终端生命周期（尺寸协商、鼠标捕获）、事件循环、实例选择列表 | 以上全部 |
-| `wire` | 3 | Agix 协议的 serde 类型（协议 §4、§7）。遇到不认识的 `kind` 一律跳过 | serde |
-| `host` | 3 | 实例进程：Agix 客户端、把 Agix 帧翻译成领域事件、流程（`FlowEngine` 的实现）、作业调度、socket 服务与单一接入（占用、强制接入、心跳）、实例锁与发现文件 | port, wire, agix, 3rds/harnix-flow |
+| `wire` | 3 | Agix 协议的 JSON-RPC 客户端与 Codix 用到的 serde 类型（§8.2）。遇到不认识的 `kind` 一律跳过 | serde, tokio |
+| `host` | 3 | 实例进程：嵌入 Agix、把 Agix 帧翻译成领域事件、作业调度、socket 服务与单一接入（占用、强制接入、心跳）、实例锁与发现文件；流程暂缓（§8.6） | port, wire, agix |
 | `client` | 3 | `SocketInstances` 与 `SocketBackend`：扫描实例、拉起实例、通过 socket 接入 | port |
 
 **依赖边界**（阶段 2 起用测试守住）：
@@ -54,7 +54,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 - `tui` 不依赖 `port`、`model`，也不依赖 Agix。
 - `model` 不做 IO、不起任务，`update` 和 `view` 都是同步的纯函数。
 - `port` 不依赖任何 Agix 或 Harnix 的类型，翻译工作在 `host` 里做。
-- `app` 不依赖 Agix，只通过 `port` 与后端打交道。阶段 3 的 `codix host` 子命令由 `app` 转交给 `host` crate 处理。
+- `app` 的库不依赖 Agix，只通过 `port` 与后端打交道。`codix host` 子命令由二进制转交给 `host` crate 处理。
 
 ## 3. 端口 `port`
 
@@ -209,13 +209,12 @@ loop {
 
 | 命令 | 行为 |
 |---|---|
-| `codix` | 本机有在跑的实例时，先显示实例选择列表；没有就新建一个并接入 |
+| `codix` | 当前目录有在跑的实例就直接接入；没有而本机有别的实例，先显示实例选择列表；都没有就为当前目录新建一个并接入 |
 | `codix new [--name] [--project]` | 新建实例并接入 |
 | `codix list [--all]` | 用纯文本列出实例，不进入 TUI |
 | `codix attach <名字> [--force] [--idle-timeout <时长>]` | 接入指定实例；`--force` 踢掉当前接入者 |
 | `codix start <名字>` / `stop <名字>` | 启动 / 停止指定实例 |
-| `codix` | 阶段 2：直接打开 mock 演示 `demo` |
-| `codix --mock <场景>` | 阶段 2：用指定场景（测试用的 m01–m25 等） |
+| `codix --mock [场景]` | 用 mock 后端：缺省打开演示 `demo`，也可以指定测试场景（m01–m25 等） |
 | `codix host --name <名字>` | 内部使用：实例进程的入口，由 `new` / `start` 拉起，用户不直接调用 |
 
 ## 6. 快捷键 `keys`
@@ -243,7 +242,7 @@ loop {
 
 见 `testing.md`。`MockInstances` 用种子数据提供几个"在跑"的实例和几个"已停止"的实例，`create` 和 `attach` 返回一个 `ScriptedBackend`。阶段 2 不会真的起任何进程。
 
-## 8. 阶段 3：实例（这里只写到接口层面）
+## 8. 阶段 3：实例
 
 ### 8.1 数据目录
 
@@ -252,69 +251,131 @@ loop {
 ├── settings.json                 ┐
 ├── projects/  sessions/  memory/ │ Agix 的全局数据，布局归 Agix（ARCHITECTURE.md §8）。
 ├── scenes/  daemon/  …           ┘ 模型、provider、权限等配置都沿用这里的 settings.json
-├── codix.yaml                    Codix 自己的配置（YAML）：界面（缺省尺寸、比例、主题配色、语法高亮主题、
-│                                 工具结果显示几行）、实例（空闲超时）；不存在时写一份带注释的缺省配置
+├── codix.yaml                    Codix 自己的配置（YAML）：界面、实例（空闲超时）；不存在时写一份带注释的缺省配置
 ├── keybindings.json              快捷键覆盖
-├── flows/                        流程包（流程、skills、规则、策略、门禁、钩子），所有实例共用
-└── instances/<名字>/
-    ├── instance.json             发现文件：pid、socket、项目、启动时间、版本、当前接入者
-    ├── instance.lock             flock，防止同名实例跑两个
-    ├── host.sock                 0600，目录 0700
-    ├── groups.json               Agix 的 groups_file，用于回收孤儿进程组
-    ├── runs/                     本实例的流程运行（harnix-flow 的 FileStore）
-    ├── jobs/                     本实例的作业定义与触发历史
-    └── host.log
+├── flows/                        流程包，所有实例共用（流程接入后才用）
+└── instances/<名字>/             目录 0700
+    ├── instance.json             发现文件：名字、pid、socket、项目、启动时刻、版本、当前接入者
+    ├── instance.lock             flock：同名实例只能跑一个；拿不到锁的 `codix host` 立即退出
+    ├── host.sock                 0600
+    ├── groups.json               Agix 的 groups_file，回收上一次没收尾的进程组
+    ├── sessions.json             Codix 记的会话归属（§8.4）
+    ├── jobs.json                 作业定义
+    ├── jobs/<作业 id>.jsonl      触发记录，一次一行
+    └── host.log                  实例进程的日志（stderr 也重定向到这里）
 ```
 
-- Codix 自己的文件和 Agix 的放在同一个目录，用 Codix 自己的名字（`codix.yaml`、`keybindings.json`、`flows/`、`instances/`），都不和 Agix 的顶层名字冲突。**不往 Agix 的 `settings.json` 里写 Codix 的配置**：Agix 对不认识的键会告警，而且两边的配置应当各管各的。
-- **流程包所有实例共用；运行和作业属于各自的实例。** 这样两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时，会把它的运行和作业接着跑起来。
-- 项目层目录：Agix#86 落地之前沿用 `<项目>/.agix/`，落地之后通过 `EmbedConfig.project_dir` 改成 `.codix/`。Codix 自己目前不在项目里放任何东西。
+- Codix 自己的文件和 Agix 的放在同一个目录，用自己的名字，不和 Agix 的顶层名字冲突；**不往 Agix 的
+  `settings.json` 里写 Codix 的配置**。
+- 项目层目录：`EmbedConfig.project_dir = ".codix"`（Agix#86 已在 0.3.17 落地）。项目里原有的 `.agix`
+  不再被读，要沿用其中的设置由用户自己搬。`product_name = "Codix"`：提示词、`User-Agent`、worktree
+  分支前缀都用这个名字。
+- **作业属于各自的实例**，两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时作业接着排。
 
-### 8.2 实例进程
+### 8.2 crate 与进程
 
-- `codix new` 的流程：拿到 `instance.lock` → 用 `setsid` 拉起脱离终端的 `codix host` → 等 `host.sock` 可以连接 → 接入。
-- 引擎嵌在实例进程里：`agix::embed`，`EmbedConfig::new(~/.codix)`，**不传 `instance`**。原因是 Agix 的实例锁按"数据根 + 场景"计算，同一个场景只能锁一份，所以实例锁由 Codix 自己管；`groups_file` 指向实例目录下的 `groups.json`。
-- 实例进程要做的进程级工作（agix-sdk.md §7）：
-  - 日志过滤用 `agix::process::log_filter`，否则 rmcp 会把 OAuth 令牌写进日志
-  - 安装 panic 钩子
-  - 收到 SIGTERM 时依次关闭会话、流程、作业，再删掉 socket 和发现文件
-- **单一接入**：
-  - 实例同时只服务一个 TUI 连接。另一个 `Hello` 到来时，如果不带 `force`，就回 `Occupied{holder, idle_ms}`；带 `force` 时，先给当前连接推一条 `Kicked{by, at}`，再关闭它，然后接受新连接。
-  - 被踢、空闲脱离、连接断开，都不影响实例里正在进行的工作。
-  - **心跳**：TUI 每 10 秒发一次 `Heartbeat`，带上最后一次输入的时刻。实例连续 3 次没收到心跳，就断开这个连接，处理 TUI 僵死、ssh 半开这类情况。
-  - **空闲脱离**：由 TUI 自己判断。超过 `idle_timeout` 没有任何输入，就发 `Detach` 并进入"已脱离"界面，终端不退出，按任意键重新接入。实例那边再以心跳里的 `last_input_ms` 兜底：如果客户端没执行空闲脱离（比如是旧版本），实例按配置把它断开。
-- 残留检测：`list` 时遇到 pid 已经不在、或者 socket 连不上的实例，标记为"残留"，并清理掉 socket 和发现文件；运行和作业的状态保留，可以用 `start` 再拉起来。
-- 对端校验：accept 之后用 `getpeereid` / `SO_PEERCRED` 检查对端 uid，必须与实例进程的 uid 一致。
+```
+codix（一个二进制）
+├── codix [new|list|attach|start|stop]   TUI：app ─► client::SocketInstances ─► port
+└── codix host --name N --project P     实例：app 把参数交给 host::run
+                                          host ─► wire（JSON-RPC 客户端）─► agix::embed
+```
 
-### 8.3 Agix 接入
-
-- 只走 JSON-RPC 协议：实例进程内部用 `Embedded::serve_stream` 加 duplex 和引擎通信，不使用 `agix::pool`。
-- 建会话时声明 `prompt_types: ["permission", "question"]`。
-
-帧与事件的对应关系：
-
-| Agix 帧 / 方法 | 领域事件 / 命令 |
+| crate | 职责 |
 |---|---|
-| `turn_start` / 同一个 step 再次出现的 `step_start` | `TurnStarted` / `StepRestarted` |
+| `wire` | Agix 协议的 JSON-RPC 客户端：NDJSON 分帧、按 `id` 配对回复、通知（`session.event` / `daemon.event`）进一个 channel；只放 Codix 用到的那几个参数与结果的 serde 类型，帧载荷按 `kind` 分派，不认识的跳过 |
+| `host` | 实例进程：实例目录、锁、发现文件；`Engine`（嵌入的 Agix）；`Hub`（端口命令的实现、帧到领域事件的翻译、会话状态）；作业调度；socket 服务与单一接入 |
+| `client` | `SocketInstances` 与 `SocketBackend`：扫实例目录、拉起实例、接入、断线重连、`stop` 发 SIGTERM |
+
+- `Hub` 只经 `Engine` trait 用引擎（`call(method, params) -> Value` 加一条通知流）。真实实现是嵌入的
+  Agix；测试用脚本化的假引擎，不联网、不起 Agix，就能把命令、帧翻译、作业、接入流程跑通。
+- `app` 的库部分（`Core`、model 的驱动）仍不依赖 Agix；二进制依赖 `host` 与 `client`。
+- `--mock <场景>` 保留：仍走 `mock`，测试与演示用。
+
+### 8.3 TUI 与实例之间：链路
+
+- 传输：`instances/<名>/host.sock`，NDJSON。每行是 `port::link` 里的一帧：
+  - TUI → 实例：`{"id": n, "cmd": Command}`
+  - 实例 → TUI：`{"id": n, "reply": {"ok": Reply} | {"err": PortError}}`，或 `{"event": Event}`
+  - 回复与事件同一条有序的流：等到一个回复时，排在它前面的事件已经到了（model 的"先快照再增量"靠这一条）。
+- **握手**：第一帧必须是 `Hello{client, force}`。实例空着 → 回 `Hello{instance, flows, jobs}`；
+  有人接入且不带 `force` → 回 `Err(Occupied{holder, idle_ms})` 并关掉这条连接；带 `force` → 先给旧连接推
+  `Kicked{by, at_ms}` 再关掉它，然后接受新连接。被踢的一方不重连。
+- 对端校验：accept 后取对端 uid（`peer_cred`），与实例进程的不同就直接关掉。
+- **心跳**：model 每 10 秒发 `Heartbeat{last_input_ms}`；实例 35 秒没收到任何帧就断开这条连接（TUI 僵死、
+  ssh 半开）。空闲脱离由 TUI 判断（model 已有）；实例按 `last_input_ms` 兜底：超过 `idle_timeout`
+  推 `IdleDetached` 后断开。
+- **断线重连**（`SocketBackend`）：连接意外断开 → 推 `Connection(Lost)`，按 0.5s、1s、2s… 重连（推
+  `Reconnecting{attempt}`），以不带 `force` 的 `Hello` 接回；成功 → `Connection(Resynced)`，model 重新
+  拉列表与当前会话的快照。实例进程已不在（发现文件的 pid 死了）或 30 秒没接上 → `InstanceStopped`。
+- 脱离（`Detach`、退出 TUI、被踢、空闲）不影响实例里正在进行的工作。`StopInstance` 回 `Ok` 之后实例开始关停。
+
+### 8.4 Agix 接入：`Hub`
+
+- 实例进程里起一个 `Embedded`：`data_root = ~/.codix`、`cwd = 项目`、`project_dir = .codix`、
+  `product_name = Codix`、`groups_file = instances/<名>/groups.json`，**不传 `instance`**（Agix 的实例锁
+  按"数据根 + 场景"算，一个场景只能锁一份；实例锁由 Codix 自己管）。经 `serve_stream` + `duplex`
+  连上，`daemon.subscribeEvents` 订阅会话的生灭与轮的起止。
+- **实例是这个引擎唯一的客户端。** 它订阅内存里的每一个会话（`daemon.event` 的 `session_created` /
+  `session_resumed` 时订阅），所以每个会话的状态、任务、goal、todo、待答提问都由 `Hub` 记着，不依赖 TUI
+  在不在。翻译出的领域事件分两类推给 TUI：
+  - 摘要类（`SessionUpserted`、`TaskUpserted`、`JobUpserted` …）全推；
+  - 一轮的细节（文字增量、工具、提问……）只推 TUI `Watch` 着的会话；子 Agent 的侧链会话被 Watch 时，
+    父会话上的 `subagent_progress` 解包成那个侧链会话的事件。
+- **只列这个项目的会话**：`session.list` 的条目按 `project_root == 实例的项目` 过滤。
+- **会话归属**记在 `sessions.json`：Codix 建的会话记下 `origin`（用户、作业的哪次触发、作业编辑、分叉）
+  与编辑会话的键（同一个作业总是同一个会话）；没记过的按 `User`。子 Agent 的上级来自任务的
+  `agent_session_id`。
+- 建会话一律带 `prompt_types: ["permission", "question"]`，项目根就是实例的项目。
+
+帧、方法与领域事件、命令的对应：
+
+| Agix | 领域事件 / 命令 |
+|---|---|
+| `turn_start` / 同一 `step` 再来的 `step_start` / `model_retry` | `TurnStarted` / `StepRestarted` / `ModelRetry` |
 | `text_delta` / `thinking_delta` | `TextDelta` / `ThinkingDelta` |
-| `tool_use_start` / `tool_use` / `tool_progress` / `tool_result` | `ToolStarted` / `ToolInput` / `ToolProgress` / `ToolFinished` |
-| 工具名为 `TodoWrite` 的 `tool_use` | 额外推一个 `TodosChanged` |
-| `prompt` / `prompt_resolved` | `PromptPending` / `PromptResolved` |
-| `turn_complete` / `error` 帧，或 `run_turn` 返回的错误 | `TurnEnded` / `TurnFailed` |
+| `tool_use_start` / `tool_use` / `tool_progress` / `tool_result` | `ToolStarted` / `ToolInput`（按工具名摘要参数）/ `ToolProgress` / `ToolFinished` |
+| 工具名为 `TodoWrite` 的 `tool_use` | 另推 `TodosChanged` |
+| `prompt` / `prompt_resolved` | `PromptPending` / `PromptResolved`，会话状态随之在 Waiting 与 Running 间变 |
+| `turn_complete` / `error` 帧或 `run_turn` 的错误响应 | `TurnEnded` / `TurnFailed` |
 | `user_message_delivered` / `user_messages_returned` | `SteerDelivered` / `SteerReturned` |
 | `task_started` / `task_updated` / `task_finished` / `task_progress` | `TaskUpserted` / `TaskOutput` |
 | `goal_changed` / `compact` / `skills_changed` / `notification` | `GoalChanged` / `Compacted` / `CommandsChanged` / `Notice` |
-| `Submit{mode}` | `session.run_turn{on_busy}` |
-| `Interrupt` / `Answer` / `SetModel` | `session.interrupt` / `session.respondToPrompt` / `session.setModel` |
-| `SideQuestion` | 先 `session.fork`，再在分叉出的会话上 `run_turn` |
-| `StopTask` / `MessageTask` / `TaskOutput` | `session.stopTask` / `session.messageTask` / `session.taskOutput` |
+| `host_tool_call` | 由 `Hub` 自己执行（作业工具，§8.5），`session.respondToolCall` 作答 |
+| `daemon.event` 的 `turn_started` / `turn_completed` / `session_*` | `SessionUpserted` / `SessionRemoved` |
+| `Submit{mode}` | `session.run_turn{on_busy}`：`run_turn` 是长调用，`Hub` 另起任务等它，命令立刻回 `Submitted` |
+| `Watch` | `session.subscribe{resume: true}` → `session.history`（最后 500 条）→ `session.goal` / `session.tasks`，拼成 `Watched` |
+| `Interrupt` / `Answer` / `SetModel` / `Rename` / `Close` | `session.interrupt` / `session.respondToPrompt` / `session.setModel` / `session.rename` / `session.close` |
+| `SetGoal` / `UpdateGoal` | `session.setGoal` / `session.updateGoal` |
+| `SideQuestion` | `session.fork`，再在分叉出的会话上 `run_turn`（归属记为 `Fork`） |
+| `StopTask` / `MessageTask` / `TaskOutput` | `session.stopTask` / `session.messageTask` / `session.taskOutput`（任务所属的会话由 `Hub` 记着） |
+| `Commands` | `commands.list` |
 
-会话归属：`origin` 由实例自己记录（是哪个作业、哪一站、哪次分叉建的会话）；子 Agent 的上级来自 `session.list{parent_session_id}`。
+### 8.5 作业
 
-### 8.4 流程与作业
+- 调度器在实例进程里，按本地时区解释 5 段 cron。实例没在跑时错过的触发，`catch_up` 为真就在启动后补一次
+  （只补一次，不按错过的次数补）。
+- 简单作业一次触发：新建一个会话（归属 `Job{job, name, fired_ms}`），把提示词作为第一轮提交；作业里列了
+  skills 的，附加进这个会话的系统提示词。触发记录先写 `Running`，那一轮结束时补上结局、耗时、用量。
+- 流程作业：流程接入之前记一条 `Skipped`。
+- 作业的编辑会话（`OpenJobSession`）带三个宿主工具：`JobList`、`JobSave`、`JobDelete`。模型经它们读写
+  作业，`Hub` 执行并推 `JobUpserted` / `JobRemoved`。界面不另开表单（§4.4）。
 
-- 流程代码拷贝到 `3rds/harnix-flow/`（内核 + runner）。实例用 Agix 客户端实现 `FlowEngine`。流程会话里的权限询问由实例按站的策略作答，策略为 `ask` 的才转给人。前提是 Harnix#66 已经完成。
-- 作业由实例自带的调度器执行。简单作业：建会话或复用会话，再提交提示词。流程作业：调用 `StartRun`。实例没在运行期间错过的触发，按作业的 `catch_up` 设置处理。
+### 8.6 流程（暂缓）
+
+Harnix 正在把 flow 拆出来，流程等它发布后再接：拷贝到 `3rds/harnix-flow/`，实例用 Agix 实现
+`FlowEngine`，站的权限询问按站的策略代答，策略为 `ask` 的才转给人。在那之前实例的 `Hello` 回
+`flows: false`，流程命令回 `Unsupported`，流程标签显示"流程尚未接入"。
+
+### 8.7 实例进程的进程级工作
+
+- `codix new` / `start`：子进程跑 `codix host`，`setsid` 脱离终端，stdin 接 `/dev/null`、stdout 与 stderr
+  接 `host.log`；拉起方等 `host.sock` 能连上（至多 10 秒）再接入。
+- 日志过滤用 `agix::process::log_filter`（否则 rmcp 会把 OAuth 令牌写进日志）；装 panic 钩子。
+- SIGTERM / SIGINT：通知 TUI（`InstanceStopped`）、停调度器、`Embedded::shutdown`，删掉 socket 与发现文件。
+  SIGHUP 忽略。
+- 残留：`list` 时 pid 已不在、或者 socket 连不上的实例标为"残留"并删掉它的 socket 与发现文件；作业与
+  会话归属留着，`start` 能再拉起来。
 
 ## 9. 旧实现踩过的坑
 

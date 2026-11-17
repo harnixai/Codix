@@ -7,7 +7,8 @@ use crate::{Attach, ClientInfo, Command, Event, InstanceInfo, Millis, NewInstanc
 
 /// 端口的错误。这里的 Display 只给日志与调试看（英文、不翻译）；界面上显示的说法由 model
 /// 按当前语言给出（端口是协议，不带界面文字）。
-#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PortError {
     /// 实例已被另一个 TUI 接入（需求 I-06）。
     #[error("instance attached by {}", holder.label())]

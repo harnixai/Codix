@@ -1,0 +1,30 @@
+[package]
+name = "host"
+description = "Codix 实例进程：会话代理（经 Engine 用 Agix）、作业调度、socket 服务与单一接入"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+port.workspace = true
+wire.workspace = true
+client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync", "rt", "macros", "time", "signal", "fs"] }
+nix.workspace = true
+croner.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util", "net", "io-util", "sync", "rt", "macros", "time"] }

@@ -11,6 +11,7 @@ mod flow;
 mod ids;
 mod instance;
 mod job;
+pub mod link;
 mod session;
 mod task;
 

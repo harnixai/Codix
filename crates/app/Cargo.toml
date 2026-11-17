@@ -1,6 +1,6 @@
 [package]
 name = "app"
-description = "Codix 二进制：终端、事件循环、实例选择"
+description = "Codix 的 TUI：终端、事件循环核心、配置（二进制在 codix crate）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,13 +9,6 @@ publish.workspace = true
 
 [lints]
 workspace = true
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "codix"
-path = "src/main.rs"
 
 [dependencies]
 i18n.workspace = true

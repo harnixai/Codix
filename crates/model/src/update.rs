@@ -127,7 +127,13 @@ impl State {
             last_input_ms: self.ui.now_ms,
         };
         vec![
-            self.call(Pending::Hello, Command::Hello { client }),
+            self.call(
+                Pending::Hello,
+                Command::Hello {
+                    client,
+                    force: false,
+                },
+            ),
             self.call(
                 Pending::Sessions,
                 Command::ListSessions {
