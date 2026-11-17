@@ -1144,6 +1144,11 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
             Some(x) => *x = f,
             None => d.flows.push(f),
         },
+        Event::FlowRemoved { name } => {
+            d.flows.retain(|x| x.name != name);
+            d.flow_details.remove(&name);
+            d.runs.remove(&name);
+        }
         Event::JobUpserted(j) => match d.jobs.iter_mut().find(|x| x.id == j.id) {
             Some(x) => *x = j,
             None => d.jobs.push(j),

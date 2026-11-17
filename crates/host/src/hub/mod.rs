@@ -4,11 +4,11 @@
 mod history;
 mod registry;
 mod state;
-mod tools;
+pub(crate) mod tools;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use async_trait::async_trait;
 use port::link::ServerFrame;
@@ -30,8 +30,56 @@ use crate::service::{Service, Sink};
 
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
+/// 流程那一侧（`crate::flows`）：Hub 经它碰流程，不认识流程库的类型。
+#[async_trait]
+pub(crate) trait FlowPort: Send + Sync {
+    /// 端口的流程命令（ListFlows … RunOp）。
+    async fn command(&self, cmd: Command) -> Result<Reply, PortError>;
+    /// 宿主工具里归流程管的（`flow_*`，以及运行里的会话自己的那三个）；不是它的回 `None`。
+    async fn tool(
+        &self,
+        rpc: &str,
+        scope: &tools::Scope,
+        name: &str,
+        input: &Value,
+    ) -> Option<Result<String, String>>;
+    /// 流程作业的一次触发：启动一次运行，回运行 ID 与主题。
+    async fn start_for_job(
+        &self,
+        flow: &str,
+        subject: &str,
+        inputs: Value,
+        job: &Job,
+    ) -> Result<(port::RunId, String), String>;
+    /// 挂在连接上的流程工具的声明。
+    fn tool_declarations(&self) -> Vec<Value>;
+}
+
+/// 一个会话的帧，原样分给看着它的流程派工器（`Hub::tap`）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Tapped {
+    /// `text`：这一帧是 `turn_start` 时，这一轮是用哪句话起的（经 `run_turn` 发的才知道）。
+    Event {
+        turn: Option<String>,
+        event: Value,
+        text: Option<String>,
+    },
+    /// `run_turn` 回了错误：这一轮不会有 `turn_complete`（错误帧只发给别的订阅者）。
+    /// `text`：这一轮还没开始就失败了时，它是用哪句话起的。
+    Failed {
+        turn: String,
+        text: Option<String>,
+        kind: String,
+        retryable: bool,
+        message: String,
+    },
+}
+
 /// 协议 §9：会话正在跑一轮（或原地重建），`on_busy: "reject"` 的消息没有投递。
 const SESSION_BUSY: i64 = -32015;
+
+/// 协议 §9：没有这个会话。
+const SESSION_NOT_FOUND: i64 = -32000;
 
 /// 快照里带多少条历史：再早的翻页没有做，500 条足够接上下文。
 const HISTORY_TAIL: u64 = 500;
@@ -67,6 +115,11 @@ struct Inner {
     /// 侧问分叉出的会话：那一轮结束时把回答作为提示推出去。
     side: Mutex<HashSet<String>>,
     default_model: Mutex<String>,
+    flows: OnceLock<Arc<dyn FlowPort>>,
+    /// 流程派工器看着的会话：每帧分一份给它们。
+    taps: Mutex<HashMap<String, Vec<mpsc::UnboundedSender<Tapped>>>>,
+    /// 经 `run_turn` 发出、还没开始的轮：会话 → (轮, 那句话)，按发出的先后。
+    sent: Mutex<HashMap<String, VecDeque<(String, String)>>>,
 }
 
 #[derive(Default)]
@@ -142,22 +195,12 @@ impl Hub {
             job_runs: Mutex::default(),
             side: Mutex::default(),
             default_model: Mutex::default(),
+            flows: OnceLock::new(),
+            taps: Mutex::default(),
+            sent: Mutex::default(),
         }));
         hub.call("daemon.subscribeEvents", json!({})).await?;
-        // 工具挂在连接上：每个会话都有，此后建起来（新建、恢复、重建）的引擎都带上。
-        match hub
-            .call(
-                "daemon.setHostTools",
-                json!({"host_tools": tools::declarations()}),
-            )
-            .await
-        {
-            Ok(r) if r["refused"].as_array().is_some_and(|a| !a.is_empty()) => {
-                tracing::warn!(refused = %r["refused"], "host tools refused")
-            }
-            Ok(_) => {}
-            Err(e) => tracing::warn!("daemon.setHostTools: {e}"),
-        }
+        hub.register_tools().await;
         let effective = hub
             .call(
                 "config.get",
@@ -214,6 +257,213 @@ impl Hub {
         Ok(hub)
     }
 
+    /// 工具挂在连接上：每个会话都有，此后建起来（新建、恢复、重建）的引擎都带上。流程接上后
+    /// 再挂一次，连同 `flow_*`。
+    async fn register_tools(&self) {
+        let mut all = tools::declarations();
+        if let (Some(f), Some(a)) = (self.0.flows.get(), all.as_array_mut()) {
+            a.extend(f.tool_declarations());
+        }
+        match self
+            .call("daemon.setHostTools", json!({"host_tools": all}))
+            .await
+        {
+            Ok(r) if r["refused"].as_array().is_some_and(|a| !a.is_empty()) => {
+                tracing::warn!(refused = %r["refused"], "host tools refused")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("daemon.setHostTools: {e}"),
+        }
+    }
+
+    /// 接上流程（实例起来时一次）。
+    pub(crate) async fn set_flows(&self, flows: Arc<dyn FlowPort>) {
+        if self.0.flows.set(flows).is_ok() {
+            self.register_tools().await;
+        }
+    }
+
+    fn flows(&self) -> Option<Arc<dyn FlowPort>> {
+        self.0.flows.get().cloned()
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakHub {
+        WeakHub(Arc::downgrade(&self.0))
+    }
+
+    /// 从现在起这个会话的每一帧。会话关掉时流结束。
+    pub(crate) fn tap(&self, session: &str) -> mpsc::UnboundedReceiver<Tapped> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.0
+            .taps
+            .lock()
+            .unwrap()
+            .entry(session.to_string())
+            .or_default()
+            .push(tx);
+        rx
+    }
+
+    fn tap_send(&self, session: &str, t: Tapped) {
+        let mut taps = self.0.taps.lock().unwrap();
+        if let Some(v) = taps.get_mut(session) {
+            v.retain(|tx| tx.send(t.clone()).is_ok());
+            if v.is_empty() {
+                taps.remove(session);
+            }
+        }
+    }
+
+    /// 这个会话此刻在不在跑一轮、在哪个项目里；不认识就是 `None`。
+    pub(crate) fn session_state(&self, id: &str) -> Option<(bool, Option<String>)> {
+        let st = self.0.st.lock().unwrap();
+        st.sessions.get(id).map(|s| (s.running, s.project.clone()))
+    }
+
+    /// 会话在不在：内存里没有就问引擎，在盘上就带回来、订阅上。
+    pub(crate) async fn bring_back(&self, id: &str) -> Result<bool, RpcError> {
+        if self.0.st.lock().unwrap().sessions.contains_key(id) {
+            return Ok(true);
+        }
+        match self.call("session.get", json!({"session_id": id})).await {
+            Ok(_) => {}
+            Err(RpcError::Remote { code, .. }) if code == SESSION_NOT_FOUND => return Ok(false),
+            Err(e) => return Err(e),
+        }
+        self.adopt(id).await;
+        let _ = self.subscribe(id, true).await;
+        Ok(self.0.st.lock().unwrap().sessions.contains_key(id))
+    }
+
+    /// 流程派工器开的会话：`session_id` 由键算出，同一个键总是同一个会话（跨重启也是）。
+    /// 回 `(会话, 原来就有)`。
+    pub(crate) async fn open_flow_session(
+        &self,
+        session_id: &str,
+        scene: &str,
+        project: Option<&str>,
+        options: Value,
+        origin: Origin,
+        title: Option<String>,
+    ) -> Result<(String, bool), RpcError> {
+        let mut params = json!({"session_id": session_id, "scene": scene, "options": options});
+        if let Some(p) = project {
+            params["project_root"] = json!(p);
+        }
+        let r = self.call("session.create", params).await?;
+        let id = str_field(&r, "session_id");
+        let existed = r["existing"].as_bool().unwrap_or(false);
+        let now = self.now();
+        let known = self.0.st.lock().unwrap().sessions.contains_key(&id);
+        if !existed || !known {
+            self.0.reg.lock().unwrap().update(&id, |rec| {
+                rec.origin = origin.clone();
+                if rec.title.is_none() {
+                    rec.title = title.clone();
+                }
+                if rec.created_ms == 0 {
+                    rec.created_ms = now;
+                }
+                rec.updated_ms = now;
+                rec.closed = false;
+            });
+        }
+        if !known {
+            let created = parse_rfc3339_ms(r["created_at"].as_str().unwrap_or("")).unwrap_or(now);
+            let title = self
+                .0
+                .reg
+                .lock()
+                .unwrap()
+                .get(&id)
+                .and_then(|r| r.title.clone())
+                .or(title);
+            let sess = Sess {
+                id: id.clone(),
+                title: title.unwrap_or_else(|| state::short(&id)),
+                project: project.map(str::to_string),
+                scene: r["scene"].as_str().unwrap_or(scene).to_string(),
+                model: self.0.default_model.lock().unwrap().clone(),
+                origin,
+                live: true,
+                updated_ms: now,
+                created_ms: created,
+                ..Sess::default()
+            };
+            self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
+        }
+        let _ = self.subscribe(&id, existed).await;
+        self.upsert(&id);
+        Ok((id, existed))
+    }
+
+    /// 派工器往会话里发一句：排在正在跑的那一轮后面。
+    pub(crate) fn send_queued(&self, id: &str, text: &str) -> String {
+        self.run_turn(id, text, "queue")
+    }
+
+    pub(crate) async fn interrupt(&self, id: &str) -> Result<(), RpcError> {
+        self.call("session.interrupt", json!({"session_id": id}))
+            .await
+            .map(|_| ())
+    }
+
+    /// 派工器关一个会话：看着它的流结束。
+    pub(crate) async fn close_session(&self, id: &str) -> Result<(), PortError> {
+        self.dispatch(Command::Close {
+            session: SessionId(id.to_string()),
+        })
+        .await?;
+        self.0.taps.lock().unwrap().remove(id);
+        Ok(())
+    }
+
+    /// 派工器答一个权限问句。
+    pub(crate) async fn answer_permission(
+        &self,
+        id: &str,
+        prompt: &str,
+        allow: bool,
+        reason: Option<String>,
+    ) -> Result<(), PortError> {
+        self.dispatch(Command::Answer {
+            session: SessionId(id.to_string()),
+            prompt: port::PromptId(prompt.to_string()),
+            answer: if allow {
+                port::Answer::Permit
+            } else {
+                port::Answer::Deny { reason }
+            },
+        })
+        .await
+        .map(|_| ())
+    }
+
+    pub(crate) async fn append_entry(
+        &self,
+        id: &str,
+        event: &str,
+        payload: Value,
+    ) -> Result<(), RpcError> {
+        self.call(
+            "session.appendEntry",
+            json!({"session_id": id, "ns": "codix.flow", "event": event, "payload": payload}),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub(crate) async fn project_trusted(&self, root: &str) -> Result<bool, RpcError> {
+        let v = self
+            .call("project.status", json!({"project_root": root}))
+            .await?;
+        Ok(v["trust"].as_str() == Some("trusted"))
+    }
+
+    pub(crate) fn project(&self) -> &str {
+        &self.0.project
+    }
+
     pub fn shutdown(&self) {
         if let Some(s) = self.0.jobs.lock().unwrap().as_ref() {
             s.shutdown();
@@ -268,7 +518,7 @@ impl Hub {
         }
     }
 
-    fn emit_events(&self, events: Vec<Event>) {
+    pub(crate) fn emit_events(&self, events: Vec<Event>) {
         self.emit(Out {
             events,
             todo: vec![],
@@ -320,8 +570,23 @@ impl Hub {
         let now = self.now();
         match n {
             Notification::Session {
-                session_id, event, ..
+                session_id,
+                turn_id,
+                event,
             } => {
+                if self.0.taps.lock().unwrap().contains_key(&session_id) {
+                    let text = (event["kind"] == "turn_start")
+                        .then(|| self.started(&session_id, turn_id.as_deref()))
+                        .flatten();
+                    self.tap_send(
+                        &session_id,
+                        Tapped::Event {
+                            turn: turn_id.clone(),
+                            event: event.clone(),
+                            text,
+                        },
+                    );
+                }
                 let ev = SessionEvent::parse(&event);
                 self.apply(|st, out| st.on_event(&session_id, &session_id, ev, now, out));
             }
@@ -662,6 +927,15 @@ impl Hub {
     /// `run_turn` 一跑就是几分钟：另起任务等它，错误响应就是这一轮的失败（协议 §5.5）。
     fn run_turn(&self, id: &str, text: &str, on_busy: &str) -> String {
         let turn = format!("cx-{}-{}", self.now(), rand_suffix());
+        if on_busy != "steer" {
+            self.0
+                .sent
+                .lock()
+                .unwrap()
+                .entry(id.to_string())
+                .or_default()
+                .push_back((turn.clone(), text.to_string()));
+        }
         let hub = self.clone();
         let (id, text, on_busy, t) = (
             id.to_string(),
@@ -691,7 +965,18 @@ impl Hub {
                         messages: vec![port::MessageId(t.clone())],
                     }]);
                 }
-                Err(RpcError::Remote { message, .. }) => {
+                Err(RpcError::Remote { message, data, .. }) => {
+                    let text = hub.forget_sent(&id, &t);
+                    hub.tap_send(
+                        &id,
+                        Tapped::Failed {
+                            turn: t.clone(),
+                            text,
+                            kind: data["kind"].as_str().unwrap_or("error").to_string(),
+                            retryable: data["retryable"].as_bool().unwrap_or(true),
+                            message: message.clone(),
+                        },
+                    );
                     let now = hub.now();
                     hub.apply(|st, out| st.turn_failed(&id, message, now, out));
                 }
@@ -699,6 +984,28 @@ impl Hub {
             }
         });
         turn
+    }
+
+    /// 一轮开始了：它是经 `run_turn` 发的哪一句。认得轮 id 就按 id 取；不认得（引擎自己
+    /// 起的，或 id 没对上）就取最早发出的那一句。
+    fn started(&self, session: &str, turn: Option<&str>) -> Option<String> {
+        let mut sent = self.0.sent.lock().unwrap();
+        let q = sent.get_mut(session)?;
+        let i = turn
+            .and_then(|t| q.iter().position(|(id, _)| id == t))
+            .unwrap_or(0);
+        let (_, text) = q.remove(i)?;
+        if q.is_empty() {
+            sent.remove(session);
+        }
+        Some(text)
+    }
+
+    fn forget_sent(&self, session: &str, turn: &str) -> Option<String> {
+        let mut sent = self.0.sent.lock().unwrap();
+        let q = sent.get_mut(session)?;
+        let i = q.iter().position(|(id, _)| id == turn)?;
+        q.remove(i).map(|(_, text)| text)
     }
 
     /// 起名：用户改的名字总算数；引擎首轮自动起的名字只替掉"第一句话"那种临时名字；
@@ -831,17 +1138,31 @@ impl Hub {
                     ),
                 }
             }
-            // 流程接入之前（architecture §8.6）流程作业只记一笔跳过。
-            JobKind::Flow { .. } => (
-                JobEntry {
-                    fired_ms,
-                    outcome: JobOutcome::Skipped,
-                    elapsed_ms: 0,
-                    usage: Usage::default(),
-                    target: None,
-                },
-                None,
-            ),
+            // 流程作业：启动一次运行。运行有它自己的结局，触发记录只记“启动了没有”。
+            JobKind::Flow {
+                flow,
+                subject,
+                inputs,
+            } => {
+                let started = match self.flows() {
+                    Some(f) => f.start_for_job(flow, subject, inputs.clone(), &job).await,
+                    None => Err("flows are not available in this instance".into()),
+                };
+                let (outcome, target) = match started {
+                    Ok((id, subject)) => (JobOutcome::Done, Some(JobTarget::Run { id, subject })),
+                    Err(message) => (JobOutcome::Failed { message }, None),
+                };
+                (
+                    JobEntry {
+                        fired_ms,
+                        outcome,
+                        elapsed_ms: 0,
+                        usage: Usage::default(),
+                        target,
+                    },
+                    None,
+                )
+            }
         };
         let _ = store.lock().unwrap().append(&job.id.0, &entry);
         let mut events = vec![Event::JobFired {
@@ -871,6 +1192,11 @@ impl Hub {
         };
         if scope == tools::Scope::None {
             return Err("this session is not one of this Codix instance's sessions".into());
+        }
+        if let Some(f) = self.flows()
+            && let Some(r) = f.tool(rpc, &scope, name, input).await
+        {
+            return r;
         }
         let port_err = |e: PortError| e.to_string();
         match name {
@@ -1338,11 +1664,19 @@ impl Hub {
                     finished: v["final"].as_bool().unwrap_or(false),
                 })
             }
-            C::ListFlows => Ok(Reply::Flows(vec![])),
-            C::ListRuns { .. } => Ok(Reply::Runs(vec![])),
-            C::GetFlow { .. } | C::GetRun { .. } | C::StartRun { .. } | C::RunOp { .. } => {
-                Err(PortError::Unsupported("flows".into()))
-            }
+            cmd @ (C::ListFlows
+            | C::ListRuns { .. }
+            | C::GetFlow { .. }
+            | C::GetRun { .. }
+            | C::StartRun { .. }
+            | C::RunOp { .. }) => match self.flows() {
+                Some(f) => f.command(cmd).await,
+                None => match cmd {
+                    C::ListFlows => Ok(Reply::Flows(vec![])),
+                    C::ListRuns { .. } => Ok(Reply::Runs(vec![])),
+                    _ => Err(PortError::Unsupported("flows".into())),
+                },
+            },
             C::ListJobs => Ok(Reply::Jobs(self.scheduler()?.list())),
             C::SaveJob { job } => {
                 let saved = self.scheduler()?.upsert(job).map_err(PortError::Failed)?;
@@ -1529,13 +1863,23 @@ impl Service for Hub {
                 jobs,
                 holder: None,
             },
-            false,
+            self.0.flows.get().is_some(),
             self.0.jobs.lock().unwrap().is_some(),
         )
     }
 
     async fn handle(&self, cmd: Command) -> Result<Reply, PortError> {
         self.dispatch(cmd).await
+    }
+}
+
+/// 流程派工器持有的：Hub 也持有流程那一侧，用弱引用免得互相拽着。
+#[derive(Clone)]
+pub(crate) struct WeakHub(Weak<Inner>);
+
+impl WeakHub {
+    pub(crate) fn upgrade(&self) -> Option<Hub> {
+        self.0.upgrade().map(Hub)
     }
 }
 

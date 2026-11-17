@@ -23,6 +23,8 @@ client = { path = "crates/client" }
 host  = { path = "crates/host" }
 engine = { path = "crates/engine" }
 app   = { path = "crates/app" }
+# 拷进 3rds 的流程库（不是成员，scripts/fetch-3rds.sh 拷来）。
+harnix-flow = { path = "3rds/harnix-flow" }
 
 # 与 Harnix flow 用同一个 YAML 库：flow 拷进 3rds 后不多出第二个。
 serde_yaml  = "0.9"
@@ -44,6 +46,7 @@ nix         = { version = "0.29", features = ["fs", "signal", "process", "user",
 croner      = "2"
 chrono      = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing     = "0.1"
+uuid        = { version = "1", features = ["v5"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [workspace.lints.rust]

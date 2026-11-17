@@ -146,6 +146,10 @@ pub enum Event {
 
     // 流程
     FlowUpserted(FlowSummary),
+    /// 流程定义删掉了。
+    FlowRemoved {
+        name: String,
+    },
     /// 流程定义变了（在编写会话里改的）：设计卡跟着刷新。
     FlowDetail(Box<crate::FlowDetail>),
     RunUpserted(RunSummary),

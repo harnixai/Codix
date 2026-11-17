@@ -20,6 +20,18 @@ pub const JOB_RUN: &str = "job_run";
 /// 只读的几个：建会话时给它们 allow 规则，查看不用每次问人。
 pub const READ_ONLY: [&str; 4] = [SESSION_LIST, SESSION_SHOW, JOB_LIST, JOB_SHOW];
 
+/// 流程工具（`crate::flows`）里只读的那些，同样给 allow 规则。
+pub const FLOW_READ_ONLY: [&str; 8] = [
+    "flow_list",
+    "flow_show",
+    "flow_schema",
+    "flow_guide",
+    "flow_validate",
+    "flow_dry_run",
+    "flow_runs",
+    "flow_run",
+];
+
 /// 一次调用能动什么，由发起调用的会话（子 Agent 的调用算它的根会话）决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope {
@@ -150,6 +162,7 @@ pub fn read_only_rules() -> Value {
     Value::Array(
         READ_ONLY
             .iter()
+            .chain(FLOW_READ_ONLY.iter())
             .map(|t| json!({"source": "session", "behavior": "allow", "tool_name": t}))
             .collect(),
     )

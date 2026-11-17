@@ -24,6 +24,9 @@ nix.workspace = true
 croner.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+harnix-flow.workspace = true
+uuid.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -59,6 +59,17 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     )
     .await
     .context("connect to the engine")?;
+    let flows = host::flows::start(
+        &hub,
+        host::flows::FlowsConfig {
+            flows_dir: layout.flows(),
+            runs_dir: layout.flow_runs(&name),
+            worktrees_dir: layout.flow_worktrees(&name),
+            workspaces_dir: layout.flow_workspaces(&name),
+        },
+    )
+    .await
+    .context("start the flows")?;
 
     let listener = claim.bind()?;
     let base = InstanceFile {
@@ -112,6 +123,7 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         ServeEnd::StopRequested => tracing::info!("stop requested by the attached client"),
         ServeEnd::Shutdown(why) => tracing::info!("shutting down: {why}"),
     }
+    flows.stop().await;
     hub.shutdown();
     embedded.shutdown().await;
     claim.release()?;

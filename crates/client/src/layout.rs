@@ -89,6 +89,25 @@ pub struct InstanceMeta {
 }
 
 impl Layout {
+    /// 全局流程包（可写层），所有实例共用。
+    pub fn flows(&self) -> PathBuf {
+        self.home.join("flows")
+    }
+
+    /// 流程运行的记录。
+    pub fn flow_runs(&self, name: &str) -> PathBuf {
+        self.instance(name).join("flow-runs")
+    }
+
+    /// 流程运行的 worktree 与没有项目的运行的工作目录。
+    pub fn flow_worktrees(&self, name: &str) -> PathBuf {
+        self.instance(name).join("worktrees")
+    }
+
+    pub fn flow_workspaces(&self, name: &str) -> PathBuf {
+        self.instance(name).join("workspaces")
+    }
+
     pub fn meta(&self, name: &str) -> PathBuf {
         self.instance(name).join("meta.json")
     }
