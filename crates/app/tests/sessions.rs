@@ -235,7 +235,10 @@ async fn m10_goal_rounds_and_blocked() {
 async fn m25_ownership_line_for_every_origin() {
     for (title, want) in [
         ("昨天的调研", "分叉自 重构认证模块"),
-        ("重构认证模块", "用户新建"),
+        (
+            "重构认证模块",
+            "[CODIX] dev@ops-01  ~/work/auth  code  claude-sonnet-5-5",
+        ),
         ("老项目会话", "⚠ 被实例 research 占用"),
     ] {
         let mut h = wb("default").await;
@@ -292,4 +295,25 @@ async fn todos_are_numbered_open_first_done_last() {
     assert!(lines[0].contains("▶ 3. 实现 provider"), "{p}");
     assert!(lines.last().unwrap().contains("✓ 2. 调研 OAuth 库"), "{p}");
     assert!(!p.contains("☒"), "做完的是 ✓，不是 ☒");
+}
+
+#[tokio::test(start_paused = true)]
+async fn tree_rows_end_with_time_and_tokens_not_status_words() {
+    let mut h = wb("default").await;
+    h.select_session("重构认证模块").await;
+    let tui::Body::Workbench(w) = h.core.frame().body else {
+        panic!("不在工作台")
+    };
+    let lower: String = w
+        .side
+        .unwrap()
+        .lower
+        .rows
+        .iter()
+        .map(|l| l.text() + "\n")
+        .collect();
+    for word in ["运行中", "等你批准", "完成", "失败", "已停止", "空闲"] {
+        assert!(!lower.contains(word), "右下不写状态字：{word}\n{lower}");
+    }
+    assert!(lower.contains("8m00s, "), "{lower}");
 }

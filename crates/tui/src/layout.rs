@@ -94,7 +94,6 @@ pub struct Regions {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChatRegions {
     pub frame: Rect,
-    pub owner: Rect,
     pub transcript: Rect,
     pub status: Option<Rect>,
     /// 归属行下面的面板：goal / todo、流程设计、运行进度、作业。
@@ -182,7 +181,6 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
     let b = inner(frame);
     // 左右各留一列，内容不贴框线。
     let a = Rect::new(b.x + 1.min(b.w), b.y, b.w.saturating_sub(2), b.h);
-    let owner = Rect::new(a.x, a.y, a.w, 1.min(a.h));
     let hints = Rect::new(a.x, a.bottom().saturating_sub(1), a.w, 1.min(a.h));
     let rest_h = a.h.saturating_sub(2);
     let max_inner = (a.h / 3).max(1);
@@ -190,16 +188,17 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
     let box_h = (inner_h + 2).min(rest_h);
     let composer = Rect::new(a.x, hints.y.saturating_sub(box_h), a.w, box_h);
     let mut above = composer.y;
-    let room = |above: u16| above.saturating_sub(a.y + 1);
+    let room = |above: u16| above.saturating_sub(a.y);
     let status = (spec.status && room(above) > 2).then(|| {
         above -= 1;
         Rect::new(a.x, above, a.w, 1)
     });
-    let mut top = a.y + 1;
+    // 框内第一行就是面板（或转录）：实例、项目、场景、模型这些全局信息在顶栏。
+    let mut top = a.y;
     let panel_h = spec.panel_rows.min(a.h / 3);
     let panel = (panel_h >= 1 && room(above) > panel_h + 2).then(|| {
         top += panel_h;
-        Rect::new(a.x, a.y + 1, a.w, panel_h)
+        Rect::new(a.x, a.y, a.w, panel_h)
     });
     let transcript = Rect::new(a.x, top, a.w, above.saturating_sub(top));
     // 输入框照 Claude Code 只有上下两条横线，内容区占满宽度。
@@ -211,7 +210,6 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
     );
     ChatRegions {
         frame,
-        owner,
         transcript,
         status,
         panel,
@@ -303,7 +301,7 @@ mod tests {
         assert_eq!(chat.composer.bottom(), chat.hints.y);
         assert_eq!(chat.status.unwrap().bottom(), chat.composer.y);
         assert_eq!(chat.transcript.bottom(), chat.status.unwrap().y);
-        assert_eq!(chat.transcript.y, chat.owner.bottom());
+        assert_eq!(chat.transcript.y, chat.frame.y + 1, "框内第一行就是转录");
         assert_eq!(
             side.upper_frame.bottom() - 1,
             side.lower_frame.y,
@@ -343,14 +341,14 @@ mod tests {
     }
 
     #[test]
-    fn panel_sits_under_owner_and_is_capped_at_a_third() {
+    fn panel_sits_at_the_top_and_is_capped_at_a_third() {
         let mut s = spec(PaneMode::Single {
             showing: ShowPane::Chat,
         });
         s.panel_rows = 6;
         let chat = compute(Size::new(100, 40), &s, &[]).chat.unwrap();
         let panel = chat.panel.unwrap();
-        assert_eq!(panel.y, chat.owner.bottom());
+        assert_eq!(panel.y, chat.frame.y + 1);
         assert_eq!(panel.h, 6);
         assert_eq!(chat.transcript.y, panel.bottom());
         s.panel_rows = 30;

@@ -462,6 +462,10 @@ async fn run_lower_shows_time_and_tokens_but_no_status_words() {
     for word in ["已通过", "进行中", "待进入", "运行中", "完成"] {
         assert!(!lower.contains(word), "右下不写状态字：{word}\n{lower}");
     }
-    assert!(lower.contains("入 ") && lower.contains(" 出 "), "{lower}");
+    assert!(
+        lower.contains("7m00s, 3.0k/900"),
+        "用时, 输入/输出\n{lower}"
+    );
+    assert!(!lower.contains("入") && !lower.contains("出 "), "{lower}");
     assert!(lower.contains("7m00s"), "{lower}");
 }

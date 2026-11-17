@@ -149,6 +149,27 @@ pub(crate) fn kind_icon(k: &TaskKind) -> (&'static str, Tone) {
     }
 }
 
+/// 右栏行尾的用时与 token：`9m40s, 12.0k/4.5k`（输入 / 输出，缓存不单列）。状态不写字——
+/// 行首的符号与颜色已经说了。没有的项不写。
+pub(crate) fn cost(elapsed_ms: u64, usage: Option<&port::Usage>) -> String {
+    let mut out = vec![];
+    if elapsed_ms > 0 {
+        out.push(crate::sessions::fmt_elapsed(elapsed_ms));
+    }
+    if let Some(u) = usage {
+        if u.input + u.output > 0 {
+            out.push(format!(
+                "{}/{}",
+                crate::chat::fmt_k(u.input),
+                crate::chat::fmt_k(u.output)
+            ));
+        } else if u.total() > 0 {
+            out.push(crate::chat::fmt_k(u.total()));
+        }
+    }
+    out.join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

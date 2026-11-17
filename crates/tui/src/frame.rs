@@ -121,7 +121,6 @@ pub struct ChatPane {
     pub crumbs: Line,
     /// 框上沿右边：这个会话的状态。
     pub badge: Line,
-    pub owner: Line,
     /// 视口内已排好的行，自上而下，条数不超过转录区高度。
     pub transcript: Vec<Line>,
     pub transcript_focused: bool,

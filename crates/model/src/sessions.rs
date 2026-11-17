@@ -185,16 +185,6 @@ pub(crate) fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
     crate::marks::task(t).pair()
 }
 
-pub(crate) fn status_text(t: TaskStatus) -> &'static str {
-    match t {
-        TaskStatus::Running => "运行中",
-        TaskStatus::Waiting => "等你批准",
-        TaskStatus::Done => "完成",
-        TaskStatus::Failed => "失败",
-        TaskStatus::Stopped => "已停止",
-    }
-}
-
 pub(crate) fn origin_icon(o: &Origin) -> &'static str {
     match o {
         Origin::User | Origin::SubAgent { .. } | Origin::Editor { .. } => "",
@@ -380,17 +370,9 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 let (g, tone) = sum
                     .map(|x| state_glyph(x.state))
                     .unwrap_or(("○", Tone::Dim));
-                let state = match sum.map(|x| x.state) {
-                    Some(SessionState::Running) => "运行中",
-                    Some(SessionState::Waiting) => "等你",
-                    _ => "空闲",
-                };
                 split_line(
                     Line::toned(format!("{g} "), tone).push("主 Agent", Tone::Strong),
-                    Line::toned(
-                        format!("{state}  {:>6}", fmt_k(sum.map_or(0, |x| x.usage.total()))),
-                        Tone::Dim,
-                    ),
+                    Line::toned(crate::marks::cost(0, sum.map(|x| &x.usage)), Tone::Dim),
                     width,
                 )
             }
@@ -421,13 +403,6 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     k => k.label().to_string(),
                 };
                 let end = t.ended_ms.unwrap_or(now);
-                let dur = fmt_elapsed(end.saturating_sub(t.started_ms));
-                let tok = if t.usage.total() > 0 {
-                    fmt_k(t.usage.total())
-                } else {
-                    String::new()
-                };
-                let status_tone = crate::marks::task(t.status).text_tone();
                 // 子 Agent 与任务用图标分开：◆ 是子 Agent（选中切到它的会话），其余是任务
                 // （选中看它的输出）。
                 let (icon, itone) = crate::marks::kind_icon(&t.kind);
@@ -437,8 +412,10 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     .push(format!("{icon} "), itone)
                     .push(t.label.clone(), Tone::Normal)
                     .push(format!("  {kind}"), Tone::Dim);
-                let right = Line::toned(status_text(t.status), status_tone)
-                    .push(format!("  {tok:>5}  {dur:>6}"), Tone::Dim);
+                let right = Line::toned(
+                    crate::marks::cost(end.saturating_sub(t.started_ms), Some(&t.usage)),
+                    Tone::Dim,
+                );
                 split_line(left, right, width)
             }
         })

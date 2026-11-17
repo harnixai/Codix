@@ -199,7 +199,6 @@ fn header(f: &mut Frame, r: Rect, h: &Header) {
 fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
     f.render_widget(frame_block(p.focused), rr(c.frame));
     titles(f, c.frame, &p.crumbs, &p.badge, p.focused);
-    lines(f, c.owner, std::slice::from_ref(&p.owner), None);
     lines(f, c.transcript, &p.transcript, None);
     if let Some(below) = &p.below
         && c.transcript.h > 0

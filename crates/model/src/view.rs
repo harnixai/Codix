@@ -115,10 +115,21 @@ pub fn view(s: &State) -> FrameState {
     }
 }
 
+/// 顶栏：`[CODIX] 实例@主机  项目目录  场景  模型`。实例与项目是全局的；场景、模型取当前
+/// 对话区的会话（没有会话时不写）。
 fn header(s: &State) -> Header {
-    let mut left = Line::toned("Codix", Tone::Strong);
+    let mut left = Line::toned("[CODIX]", Tone::Accent);
     if let Some(i) = &s.domain.instance {
-        left = left.push(format!("  实例 {}@{}", i.name, i.host), Tone::Dim);
+        left = left
+            .push(format!(" {}@{}", i.name, i.host), Tone::Strong)
+            .push(
+                format!("  {}", i.project.as_deref().unwrap_or("无项目")),
+                Tone::Normal,
+            );
+    }
+    if let Some(c) = s.conv() {
+        let p = &c.summary.provenance;
+        left = left.push(format!("  {}  {}", p.scene, p.model), Tone::Dim);
     }
     let right = match s.domain.conn {
         Some(ConnState::Connected) | Some(ConnState::Resynced) => Line::toned("● 已连接", Tone::Ok),
@@ -144,7 +155,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
             .as_ref()
             .and_then(|t| conv.and_then(|c| c.tasks.iter().find(|x| &x.id == t)))
             .map(|t| t.label.clone());
-    let (crumbs, badge, owner) = match conv {
+    let (crumbs, badge) = match conv {
         Some(c) => (
             {
                 if task_label.is_none() || s.ui.ctx_parents.is_empty() {
@@ -156,29 +167,9 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
                 trail.dedup();
                 format!("{} › {}", crumb_root(s, c), trail.join(" › "))
             },
-            match c.summary.state {
-                port::SessionState::Running => "● 运行中",
-                port::SessionState::Waiting => "◐ 等你",
-                port::SessionState::Idle => "○ 空闲",
-            },
-            owner_line(&c.summary),
+            badge_text(&c.summary),
         ),
-        None => (
-            "会话 › 新会话（输入即开始）".to_string(),
-            "",
-            s.domain
-                .instance
-                .as_ref()
-                .map(|i| {
-                    format!(
-                        "{}@{} · {}",
-                        i.name,
-                        i.host,
-                        i.project.as_deref().unwrap_or("无项目")
-                    )
-                })
-                .unwrap_or_default(),
-        ),
+        None => ("会话 › 新会话（输入即开始）".to_string(), String::new()),
     };
     let h = r.transcript.h as usize;
     let mut below = None;
@@ -281,7 +272,6 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         focused,
         crumbs: Line::plain(crumbs),
         badge: Line::plain(badge),
-        owner: Line::toned(truncate_to_width(&owner, width), Tone::Dim),
         transcript,
         transcript_focused: s.ui.focus == Focus::Transcript,
         below,
@@ -336,39 +326,39 @@ fn crumb_root(s: &State, c: &crate::chat::Conversation) -> &'static str {
     }
 }
 
-fn owner_line(sum: &port::SessionSummary) -> String {
-    let p = &sum.provenance;
-    let origin = match &p.origin {
-        port::Origin::User => "用户新建".to_string(),
-        port::Origin::Job { name, .. } => format!("作业「{name}」"),
+/// 对话框标题右边：会话从哪来（人新建的不写）、被谁占着、现在的状态。全局的实例、项目、
+/// 场景、模型在顶栏。
+fn badge_text(sum: &port::SessionSummary) -> String {
+    let origin = match &sum.provenance.origin {
+        port::Origin::User => None,
+        port::Origin::Job { name, .. } => Some(format!("作业「{name}」")),
         port::Origin::FlowStation {
             flow_title,
             subject,
             station_title,
             ..
-        } => format!("流程「{flow_title}」› {subject} › {station_title}"),
-        port::Origin::SubAgent { parent_title, .. } => format!("子 Agent ← {parent_title}"),
-        port::Origin::Fork { from_title, .. } => format!("分叉自 {from_title}"),
-        port::Origin::Editor { of, name } => match (of, name.is_empty()) {
+        } => Some(format!("流程「{flow_title}」› {subject} › {station_title}")),
+        port::Origin::SubAgent { parent_title, .. } => Some(format!("子 Agent ← {parent_title}")),
+        port::Origin::Fork { from_title, .. } => Some(format!("⑂ 分叉自 {from_title}")),
+        port::Origin::Editor { of, name } => Some(match (of, name.is_empty()) {
             (port::EditorOf::Flow, false) => format!("流程「{name}」的编写会话"),
             (port::EditorOf::Flow, true) => "新流程的编写会话".into(),
             (port::EditorOf::Job, false) => format!("作业「{name}」的编辑会话"),
             (port::EditorOf::Job, true) => "新作业的编辑会话".into(),
-        },
+        }),
     };
-    let mut s = format!(
-        "{}@{} · {} · {} · {} · {}",
-        p.instance,
-        p.host,
-        p.project.as_deref().unwrap_or("无项目"),
-        p.scene,
-        p.model,
-        origin
-    );
-    if let Some(h) = &sum.held_by {
-        s.push_str(&format!(" · ⚠ 被实例 {h} 占用"));
-    }
-    s
+    let held = sum.held_by.as_ref().map(|h| format!("⚠ 被实例 {h} 占用"));
+    let state = match sum.state {
+        port::SessionState::Running => "● 运行中",
+        port::SessionState::Waiting => "◐ 等你",
+        port::SessionState::Idle => "○ 空闲",
+    };
+    origin
+        .into_iter()
+        .chain(held)
+        .chain(std::iter::once(state.to_string()))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 fn status_line(s: &State, c: &crate::chat::Conversation, width: usize) -> Option<Line> {

@@ -1,12 +1,11 @@
- Codix  实例 dev@ops-01                                                                                                                                ● 已连接
-╭─ 流程 › 编写流程：需求到上线 ─────────────────────────────────────────────────────── ○ 空闲 ─╮╭─ 会话 ◐ ─ 流程 ◐ ─ 作业 ◐ ───────────────────────────────────╮
-│ dev@ops-01 · ~/work/auth · flow-author · claude-sonnet-5-5 · 流程「需求到上线」的编写会话    ││›▾ ◎ 需求到上线         feature-to-ship  全局 · 内置  2 个在跑│
-│ ─ 流程设计：需求到上线 · feature-to-ship · 全局 · 内置 · 7 站 · 2 个在跑 ───── Ctrl+T 收起 ─ ││     ● 支付重试  运行中              站 3/7 实现  1h20m  61.0k│
-│ 收集需求 → 设计 → 实现 → 代码评审 ∥ 文档评审 → 评审汇总 → 上线                               ││     ◐ 导出 CSV  等待：待确认…  站 6/7 评审汇总  25h00m  28.8k│
-│  1. 收集需求  session     skill gather-requirements  出口 output                             ││     ✓ 登录限流  已完成                  7/7 站  22h13m  86.0k│
-│  2. 设计      session     skill write-design  出口 output、confirm                           ││ ▸   周报                                weekly-report  项目  │
-│  3. 实现      agent × 2   skill implement  出口 output、gate: ci                             ││ ▸ ◎ 发布检查                            release-check  全局  │
-│  4. 代码评审  agent       skill review-code  出口 output                                     ││                                                              │
+ [CODIX] dev@ops-01  ~/work/auth  flow-author  claude-sonnet-5-5                                                                                       ● 已连接
+╭─ 流程 › 编写流程：需求到上线 ──────────────────────── 流程「需求到上线」的编写会话 · ○ 空闲 ─╮╭─ 会话 ◐ ─ 流程 ◐ ─ 作业 ◐ ───────────────────────────────────╮
+│ ─ 流程设计：需求到上线 · feature-to-ship · 全局 · 内置 · 7 站 · 2 个在跑 ───── Ctrl+T 收起 ─ ││›▾ ◎ 需求到上线         feature-to-ship  全局 · 内置  2 个在跑│
+│ 收集需求 → 设计 → 实现 → 代码评审 ∥ 文档评审 → 评审汇总 → 上线                               ││     ● 支付重试  运行中              站 3/7 实现  1h20m  61.0k│
+│  1. 收集需求  session     skill gather-requirements  出口 output                             ││     ◐ 导出 CSV  等待：待确认…  站 6/7 评审汇总  25h00m  28.8k│
+│  2. 设计      session     skill write-design  出口 output、confirm                           ││     ✓ 登录限流  已完成                  7/7 站  22h13m  86.0k│
+│  3. 实现      agent × 2   skill implement  出口 output、gate: ci                             ││ ▸   周报                                weekly-report  项目  │
+│  4. 代码评审  agent       skill review-code  出口 output                                     ││ ▸ ◎ 发布检查                            release-check  全局  │
 │  4. 文档评审  agent       skill review-docs  出口 output                                     ││                                                              │
 │  5. 评审汇总  confirm     出口 confirm  ← 等 代码评审、文档评审                              ││                                                              │
 │  6. 上线      gate: ci    出口 gate: ci                                                      ││                                                              │
@@ -20,8 +19,9 @@
 │ │ 场景 flow-author · 模型 claude-sonnet-5-5                │                                 ││                                                              │
 │ │                                                          │                                 ││                                                              │
 │ │ /help 帮助 · / 命令 · @ 提及文件 · ! 执行命令            │                                 ││                                                              │
-│ │ F2 会话 · F3 流程 · F4 作业 · Ctrl+B 切栏                │                                 │├─ 需求到上线 的各站 ──────────────────────────────────────────┤
-│ ╰──────────────────────────────────────────────────────────╯                                 ││› 1. 收集需求  session                                        │
+│ │ F2 会话 · F3 流程 · F4 作业 · Ctrl+B 切栏                │                                 ││                                                              │
+│ ╰──────────────────────────────────────────────────────────╯                                 │├─ 需求到上线 的各站 ──────────────────────────────────────────┤
+│                                                                                              ││› 1. 收集需求  session                                        │
 │                                                                                              ││  2. 设计  session                                            │
 │                                                                                              ││  3. 实现  agent × 2                                          │
 │                                                                                              ││  4. 代码评审  agent                                          │
