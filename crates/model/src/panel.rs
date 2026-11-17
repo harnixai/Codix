@@ -87,111 +87,42 @@ impl State {
     }
 
     /// 面板的标题线左边：它是什么，加一句摘要（收起时也看得到）。
-    fn panel_title(&self, kind: &PanelKind, conv: Option<&Conversation>) -> Line {
-        match kind {
+    /// 面板的标题：只是它是什么（状态在别处都有，这里不重复）。
+    fn panel_title(&self, kind: &PanelKind) -> Line {
+        let text = match kind {
             PanelKind::Flow(name) => {
                 let d = self.domain.flow_details.get(name);
-                let f = self.domain.flows.iter().find(|f| &f.name == name);
                 let title = d
                     .map(|d| d.summary.title.clone())
-                    .or_else(|| f.map(|f| f.title.clone()))
+                    .or_else(|| {
+                        self.domain
+                            .flows
+                            .iter()
+                            .find(|f| &f.name == name)
+                            .map(|f| f.title.clone())
+                    })
                     .unwrap_or_else(|| name.clone());
-                let mut l = Line::toned(i18n::t!("panel.flow_title", title = title), Tone::Strong);
+                let mut t = i18n::t!("panel.flow_title", title = title);
                 if let (Some(d), Some(i)) = (d, self.station_in_view(name)) {
-                    return l
-                        .push(
-                            i18n::t!(
-                                "panel.flow_in_station",
-                                n = i + 1,
-                                title = d.stations[i].title
-                            ),
-                            Tone::Strong,
-                        )
-                        .push(i18n::t!("panel.flow_back"), Tone::Dim);
+                    t.push_str(&i18n::t!(
+                        "panel.flow_in_station",
+                        n = i + 1,
+                        title = d.stations[i].title
+                    ));
                 }
-                if let Some(d) = d {
-                    let origin = crate::marks::origin_label(d.summary.origin);
-                    l = l.push(
-                        i18n::t!(
-                            "panel.flow_meta",
-                            name = d.summary.name,
-                            origin = origin,
-                            stations = d.stations.len(),
-                            active = d.summary.active_runs
-                        ),
-                        Tone::Dim,
-                    );
-                }
-                l
+                t
             }
             PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
-                Some(j) => Line::toned(i18n::t!("panel.job_title", name = j.name), Tone::Strong)
-                    .push(
-                        format!(
-                            " · {}",
-                            if j.enabled {
-                                i18n::t!("panel.job_on")
-                            } else {
-                                i18n::t!("panel.job_off")
-                            }
-                        ),
-                        Tone::Dim,
-                    ),
-                None => Line::toned(i18n::t!("panel.job_new"), Tone::Strong),
+                Some(j) => i18n::t!("panel.job_title", name = j.name),
+                None => i18n::t!("panel.job_new"),
             },
             PanelKind::Run(run) => match self.domain.run_views.get(run) {
-                Some(v) => {
-                    let (g, text, tone) = crate::flows::run_status(&v.summary.status);
-                    let flow = self
-                        .domain
-                        .flows
-                        .iter()
-                        .find(|f| f.name == v.summary.flow)
-                        .map(|f| f.title.clone())
-                        .unwrap_or_else(|| v.summary.flow.clone());
-                    Line::toned(
-                        i18n::t!("panel.run_title", subject = v.summary.subject),
-                        Tone::Strong,
-                    )
-                    .push(i18n::t!("panel.run_flow", flow = flow), Tone::Dim)
-                    .push(format!("{g} {text}"), tone)
-                    .push(
-                        format!(" · {}", crate::flows::progress(&v.summary)),
-                        Tone::Dim,
-                    )
-                }
-                None => Line::toned(i18n::t!("panel.run"), Tone::Strong),
+                Some(v) => i18n::t!("panel.run_title", subject = v.summary.subject),
+                None => i18n::t!("panel.run"),
             },
-            PanelKind::Goal => {
-                let mut l = Line::toned(i18n::t!("panel.goal_todo"), Tone::Strong);
-                if let Some(c) = conv {
-                    if let Some(g) = &c.goal {
-                        let m = goal_mark(g.phase);
-                        let word = match g.phase {
-                            GoalPhase::Active => i18n::t!("panel.phase.active"),
-                            GoalPhase::Paused => i18n::t!("panel.phase.paused"),
-                            GoalPhase::Blocked => i18n::t!("panel.phase.blocked"),
-                            GoalPhase::Complete => i18n::t!("panel.phase.complete"),
-                        };
-                        l = l
-                            .push(i18n::t!("panel.goal_tag"), Tone::Dim)
-                            .push(format!("{} {word}", m.glyph()), m.tone());
-                    }
-                    if !c.todos.is_empty() {
-                        let done = c
-                            .todos
-                            .iter()
-                            .filter(|t| t.status == port::TodoStatus::Done)
-                            .count();
-                        l = l.push(
-                            i18n::t!("panel.todo_count", done = done, total = c.todos.len()),
-                            Tone::Dim,
-                        );
-                    }
-                }
-                l
-            }
-        }
+            PanelKind::Goal => i18n::t!("panel.goal_todo"),
+        };
+        Line::toned(text, Tone::Strong)
     }
 
     /// 面板的内容（不含标题线与下沿）；收起时为空。
@@ -296,28 +227,21 @@ impl State {
     /// 排进 `height` 行的面板：标题线（右边是 Ctrl+T）、看得见的那段内容、下沿（放不下时
     /// 右边标出上下各还有几行）。
     pub(crate) fn panel_lines(&self, width: usize, height: usize) -> Vec<Line> {
-        let Some((id, kind)) = self.panel_here() else {
+        let Some((_, kind)) = self.panel_here() else {
             return vec![];
         };
         if height == 0 {
             return vec![];
         }
         let open = self.panel_open();
-        let title = self.panel_title(&kind, self.domain.convs.get(&id));
+        let title = self.panel_title(&kind);
         let focused = self.ui.focus == crate::state::Focus::Panel;
-        let mut out = vec![rule(
-            Some(title),
-            &if open {
-                i18n::t!("panel.collapse")
-            } else {
-                i18n::t!("panel.expand")
-            },
-            width,
-            focused,
-        )];
+        // 标题靠右；收放的快捷键在下沿右边，收起时只剩一条线，就放在这条线的左边。
         if !open || height < 3 {
-            return out;
+            let hint = Line::toned(i18n::t!("panel.expand").trim().to_string(), Tone::Dim);
+            return vec![rule(Some(hint), Some(title), width, focused)];
         }
+        let mut out = vec![rule(None, Some(title), width, focused)];
         let room = height - 2;
         let content = self.panel_content(width);
         let off = self.panel_offset().min(content.len().saturating_sub(room));
@@ -329,12 +253,16 @@ impl State {
             }
         }));
         let below = content.len().saturating_sub(off + room);
-        let more = if off > 0 || below > 0 {
-            format!(" ↑{off} ↓{below} · Shift+↑↓ ")
-        } else {
-            String::new()
-        };
-        out.push(rule(None, &more, width, focused));
+        let mut hint = i18n::t!("panel.collapse").trim().to_string();
+        if off > 0 || below > 0 {
+            hint = format!("↑{off} ↓{below} · Shift+↑↓ · {hint}");
+        }
+        out.push(rule(
+            None,
+            Some(Line::toned(hint, Tone::Dim)),
+            width,
+            focused,
+        ));
         out
     }
 }
@@ -342,39 +270,38 @@ impl State {
 /// 面板内容最多几行；再多就滚动。
 const PANEL_MAX: usize = 10;
 
-/// `─ 标题 ─────── 右边 ─`：标题太长先截标题，右边的快捷键总在。面板有焦点时线是亮的。
-fn rule(title: Option<Line>, right: &str, width: usize, focused: bool) -> Line {
+/// `─ 左边 ─────── 右边 ─`：两头各自可空；放不下先截左边，右边总在。面板有焦点时线是亮的。
+fn rule(left: Option<Line>, right: Option<Line>, width: usize, focused: bool) -> Line {
     let line_tone = if focused { Tone::Strong } else { Tone::Dim };
-    let rw = display_width(right);
-    let mut l = Line::default();
-    let mut used = 0;
-    if let Some(t) = title {
-        l = l.push("─ ", line_tone);
-        used = 2;
-        let room = width.saturating_sub(used + rw + 4);
-        let t = if t.width() > room {
-            Line::toned(truncate_to_width(&t.text(), room), Tone::Strong)
+    let fit = |t: Line, room: usize| {
+        if t.width() > room {
+            let tone = t.spans.first().map_or(Tone::Normal, |s| s.tone);
+            Line::toned(truncate_to_width(&t.text(), room), tone)
         } else {
             t
-        };
-        used += t.width() + 1;
+        }
+    };
+    let right = right.map(|r| fit(r, width.saturating_sub(4)));
+    let rw = right.as_ref().map_or(0, |r| r.width() + 2);
+    let left = left.map(|l| fit(l, width.saturating_sub(rw + 6)));
+    let lw = left.as_ref().map_or(0, |l| l.width() + 3);
+    let mut l = Line::default();
+    if let Some(t) = left {
+        l = l.push("─ ", line_tone);
         for sp in t.spans {
             l = l.push(sp.text, sp.tone);
         }
         l = l.push(" ", line_tone);
     }
-    l.push("─".repeat(width.saturating_sub(used + rw + 1)), line_tone)
-        .push(right, Tone::Dim)
-        .push("─", line_tone)
-}
-
-fn goal_mark(p: GoalPhase) -> marks::Mark {
-    match p {
-        GoalPhase::Active => marks::Mark::Active,
-        GoalPhase::Paused => marks::Mark::Paused,
-        GoalPhase::Blocked => marks::Mark::Waiting,
-        GoalPhase::Complete => marks::Mark::Done,
+    l = l.push("─".repeat(width.saturating_sub(lw + rw + 1)), line_tone);
+    if let Some(t) = right {
+        l = l.push(" ", line_tone);
+        for sp in t.spans {
+            l = l.push(sp.text, sp.tone);
+        }
+        l = l.push(" ", line_tone);
     }
+    l.push("─", line_tone)
 }
 
 fn goal_lines(c: &Conversation, width: usize) -> Vec<Line> {

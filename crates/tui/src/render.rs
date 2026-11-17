@@ -67,18 +67,6 @@ fn style(t: Tone) -> Style {
     }
 }
 
-fn bar(focused: bool) -> Style {
-    let th = th();
-    if focused {
-        Style::default()
-            .bg(th.accent)
-            .fg(th.accent_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().bg(th.bar_bg).fg(th.bar_fg)
-    }
-}
-
 fn border_style(focused: bool) -> Style {
     let th = th();
     Style::default().fg(if focused { th.border_focus } else { th.border })
@@ -393,9 +381,12 @@ fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style(true))
+        // 标题不带底色，和各个框的标题一样：主色加粗的字。
         .title(RLine::from(RSpan::styled(
             format!(" {} ", o.title),
-            bar(true),
+            Style::default()
+                .fg(th().accent)
+                .add_modifier(Modifier::BOLD),
         )));
     f.render_widget(block, rr(r));
     let inner = Rect::new(

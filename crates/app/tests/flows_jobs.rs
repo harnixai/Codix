@@ -56,18 +56,20 @@ async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
     }
     assert!(h.text().contains("需求到上线 的各站"), "下半是定义的各站");
     assert!(
-        h.text()
-            .contains("─ 流程设计：需求到上线 · feature-to-ship"),
+        h.text().contains("─ 流程设计：需求到上线 ─ │"),
         "面板的标题线"
     );
-    assert!(h.text().contains("Ctrl+T 收起"));
+    assert!(
+        h.text().contains("─ Ctrl+T 收起 ─"),
+        "收放的快捷键在下沿右边"
+    );
     assert!(!h.transcript().contains("流程设计"), "不在转录里");
     h.snapshot("flow-authoring");
     h.keys("Ctrl+T").await;
     assert!(h.panel().is_empty(), "Ctrl+T 收起");
     let text = h.text();
     assert!(
-        text.contains("─ 流程设计：需求到上线") && text.contains("Ctrl+T 展开"),
+        text.contains("─ Ctrl+T 展开 ─") && text.contains("─ 流程设计：需求到上线 ─ │"),
         "收起后标题线还在\n{text}"
     );
     h.keys("Ctrl+T").await;
@@ -230,7 +232,7 @@ async fn jobs_list_details_history_and_follow() {
     assert!(h.chat_title().starts_with("作业："), "{}", h.chat_title());
     let t = h.panel();
     assert!(
-        h.text().contains("─ 作业：每日巡检 · 启用") && t.contains("执行 3 次 · 成功 2 · 失败 1"),
+        h.text().contains("─ 作业：每日巡检 ─ │") && t.contains("执行 3 次 · 成功 2 · 失败 1"),
         "作业面板\n{t}"
     );
     let text = h.text();
@@ -310,9 +312,7 @@ async fn run_stations_are_flat_colored_and_switch_to_their_context() {
     h.pick_upper(run_index(&h, "r1")).await;
     let p = h.panel();
     assert!(
-        h.text()
-            .contains("─ 运行：支付重试（需求到上线） · ● 运行中 · 站 3/7 实现")
-            && p.contains("✓ 收集需求 → ✓ 设计 → ● 实现"),
+        h.text().contains("─ 运行：支付重试 ─ │") && p.contains("✓ 收集需求 → ✓ 设计 → ● 实现"),
         "运行里的会话，面板是运行进度\n{p}"
     );
     let text = h.text();
@@ -358,7 +358,7 @@ async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
     );
     let text = h.text();
     assert!(
-        text.contains("─ 流程设计：需求到上线 › 第 3 站 实现"),
+        text.contains("─ 流程设计：需求到上线 › 第 3 站 实现 ─ │"),
         "{text}"
     );
     let p = h.panel();
@@ -397,8 +397,7 @@ async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
     h.keys("F3").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     assert!(
-        h.text()
-            .contains("─ 流程设计：需求到上线 · feature-to-ship"),
+        h.text().contains("─ 流程设计：需求到上线 ─ │"),
         "回到上半看整个流程"
     );
 }
