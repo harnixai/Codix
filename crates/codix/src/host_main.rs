@@ -91,6 +91,13 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
 
     let mut opts = ServeOptions::new(stop_rx);
     opts.idle_timeout_ms = settings.idle_timeout_ms;
+    // 只给 LIVE 测试用：不缩短的话，测心跳超时断开就得干等 35 秒。不进 codix.yaml，用户不该调它。
+    if let Some(ms) = std::env::var("CODIX_TEST_HEARTBEAT_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        opts.heartbeat_timeout = std::time::Duration::from_millis(ms);
+    }
     let disc_layout = layout.clone();
     let disc_name = name.clone();
     let end = host::server::serve(listener, Arc::new(hub.clone()), opts, move |holder| {

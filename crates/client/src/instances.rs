@@ -33,6 +33,7 @@ pub struct SocketInstances {
     layout: Layout,
     exe: PathBuf,
     idle_timeout_ms: Option<u64>,
+    env: Vec<(String, String)>,
 }
 
 impl SocketInstances {
@@ -42,7 +43,15 @@ impl SocketInstances {
             layout,
             exe: exe.into(),
             idle_timeout_ms: None,
+            env: vec![],
         }
+    }
+
+    /// 拉起的实例进程额外带的环境变量。LIVE 测试用它把凭据只交给实例，而不改测试进程
+    /// 自己的环境（Rust 2024 里改进程环境是 unsafe，workspace 禁了 unsafe）。
+    pub fn with_env(mut self, env: impl IntoIterator<Item = (String, String)>) -> SocketInstances {
+        self.env.extend(env);
+        self
     }
 
     /// TUI 这一侧的空闲超时（配置或 `--idle-timeout`）随 `Hello` 带给实例，实例的兜底断开按它算。
@@ -116,6 +125,7 @@ impl SocketInstances {
             // cargo run / cargo test 设的加载器回退路径里有 target/debug/deps：macOS 的 dyld 照着它
             // 逐个目录找系统库，一次 exec 要十几秒。实例也不该带着开发时的加载路径常驻。
             .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(failed)?)
             .stderr(log)

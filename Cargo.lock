@@ -605,6 +605,7 @@ dependencies = [
  "mock",
  "model 0.1.0",
  "port",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
