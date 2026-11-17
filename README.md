@@ -9,8 +9,18 @@ git clone --recurse-submodules <repo>
 git -C agix checkout main
 ```
 
-阶段 2 的界面接的是 mock 后端，直接运行就是演示：
+在项目目录里运行 `codix`，就接入这个项目的实例；实例没在跑就先拉起它（`codix host`，常驻后台，
+引擎 Agix 嵌在里面）。退出时选"后台运行"，实例继续跑，下次运行 `codix` 接回。模型与凭据沿用
+Agix 的配置：`~/.codix/settings.json`，或环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+`ANTHROPIC_BASE_URL`。
 
 ```sh
-cargo run -p app          # 演示 demo：会话、任务树、goal、流程运行、作业都在里面，约一分钟内自己动起来
+cargo build -p codix
+cd ~/my-project && /path/to/codix   # 接入（或新建）这个项目的实例
+codix list --all                    # 本机的实例
+codix attach <名字> --force         # 接入别处正接着的实例，踢掉对方
+codix stop <名字>
+codix --mock                        # mock 演示 demo：不起实例、不调模型
 ```
+
+流程还没接入（等 Harnix 拆出流程内核），流程标签会说明这一点。

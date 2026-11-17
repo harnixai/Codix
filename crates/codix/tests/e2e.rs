@@ -54,6 +54,18 @@ async fn until(core: &mut Core, want: impl Fn(&str) -> bool, what: &str) -> Stri
     }
 }
 
+/// 用例中途失败也要停掉实例：否则留下一个常驻的 `codix host` 进程。
+struct StopOnDrop(std::path::PathBuf);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new(env!("CARGO_BIN_EXE_codix"))
+            .args(["stop", "e2e"])
+            .env("CODIX_HOME", &self.0)
+            .output();
+    }
+}
+
 fn keys(core: &mut Core, seq: &str) {
     for k in seq.split_whitespace() {
         core.key(keys::Key::parse(k).unwrap());
@@ -74,6 +86,7 @@ async fn create_attach_talk_kick_and_stop_a_real_instance() {
         .tempdir_in("/tmp")
         .unwrap();
 
+    let _guard = StopOnDrop(home.path().to_path_buf());
     let project = tempfile::tempdir().unwrap();
     let project_path = project.path().canonicalize().unwrap();
     // 刚链接出的二进制第一次执行要被 macOS 扫描，先跑一次，免得算进实例的启动时间。

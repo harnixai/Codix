@@ -5,8 +5,9 @@
 ssh 到 Linux、Linux 物理控制台或尺寸固定的终端。
 
 ```sh
-cargo build -p app
-./target/debug/codix                        # 演示 demo；测试场景用 --mock m03-tools 等
+cargo build -p codix
+./target/debug/codix --mock                 # 演示 demo；测试场景用 --mock m03-tools 等
+./target/debug/codix                        # 真实实例：在一个项目目录里运行
 ```
 
 ## 1. 启动与终端
@@ -21,6 +22,19 @@ cargo build -p app
 
 - [ ] 实例选择是屏幕中间的小框，新建在第一行，上下键滚动，鼠标单击选中、双击接入
 - [ ] 接入被占用的实例要二次确认；`codix --mock default list --all` 列出四种状态
+
+真实实例（第一次执行新编出的二进制，macOS 要先扫描，可能卡十来秒）：
+
+- [ ] 在项目目录里运行 `codix`：没有实例就新建（名字取目录名）并接入；退出选"后台运行"后 `codix list`
+      还在、接入者一栏空了；再运行 `codix` 直接接回，之前的会话都在
+- [ ] `codix stop <名字>` 之后再在这个目录运行 `codix`，拉起的是原来那个实例，不是 `<名字>-2`
+- [ ] 另开一个终端运行 `codix`：提示被占用；选强制接入后，前一个终端显示"被踢"，按任意键可再接回
+- [ ] 关掉接着实例的终端窗口（不是退出 TUI）：实例还在，`codix` 能接回
+- [ ] 没有凭据时说一句话：转录里显示 `no_credentials` 的错误，界面不卡
+- [ ] 有凭据时：流式回答、工具块、权限询问（允许 / 本会话允许 / 拒绝）、AskUserQuestion 的选项、
+      子 Agent 出现在会话树、TodoWrite 进 Goal & Todo、`/goal`、`/btw`、`/model`
+- [ ] 作业标签 `n`：打开"新作业"的编辑会话；让它建一个每分钟跑一次的作业，作业出现在列表里；
+      `R` 立即运行、`空格` 停用、触发记录里有结局和用量
 
 ## 3. 对话区（对照 Claude Code）
 
