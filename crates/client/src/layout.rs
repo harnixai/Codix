@@ -93,3 +93,17 @@ impl Layout {
         self.instance(name).join("meta.json")
     }
 }
+
+/// 先写同目录的临时文件再改名：读的一方（另一个进程的 `list`）不会读到写了一半的 JSON。
+pub fn write_json_atomic(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// 文件不在或解析不了都当没有：发现文件随时可能被实例进程删掉。
+pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
