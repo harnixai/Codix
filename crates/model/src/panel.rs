@@ -640,18 +640,16 @@ fn station_yaml(yaml: &str, id: &str) -> Vec<String> {
     out
 }
 
-/// 字段名一列的宽度：按最长的那个名字，再空两格。
+/// 字段名一列的宽度：按最长的那个名字。
 fn label_width(labels: &[&str]) -> usize {
-    labels.iter().map(|k| display_width(k)).max().unwrap_or(0) + 2
+    labels.iter().map(|k| display_width(k)).max().unwrap_or(0)
 }
 
-/// 字段名右对齐到中线、后面空两格，值从同一列起：`  skill  implement` / `前一站  设计`。
-/// 按显示宽度算（中文字占两列，`format!("{:>n}")` 按字符数补会错位）。
+/// 字段名右对齐、后面跟 `: `，值从同一列起：` skill: implement` / `前一站: 设计`。名字为空
+/// （多行值的续行）时只补空格。按显示宽度算（中文字占两列，`format!("{:>n}")` 按字符数补会错位）。
 fn pad(k: &str, w: usize) -> String {
-    format!(
-        "{}{k}  ",
-        " ".repeat(w.saturating_sub(2 + display_width(k)))
-    )
+    let sep = if k.is_empty() { "  " } else { ": " };
+    format!("{}{k}{sep}", " ".repeat(w.saturating_sub(display_width(k))))
 }
 
 /// `11-16 09:00`（UTC）。
