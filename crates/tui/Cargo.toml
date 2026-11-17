@@ -11,5 +11,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+i18n.workspace = true
 ratatui = { workspace = true, features = ["std", "layout-cache", "underline-color"] }
 unicode-width.workspace = true

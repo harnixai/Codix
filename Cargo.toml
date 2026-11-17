@@ -17,6 +17,7 @@ tui   = { path = "crates/tui" }
 keys  = { path = "crates/keys" }
 model = { path = "crates/model" }
 mock  = { path = "crates/mock" }
+i18n  = { path = "crates/i18n" }
 
 # 与 Harnix flow 用同一个 YAML 库：flow 拷进 3rds 后不多出第二个。
 serde_yaml  = "0.9"

@@ -14,6 +14,9 @@ pub const DEFAULT_YAML: &str = r##"# Codix 的配置。删掉这个文件，下�
 # 模型、provider、权限这些沿用 Agix 的 settings.json（同一目录），这里只放 Codix 自己的。
 
 ui:
+  # 界面语言：zh、en，或 auto（照 LANG 环境变量）。也可以用 CODIX_LANG 临时指定。
+  # 自己的语言资源放在 ~/.codix/locales/<语言>/*.yaml，格式照 zh 的写（见 crates/i18n/locales）。
+  language: zh
   # 启动时请求终端调整到这个尺寸（列x行）；终端不响应就按实际尺寸。写 off 不请求。
   initial_size: 160x45
   # 宽屏时左栏（对话区）占的百分比，40–75。
@@ -48,6 +51,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
+    pub language: String,
     pub initial_size: String,
     pub ratio: u16,
     pub compact_tool_lines: usize,
@@ -58,6 +62,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         UiConfig {
+            language: "zh".into(),
             initial_size: "160x45".into(),
             ratio: 60,
             compact_tool_lines: 3,
@@ -162,6 +167,22 @@ pub fn parse_duration_ms(s: &str) -> Option<u64> {
         _ => return None,
     };
     Some(n * per)
+}
+
+/// 界面语言：`CODIX_LANG` 优先，其次配置的 `ui.language`；`auto` 照 `LC_ALL` / `LC_MESSAGES` /
+/// `LANG`，都没有就用中文。
+pub fn language(cfg: &Config) -> String {
+    let want = std::env::var("CODIX_LANG").unwrap_or_else(|_| cfg.ui.language.clone());
+    if want.trim() != "auto" {
+        return i18n::normalize(want.trim());
+    }
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .find(|v| !v.is_empty())
+        .map(|v| i18n::normalize(&v))
+        .filter(|l| l != "c" && l != "posix")
+        .unwrap_or_else(|| i18n::REFERENCE.to_string())
 }
 
 pub fn home() -> PathBuf {

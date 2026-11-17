@@ -124,6 +124,10 @@ async fn main() -> Result<()> {
         }
     };
     let (cfg, mut problems) = config::load();
+    problems.extend(i18n::init(
+        &config::language(&cfg),
+        Some(&config::home().join("locales")),
+    ));
     let (mut settings, more) = cfg.settings();
     problems.extend(more);
     if let Some(idle) = idle_override {

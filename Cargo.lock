@@ -87,6 +87,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures",
+ "i18n",
  "keys",
  "mock",
  "model",
@@ -733,6 +734,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "i18n"
+version = "0.1.0"
+dependencies = [
+ "serde_yaml",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -818,6 +826,7 @@ name = "keys"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "i18n",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -968,6 +977,7 @@ dependencies = [
 name = "model"
 version = "0.1.0"
 dependencies = [
+ "i18n",
  "keys",
  "port",
  "serde_json",
@@ -1886,6 +1896,7 @@ dependencies = [
 name = "tui"
 version = "0.1.0"
 dependencies = [
+ "i18n",
  "ratatui",
  "unicode-width",
 ]

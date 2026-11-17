@@ -123,7 +123,12 @@ fn header(s: &State) -> Header {
         left = left
             .push(format!(" {}@{}", i.name, i.host), Tone::Strong)
             .push(
-                format!("  {}", i.project.as_deref().unwrap_or("无项目")),
+                format!(
+                    "  {}",
+                    i.project
+                        .clone()
+                        .unwrap_or_else(|| i18n::t!("common.no_project"))
+                ),
                 Tone::Normal,
             );
     }

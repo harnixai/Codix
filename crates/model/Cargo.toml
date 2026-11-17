@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+i18n.workspace = true
 port.workspace = true
 tui.workspace = true
 keys.workspace = true
