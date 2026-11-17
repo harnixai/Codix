@@ -226,7 +226,7 @@ async fn the_one_demo_plays_through_every_tab() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn editor_sessions_never_leak_into_the_sessions_list() {
+async fn flows_and_jobs_have_no_sessions_of_their_own() {
     let mut h = Harness::new("default", SIZE).await;
     h.keys("F3").await;
     h.pick_upper(0).await;
@@ -234,9 +234,22 @@ async fn editor_sessions_never_leak_into_the_sessions_list() {
     h.pick_upper(0).await;
     h.keys("n").await;
     h.settle().await;
+    assert_eq!(h.core.state.ui.composer.text, "新建一个作业：");
+    assert!(
+        h.core.state.ui.chat.is_none() || h.core.state.chat_is_user_session(),
+        "话头放在用户会话（或草稿）里"
+    );
+    assert!(
+        !h.calls("dev").iter().any(|c| matches!(
+            c,
+            port::Command::OpenAuthoring { .. }
+                | port::Command::OpenJobSession { .. }
+                | port::Command::CreateSession { .. }
+        )),
+        "不开编写 / 编辑会话，也不预先建会话"
+    );
     h.keys("F2").await;
-    let rows = h.core.state.session_rows();
-    for r in &rows {
+    for r in h.core.state.session_rows() {
         if let Some(id) = r.session() {
             let x = h
                 .core
@@ -247,19 +260,12 @@ async fn editor_sessions_never_leak_into_the_sessions_list() {
                 .find(|x| &x.id == id)
                 .unwrap();
             assert!(
-                matches!(
-                    x.provenance.origin,
-                    port::Origin::User | port::Origin::Fork { .. }
-                ),
+                port::order::is_user_session(x),
                 "{} 不该在会话列表里",
                 x.title
             );
         }
     }
-    assert!(
-        h.text().contains("╭─ 作业 › 新作业"),
-        "作业的编辑会话，面包屑从「作业」起"
-    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -18,8 +18,8 @@ ui:
     # 预设：claude（橙）或 aqua（水蓝）。
     preset: claude
     # 在预设基础上改个别颜色：#RRGGBB、颜色名（red、gray……）或 0–255 的终端色号。
-    # 可改的有：accent accent_fg bar_bg bar_fg border border_focus dim selected_bg
-    # selected_fg ok warn error add del code link user_bg
+    # 可改的有：accent accent_fg bar_bg bar_fg border border_focus dim selected_bg（有焦点那块的选中行）
+    # selected_bg_inactive（另一块的选中行） selected_fg ok warn error add del code link user_bg
     colors: {}
     #   accent: "#D97757"
     #   border: "238"

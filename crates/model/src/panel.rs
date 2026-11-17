@@ -1,10 +1,10 @@
-//! 对话区顶部的面板（交互 §4.3）：右栏只放摘要，这里放当前上下文的详情——普通会话是
-//! goal 与 todo，流程的编写会话是流程设计，运行里的会话是运行进度，作业会话是作业详情。
+//! 对话区顶部的面板（交互 §4.3）：普通会话是 goal 与 todo，运行里的会话是运行进度。流程设计、
+//! 作业的执行情况在右下（流程、作业本身没有会话），这里也给它们排版（`flow_design`、`job_stats`）。
 //! 它不在转录里，所以不随对话滚走。顶上一条标题线，右边是 Ctrl+T；收起时只剩这条线，
 //! 好让人知道这里有东西、随手打开。有面板的缺省打开。
 
 use port::{
-    FlowDetail, GoalPhase, Job, JobEntry, JobId, JobKind, JobOutcome, RunId, RunView, SessionId,
+    FlowDetail, GoalPhase, Job, JobEntry, JobKind, JobOutcome, RunId, RunView, SessionId,
     StationView,
 };
 use tui::{Line, Tone, display_width, truncate_to_width};
@@ -15,8 +15,6 @@ use crate::state::State;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PanelKind {
-    Flow(String),
-    Job(JobId),
     Run(RunId),
     /// 普通会话：goal 与 todo。
     Goal,
@@ -28,19 +26,7 @@ impl State {
             return None;
         }
         let id = self.ui.chat.clone()?;
-        let kind = if let Some(key) = self
-            .domain
-            .authoring
-            .iter()
-            .find(|(_, v)| **v == id)
-            .map(|(k, _)| k.clone())
-        {
-            if let Some(name) = key.strip_prefix("flow:") {
-                PanelKind::Flow(name.to_string())
-            } else {
-                PanelKind::Job(JobId::from(key.trim_start_matches("job:")))
-            }
-        } else if let Some(v) = self.domain.run_views.values().find(|v| {
+        let kind = if let Some(v) = self.domain.run_views.values().find(|v| {
             v.main_session == id
                 || v.stations.iter().any(|s| {
                     s.session.as_ref() == Some(&id)
@@ -54,7 +40,7 @@ impl State {
         Some((id, kind))
     }
 
-    /// 这个上下文有没有面板：流程、运行、作业总有；普通会话要有 goal 或 todo。
+    /// 这个上下文有没有面板：运行里的会话总有；普通会话要有 goal 或 todo。
     fn panel_here(&self) -> Option<(SessionId, PanelKind)> {
         let (id, kind) = self.panel_target()?;
         let has = match kind {
@@ -90,32 +76,6 @@ impl State {
     /// 面板的标题：只是它是什么（状态在别处都有，这里不重复）。
     fn panel_title(&self, kind: &PanelKind) -> Line {
         let text = match kind {
-            PanelKind::Flow(name) => {
-                let d = self.domain.flow_details.get(name);
-                let title = d
-                    .map(|d| d.summary.title.clone())
-                    .or_else(|| {
-                        self.domain
-                            .flows
-                            .iter()
-                            .find(|f| &f.name == name)
-                            .map(|f| f.title.clone())
-                    })
-                    .unwrap_or_else(|| name.clone());
-                let mut t = i18n::t!("panel.flow_title", title = title);
-                if let (Some(d), Some(i)) = (d, self.station_in_view(name)) {
-                    t.push_str(&i18n::t!(
-                        "panel.flow_in_station",
-                        n = i + 1,
-                        title = d.stations[i].title
-                    ));
-                }
-                t
-            }
-            PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
-                Some(j) => i18n::t!("panel.job_title", name = j.name),
-                None => i18n::t!("panel.job_new"),
-            },
             PanelKind::Run(run) => match self.domain.run_views.get(run) {
                 Some(v) => i18n::t!("panel.run_title", subject = v.summary.subject),
                 None => i18n::t!("panel.run"),
@@ -135,25 +95,6 @@ impl State {
         };
         let conv = self.domain.convs.get(&id);
         let mut out = match &kind {
-            PanelKind::Flow(name) => match self.domain.flow_details.get(name) {
-                Some(d) => match self.station_in_view(name) {
-                    Some(i) => station_body(d, i),
-                    None => flow_body(d, width),
-                },
-                None => vec![Line::toned(i18n::t!("panel.flow_loading"), Tone::Dim)],
-            },
-            PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
-                Some(j) => {
-                    let h = self
-                        .domain
-                        .job_history
-                        .get(job)
-                        .cloned()
-                        .unwrap_or_default();
-                    job_body(j, &h, width)
-                }
-                None => vec![Line::toned(i18n::t!("panel.job_hint"), Tone::Dim)],
-            },
             PanelKind::Run(run) => match self.domain.run_views.get(run) {
                 Some(v) => run_body(v, width),
                 None => vec![],
@@ -183,18 +124,10 @@ impl State {
     /// 面板上下文的名字：换了上下文，滚动回到顶上。
     fn panel_key(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}",
+            "{:?}:{:?}",
             self.ui.chat,
-            self.panel_target().map(|(_, k)| k),
-            self.ui.flow_station
+            self.panel_target().map(|(_, k)| k)
         )
-    }
-
-    /// 编写会话的面板正在看流程的哪一站。
-    fn station_in_view(&self, flow: &str) -> Option<usize> {
-        let (f, i) = self.ui.flow_station.as_ref()?;
-        let n = self.domain.flow_details.get(flow)?.stations.len();
-        (f == flow && *i < n).then_some(*i)
     }
 
     fn panel_offset(&self) -> usize {
@@ -459,61 +392,56 @@ pub(crate) fn layers(stations: &[StationView]) -> Vec<usize> {
     depth
 }
 
-fn flow_body(d: &FlowDetail, inner: usize) -> Vec<Line> {
-    let mut out = vec![];
-    let depth = layers(&d.stations);
-    out.extend(chain(&d.stations, inner, false));
-    let title_w = d
-        .stations
-        .iter()
-        .map(|s| display_width(&s.title))
-        .max()
-        .unwrap_or(4)
-        .min(14);
-    for (s, l) in d.stations.iter().zip(&depth) {
-        let pad = title_w.saturating_sub(display_width(&s.title));
-        let mut line = Line::toned(format!("{:>2}. ", l + 1), Tone::Dim)
-            .push(format!("{}{}", s.title, " ".repeat(pad)), Tone::Strong)
-            .push(format!("  {:<10}", s.work), Tone::Normal);
-        if let Some(sk) = &s.skill {
-            line = line.push(format!("  skill {sk}"), Tone::Code);
-        }
-        if !s.exit.is_empty() {
-            line = line.push(
-                i18n::t!(
-                    "panel.exit_list",
-                    list = s.exit.join(&i18n::t!("panel.sep"))
-                ),
-                Tone::Dim,
-            );
-        }
-        if s.needs.len() > 1 {
-            let names: Vec<&str> = s
-                .needs
-                .iter()
-                .filter_map(|n| {
-                    d.stations
-                        .iter()
-                        .find(|x| &x.id == n)
-                        .map(|x| x.title.as_str())
-                })
-                .collect();
-            line = line.push(
-                i18n::t!(
-                    "panel.waits_for",
-                    names = names.join(&i18n::t!("panel.sep"))
-                ),
-                Tone::Warn,
-            );
-        }
-        out.push(line);
+/// 流程设计的节点图（右下，选中流程定义时）：按依赖分层，并行的用 ∥，放不下折行。
+pub(crate) fn flow_graph(d: &FlowDetail, width: usize) -> Vec<Line> {
+    chain(&d.stations, width, false)
+}
+
+/// 流程设计里的一站（右下）：层号、名字、执行方式、skill、出口；汇合的站右边写它在等谁。
+pub(crate) fn design_station(d: &FlowDetail, i: usize, layer: usize, width: usize) -> Line {
+    let s = &d.stations[i];
+    let mut left = Line::toned(format!("{:>2}. ", layer + 1), Tone::Dim)
+        .push(s.title.clone(), Tone::Strong)
+        .push(format!("  {}", s.work), Tone::Normal);
+    if let Some(sk) = &s.skill {
+        left = left.push(format!("  skill {sk}"), Tone::Code);
     }
-    out.push(Line::toned(i18n::t!("panel.flow_hint"), Tone::Dim));
-    out
+    if !s.exit.is_empty() {
+        left = left.push(
+            i18n::t!(
+                "panel.exit_list",
+                list = s.exit.join(&i18n::t!("panel.sep"))
+            ),
+            Tone::Dim,
+        );
+    }
+    let mut right = Line::default();
+    if s.needs.len() > 1 {
+        let names: Vec<&str> = s
+            .needs
+            .iter()
+            .filter_map(|n| {
+                d.stations
+                    .iter()
+                    .find(|x| &x.id == n)
+                    .map(|x| x.title.as_str())
+            })
+            .collect();
+        right = Line::toned(
+            i18n::t!(
+                "panel.waits_for",
+                names = names.join(&i18n::t!("panel.sep"))
+            )
+            .trim_start()
+            .to_string(),
+            Tone::Warn,
+        );
+    }
+    crate::sessions::split_line(left, right, width)
 }
 
 /// 流程里一站的配置：执行方式、skill、出口、前后关系，再加上定义里它那一段 YAML。
-fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
+pub(crate) fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
     let st = &d.stations[i];
     let names = |ids: &[port::StationId]| -> String {
         ids.iter()
@@ -768,45 +696,43 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
     out
 }
 
-/// 作业的执行情况（左上面板）：次数、成败、耗时与 token 的统计，再列最近几次。
-fn job_body(j: &Job, history: &[JobEntry], inner: usize) -> Vec<Line> {
-    let mut out = vec![];
+/// 作业的执行情况（右下）：次数、成败、成功率，平均耗时与 token。还没触发过就没有。
+pub(crate) fn job_stats(history: &[JobEntry]) -> Vec<Line> {
     if history.is_empty() {
-        out.push(Line::toned(i18n::t!("panel.no_runs"), Tone::Dim));
-    } else {
-        let n = history.len();
-        let count = |f: fn(&JobOutcome) -> bool| history.iter().filter(|e| f(&e.outcome)).count();
-        let done = count(|o| matches!(o, JobOutcome::Done));
-        let failed = count(|o| matches!(o, JobOutcome::Failed { .. }));
-        let skipped = count(|o| matches!(o, JobOutcome::Skipped));
-        let finished = done + failed;
-        let rate = (done * 100).checked_div(finished).unwrap_or(0);
-        let ended: Vec<&JobEntry> = history
-            .iter()
-            .filter(|e| matches!(e.outcome, JobOutcome::Done))
-            .collect();
-        let avg = |f: fn(&JobEntry) -> u64| {
-            if ended.is_empty() {
-                0
-            } else {
-                ended.iter().map(|e| f(e)).sum::<u64>() / ended.len() as u64
-            }
-        };
-        let total: u64 = history.iter().map(|e| e.usage.total()).sum();
-        out.push(
-            Line::toned(i18n::t!("panel.run_count", n = n), Tone::Normal)
-                .push(i18n::t!("panel.run_ok", n = done), Tone::Ok)
-                .push(" · ", Tone::Dim)
-                .push(
-                    i18n::t!("panel.run_failed", n = failed),
-                    if failed > 0 { Tone::Error } else { Tone::Dim },
-                )
-                .push(
-                    i18n::t!("panel.run_tail", skipped = skipped, rate = rate),
-                    Tone::Dim,
-                ),
-        );
-        out.push(Line::toned(
+        return vec![];
+    }
+    let n = history.len();
+    let count = |f: fn(&JobOutcome) -> bool| history.iter().filter(|e| f(&e.outcome)).count();
+    let done = count(|o| matches!(o, JobOutcome::Done));
+    let failed = count(|o| matches!(o, JobOutcome::Failed { .. }));
+    let skipped = count(|o| matches!(o, JobOutcome::Skipped));
+    let finished = done + failed;
+    let rate = (done * 100).checked_div(finished).unwrap_or(0);
+    let ended: Vec<&JobEntry> = history
+        .iter()
+        .filter(|e| matches!(e.outcome, JobOutcome::Done))
+        .collect();
+    let avg = |f: fn(&JobEntry) -> u64| {
+        if ended.is_empty() {
+            0
+        } else {
+            ended.iter().map(|e| f(e)).sum::<u64>() / ended.len() as u64
+        }
+    };
+    let total: u64 = history.iter().map(|e| e.usage.total()).sum();
+    vec![
+        Line::toned(i18n::t!("panel.run_count", n = n), Tone::Normal)
+            .push(i18n::t!("panel.run_ok", n = done), Tone::Ok)
+            .push(" · ", Tone::Dim)
+            .push(
+                i18n::t!("panel.run_failed", n = failed),
+                if failed > 0 { Tone::Error } else { Tone::Dim },
+            )
+            .push(
+                i18n::t!("panel.run_tail", skipped = skipped, rate = rate),
+                Tone::Dim,
+            ),
+        Line::toned(
             i18n::t!(
                 "panel.run_avg",
                 elapsed = crate::sessions::fmt_elapsed(avg(|e| e.elapsed_ms)),
@@ -814,41 +740,8 @@ fn job_body(j: &Job, history: &[JobEntry], inner: usize) -> Vec<Line> {
                 total = crate::chat::fmt_k(total)
             ),
             Tone::Dim,
-        ));
-    }
-    out.push(Line::toned(
-        match j.next_fire_ms {
-            Some(t) if j.enabled => i18n::t!("panel.next_fire", time = fmt_clock(t)),
-            _ if !j.enabled => i18n::t!("panel.disabled_no_fire"),
-            _ => i18n::t!("panel.no_more"),
-        },
-        Tone::Dim,
-    ));
-    for e in history.iter().take(8) {
-        let (o, tone) = outcome(&e.outcome);
-        let target = match &e.target {
-            Some(port::JobTarget::Session { title, .. }) => {
-                i18n::t!("panel.target_session", title = title)
-            }
-            Some(port::JobTarget::Run { subject, .. }) => {
-                i18n::t!("panel.target_run", subject = subject)
-            }
-            None => String::new(),
-        };
-        out.push(
-            Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim)
-                .push(truncate_to_width(&o, inner.saturating_sub(40)), tone)
-                .push(
-                    format!(
-                        "  {}  {}{target}",
-                        crate::sessions::fmt_elapsed(e.elapsed_ms),
-                        crate::chat::fmt_k(e.usage.total())
-                    ),
-                    Tone::Dim,
-                ),
-        );
-    }
-    out
+        ),
+    ]
 }
 
 #[cfg(test)]

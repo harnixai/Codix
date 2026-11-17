@@ -18,8 +18,8 @@ ui:
     # Preset: claude (orange) or aqua.
     preset: claude
     # Override single colors on top of the preset: #RRGGBB, a color name (red, gray, ...) or a 0-255 terminal color number.
-    # Available: accent accent_fg bar_bg bar_fg border border_focus dim selected_bg
-    # selected_fg ok warn error add del code link user_bg
+    # Available: accent accent_fg bar_bg bar_fg border border_focus dim selected_bg (selected row, focused block)
+    # selected_bg_inactive (selected row, other block) selected_fg ok warn error add del code link user_bg
     colors: {}
     #   accent: "#D97757"
     #   border: "238"

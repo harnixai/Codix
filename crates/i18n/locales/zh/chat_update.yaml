@@ -1,6 +1,7 @@
 chat_update:
   cmd_help: "帮助"
   cmd_new: "新建会话"
+  cmd_rename: "改当前会话的名字"
   cmd_sessions: "会话列表"
   cmd_model: "切换模型"
   cmd_goal: "设定 goal"

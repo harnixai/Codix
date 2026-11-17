@@ -101,7 +101,7 @@ async fn side_selection_by_keys_click_and_wheel() {
     let n = h.core.state.session_rows().len();
     h.keys("PageDown").await;
     assert_eq!(h.core.state.ui.upper().selected, n - 1, "停在最后一项");
-    let second = h.core.state.user_sessions().nth(1).unwrap().title.clone();
+    let second = h.core.state.user_sessions()[1].title.clone();
     let (col, row) = h.find(&second).unwrap();
     h.click(col, row);
     assert_eq!(h.core.state.ui.upper().selected, 2, "第 0 行是新建会话");

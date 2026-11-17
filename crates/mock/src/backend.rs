@@ -666,6 +666,7 @@ impl ScriptedBackend {
                 origin,
             },
             updated_ms: self.now_ms(),
+            created_ms: self.now_ms(),
             held_by: None,
         }
     }

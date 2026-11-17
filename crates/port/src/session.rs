@@ -17,6 +17,9 @@ pub struct SessionSummary {
     pub provenance: Provenance,
     #[serde(default)]
     pub updated_ms: Millis,
+    /// 建会话的时刻：会话列表按它排（`order::sessions`），序号因此不随活跃而跳。
+    #[serde(default)]
+    pub created_ms: Millis,
     /// 会话被另一个实例打开着（Agix 的会话写者锁在它那里）。
     #[serde(default)]
     pub held_by: Option<InstanceName>,

@@ -1,6 +1,7 @@
 //! 流程标签（需求 F，交互 §5.3）：上半是流程定义（选中即展开它的运行），下半是选中运行的
-//! 主 Agent、各站（不缩进，按进展上色）与站里的子 Agent；选中流程定义时下半列出定义的各站。
-//! 详情与修改在左边：选中流程 → 它的编写会话（顶部面板是流程设计），选中运行或站 → 那里的会话。
+//! 主 Agent、各站（不缩进，按进展上色）与站里的子 Agent；选中流程定义时下半是流程设计。
+//! 流程定义本身没有会话：选中它左边不动，改它回到用户会话里说（`n` `e` `d` `R` 放话头）；
+//! 选中运行或站 → 左边切到那里的会话。
 
 use keys::Action;
 use port::{Command, RunId, RunOp, RunStatus, RunSummary, RunView, StationId, StationStatus};
@@ -25,7 +26,9 @@ pub enum FlowLower {
     Station(StationId),
     /// 站里的一件任务（子 Agent 有会话）。
     StationTask(StationId, usize),
-    /// 选中流程定义时：定义里的一站（只看）。
+    /// 选中流程定义时：流程设计的节点图的一行（只看）。
+    Design(usize),
+    /// 选中流程定义时：定义里的一站（Enter / `v` 看它的配置）。
     DefStation(usize),
 }
 
@@ -33,7 +36,7 @@ impl State {
     pub fn flow_rows(&self) -> Vec<FlowRow> {
         let filter = &self.ui.filter[Tab::Flows.index()];
         let mut out = vec![];
-        for f in &self.domain.flows {
+        for f in port::order::flows(&self.domain.flows) {
             if !filter.is_empty()
                 && !f.title.contains(filter.as_str())
                 && !f.name.contains(filter.as_str())
@@ -87,7 +90,13 @@ impl State {
                 .domain
                 .flow_details
                 .get(&name)
-                .map(|d| (0..d.stations.len()).map(FlowLower::DefStation).collect())
+                .map(|d| {
+                    let graph = crate::panel::flow_graph(d, self.side_lower_width());
+                    (0..graph.len())
+                        .map(FlowLower::Design)
+                        .chain((0..d.stations.len()).map(FlowLower::DefStation))
+                        .collect()
+                })
                 .unwrap_or_default(),
             None => vec![],
         }
@@ -99,6 +108,33 @@ impl State {
             .ui
             .station_collapsed
             .contains(&format!("{run}/{station}"))
+    }
+
+    /// 右下一行能放多宽（第一列是选中标记）：流程设计的节点图按它折行。
+    pub(crate) fn side_lower_width(&self) -> usize {
+        let r = tui::layout::compute(
+            self.ui.size,
+            &crate::view::layout_spec(self),
+            &crate::view::tab_labels(self),
+        );
+        r.side.map_or(60, |x| x.lower.w as usize).saturating_sub(1)
+    }
+
+    /// 流程在规范顺序里的序号（`#n`，从 1 起）。
+    pub(crate) fn flow_number(&self, name: &str) -> usize {
+        port::order::flows(&self.domain.flows)
+            .iter()
+            .position(|f| f.name == name)
+            .map_or(0, |i| i + 1)
+    }
+
+    fn flow_title(&self, name: &str) -> String {
+        self.domain
+            .flows
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| f.title.clone())
+            .unwrap_or_else(|| name.to_string())
     }
 
     fn run_summary(&self, flow: &str, id: &RunId) -> Option<&RunSummary> {
@@ -153,6 +189,10 @@ pub(crate) fn station_text(s: StationStatus) -> String {
 
 pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
     let now = s.ui.now_ms;
+    let order: Vec<&str> = port::order::flows(&s.domain.flows)
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     s.flow_rows()
         .iter()
         .map(|r| match r {
@@ -173,8 +213,10 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 } else {
                     String::new()
                 };
+                let n = order.iter().position(|x| x == name).map_or(0, |i| i + 1);
                 crate::sessions::split_line(
                     Line::toned(format!("{mark} "), Tone::Dim)
+                        .push(crate::sessions::number(n, order.len()), Tone::Dim)
                         .push(scope, Tone::Accent)
                         .push(f.title.clone(), Tone::Normal),
                     Line::toned(format!("{}  {origin}  {running}", f.name), Tone::Dim),
@@ -215,19 +257,15 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
             return vec![];
         };
         let depth = crate::panel::layers(&d.stations);
-        return d
-            .stations
-            .iter()
-            .zip(depth)
-            .map(|(st, l)| {
-                crate::sessions::split_line(
-                    Line::toned(format!("{:>2}. ", l + 1), Tone::Dim)
-                        .push(st.title.clone(), Tone::Normal)
-                        .push(format!("  {}", st.work), Tone::Dim),
-                    Line::toned(join_note(&d.stations, st), Tone::Dim),
-                    width,
-                )
-            })
+        return crate::panel::flow_graph(d, width)
+            .into_iter()
+            .map(|l| crate::sessions::split_line(l, Line::default(), width))
+            .chain(
+                depth
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| crate::panel::design_station(d, i, *l, width)),
+            )
             .collect();
     }
     let Some(v) = s.selected_run() else {
@@ -323,7 +361,7 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     width,
                 )
             }
-            FlowLower::DefStation(_) => Line::default(),
+            FlowLower::Design(_) | FlowLower::DefStation(_) => Line::default(),
         })
         .collect()
 }
@@ -355,7 +393,7 @@ pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
                 .flows
                 .iter()
                 .find(|f| f.name == name)
-                .map(|f| i18n::t!("flows.stations_of", title = f.title)),
+                .map(|f| i18n::t!("flows.design_of", title = f.title)),
             None,
         ),
         None => (None, None),
@@ -390,23 +428,20 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
                 .unwrap_or(0);
             vec![]
         }
-        (Action::Open, Some(_)) => {
+        (Action::Open, Some(FlowRow::Run(..))) => {
             s.show_chat_pub();
             s.ui.focus = Focus::Composer;
             vec![]
         }
-        (Action::New, Some(FlowRow::Flow(_) | FlowRow::Run(..))) | (Action::New, None) => {
-            s.show_chat_pub();
-            s.ui.focus = Focus::Composer;
-            s.ui.composer.clear();
-            let text = if matches!(s.selected_flow_row(), Some(FlowRow::Flow(_))) {
-                i18n::t!("flows.prefill_run")
-            } else {
-                i18n::t!("flows.prefill_new")
+        (Action::New, _) => crate::jobs::prefill(s, &i18n::t!("flows.prefill_new"), NOTICE),
+        (Action::Edit | Action::Delete | Action::RunNow, Some(FlowRow::Flow(name))) => {
+            let (n, title) = (s.flow_number(&name), s.flow_title(&name));
+            let text = match a {
+                Action::Edit => i18n::t!("flows.prefill_edit", n = n, title = title),
+                Action::Delete => i18n::t!("flows.prefill_delete", n = n, title = title),
+                _ => i18n::t!("flows.prefill_run", n = n, title = title),
             };
-            s.ui.composer.insert_str(&text);
-            s.notice(i18n::t!("flows.notice_tool"), false);
-            vec![]
+            crate::jobs::prefill(s, &text, NOTICE)
         }
         (Action::View, Some(FlowRow::Flow(name))) => {
             let yaml = s
@@ -445,7 +480,12 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     })
 }
 
+const NOTICE: &str = "flows.notice_tool";
+
 fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
+    if let Some(FlowRow::Flow(name)) = s.selected_flow_row() {
+        return def_action(s, a, &name);
+    }
     let run = s.selected_run()?.clone();
     let rows = s.flow_lower_rows();
     let row = rows.get(s.ui.lower[Tab::Flows.index()].selected)?.clone();
@@ -492,4 +532,36 @@ fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         }
         _ => return None,
     })
+}
+
+/// 选中流程定义时下半的键：Enter / `v` 用浮层看一站的配置，`n` `e` `d` `R` 同上半。
+fn def_action(s: &mut State, a: Action, name: &str) -> Option<Vec<Effect>> {
+    let row = s
+        .flow_lower_rows()
+        .get(s.ui.lower[Tab::Flows.index()].selected)
+        .cloned();
+    match (a, row) {
+        (Action::Open | Action::View, Some(FlowLower::DefStation(i))) => {
+            let d = s.domain.flow_details.get(name)?;
+            let st = d.stations.get(i)?;
+            s.ui.overlay = Some(crate::state::Overlay::Text {
+                title: i18n::t!(
+                    "flows.station_of",
+                    flow = d.summary.title,
+                    n = i + 1,
+                    title = st.title
+                ),
+                lines: crate::panel::station_body(d, i)
+                    .iter()
+                    .map(Line::text)
+                    .collect(),
+                scroll: 0,
+            });
+            Some(vec![])
+        }
+        (Action::View | Action::New | Action::Edit | Action::Delete | Action::RunNow, _) => {
+            upper_action(s, a)
+        }
+        _ => None,
+    }
 }

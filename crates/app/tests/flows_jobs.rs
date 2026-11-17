@@ -35,16 +35,12 @@ fn run_index(h: &Harness, run: &str) -> usize {
 }
 
 #[tokio::test(start_paused = true)]
-async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
+async fn selecting_a_flow_keeps_the_chat_and_shows_its_design_below() {
     let mut h = flows("default").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     h.settle().await;
-    assert!(
-        h.chat_title().contains("编写流程：需求到上线"),
-        "{}",
-        h.chat_title()
-    );
-    let t = h.panel();
+    assert!(h.core.state.ui.chat.is_none(), "流程定义没有会话：左边不动");
+    let lower = h.lower();
     for want in [
         "收集需求",
         "代码评审 ∥ 文档评审",
@@ -52,28 +48,17 @@ async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
         "skill implement",
         "出口 output、gate: ci",
     ] {
-        assert!(t.contains(want), "缺 {want}\n{t}");
+        assert!(lower.contains(want), "右下缺 {want}\n{lower}");
     }
-    assert!(h.text().contains("需求到上线 的各站"), "下半是定义的各站");
+    assert!(h.text().contains("流程设计：需求到上线"), "右下框的标题");
+    assert!(h.panel().is_empty(), "左上不再有流程设计");
     assert!(
-        h.text().contains("─ 流程设计：需求到上线 ─ │"),
-        "面板的标题线"
+        !h.calls("dev")
+            .iter()
+            .any(|c| matches!(c, Command::OpenAuthoring { .. })),
+        "不再开编写会话"
     );
-    assert!(
-        h.text().contains("─ Ctrl+T 收起 ─"),
-        "收放的快捷键在下沿右边"
-    );
-    assert!(!h.transcript().contains("流程设计"), "不在转录里");
-    h.snapshot("flow-authoring");
-    h.keys("Ctrl+T").await;
-    assert!(h.panel().is_empty(), "Ctrl+T 收起");
-    let text = h.text();
-    assert!(
-        text.contains("─ 流程设计：需求到上线  Ctrl+T 展开 ─ │"),
-        "收起后标题线还在\n{text}"
-    );
-    h.keys("Ctrl+T").await;
-    assert!(!h.panel().is_empty());
+    h.snapshot("flow-design");
     h.keys("v").await;
     assert!(h.text().contains("feature-to-ship 的定义"), "查看 YAML");
 }
@@ -203,22 +188,34 @@ async fn m11_run_progresses_live() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn m12_change_the_flow_by_talking_and_the_card_updates() {
+async fn m12_change_the_flow_by_talking_and_the_design_updates() {
     let mut h = flows("m12-flow-author").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     h.settle().await;
-    assert!(!h.panel().contains("安全评审"));
-    h.keys("Enter").await;
+    assert!(!h.lower().contains("安全评审"));
+    // 在用户会话里说（草稿：第一句话建出会话），右下的流程设计跟着变。
+    h.keys("F6").await;
     h.type_str("加一个安全评审站").await;
     h.keys("Enter").await;
     h.advance(3_000).await;
-    let t = h.panel();
+    let t = h.lower();
     assert!(t.contains("安全评审"), "流程设计跟着变\n{t}");
     assert!(t.contains("← 等 代码评审、文档评审、安全评审"));
-    h.keys("F3 n").await;
+    let talked = h.core.state.ui.chat.clone().expect("建出了会话");
+    h.keys("F3 R").await;
     assert_eq!(
-        h.core.state.ui.composer.text, "启动一次运行",
-        "n 在对话里启动"
+        h.core.state.ui.composer.text, "启动流程 #1「需求到上线」，主题：",
+        "R 在当前的用户会话里起个话头"
+    );
+    assert_eq!(h.core.state.ui.chat, Some(talked));
+    h.type_str("新功能演示").await;
+    h.keys("Enter").await;
+    h.advance(1_000).await;
+    assert!(
+        h.core.state.domain.runs["feature-to-ship"]
+            .iter()
+            .any(|r| r.id.as_str() == "r5"),
+        "启动了运行"
     );
 }
 
@@ -229,11 +226,11 @@ async fn jobs_list_details_history_and_follow() {
     h.settle().await;
     h.pick_upper(0).await;
     h.settle().await;
-    assert!(h.chat_title().starts_with("作业："), "{}", h.chat_title());
-    let t = h.panel();
+    assert!(h.core.state.ui.chat.is_none(), "作业没有会话：左边不动");
+    let lower = h.lower();
     assert!(
-        h.text().contains("─ 作业：每日巡检 ─ │") && t.contains("执行 3 次 · 成功 2 · 失败 1"),
-        "作业面板\n{t}"
+        lower.contains("执行 3 次 · 成功 2 · 失败 1"),
+        "执行统计在右下\n{lower}"
     );
     let text = h.text();
     assert!(text.contains("每日巡检 的详情"));
@@ -266,8 +263,15 @@ async fn jobs_list_details_history_and_follow() {
     );
     h.keys("F4 e").await;
     assert_eq!(
-        h.core.state.ui.composer.text, "把这个作业改成：",
-        "修改在对话里说"
+        h.core.state.ui.composer.text, "修改作业 #1「每日巡检」：",
+        "修改在用户会话里说"
+    );
+    assert!(h.core.state.chat_is_user_session(), "回到了用户会话");
+    h.keys("F4 v").await;
+    let text = h.text();
+    assert!(
+        text.contains("作业 #1「每日巡检」") && text.contains("触发记录（3 次）"),
+        "v 看全文\n{text}"
     );
 }
 
@@ -341,7 +345,7 @@ async fn run_stations_are_flat_colored_and_switch_to_their_context() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
+async fn a_station_of_a_definition_opens_its_config_in_an_overlay() {
     let mut h = flows("default").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     let imp = h
@@ -352,16 +356,10 @@ async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
         .position(|r| matches!(r, FlowLower::DefStation(2)))
         .unwrap();
     h.pick_lower(imp).await;
-    assert!(
-        h.chat_title().contains("编写流程：需求到上线"),
-        "左边仍是编写会话"
-    );
+    assert!(h.core.state.ui.chat.is_none(), "左边不动");
+    h.keys("Enter").await;
     let text = h.text();
-    assert!(
-        text.contains("─ 流程设计：需求到上线 › 第 3 站 实现 ─ │"),
-        "{text}"
-    );
-    let p = h.panel();
+    assert!(text.contains("需求到上线 · 第 3 站「实现」"), "{text}");
     for want in [
         "skill",
         "implement",
@@ -372,34 +370,11 @@ async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
         "- id: impl",
         "tasks:",
     ] {
-        assert!(p.contains(want), "缺 {want}\n{p}");
+        assert!(text.contains(want), "缺 {want}\n{text}");
     }
-    assert!(text.contains("Shift+↑↓"), "超过 10 行时下沿标出可以滚动");
-    let sel = h.core.state.ui.lower().selected;
-    h.keys("Shift+Down").await;
-    assert_eq!(
-        h.core.state.ui.lower().selected,
-        sel + 1,
-        "焦点在右下时 Shift+↓ 滚右下"
-    );
-    h.keys("Shift+Up").await;
-    h.keys("Esc Ctrl+Up Ctrl+Up").await;
-    assert_eq!(
-        h.core.state.ui.focus,
-        model::Focus::Panel,
-        "转录里 Ctrl+↑ 到面板"
-    );
-    let before = h.text();
-    h.keys("Shift+Down Down").await;
-    assert_ne!(before, h.text(), "面板有焦点时滚面板");
-    assert!(h.text().contains("↑2 "));
     h.snapshot("flow-station-config");
-    h.keys("F3").await;
-    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
-    assert!(
-        h.text().contains("─ 流程设计：需求到上线 ─ │"),
-        "回到上半看整个流程"
-    );
+    h.keys("Esc").await;
+    assert!(h.core.state.ui.overlay.is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -439,7 +414,7 @@ async fn global_flows_are_marked_and_flow_jobs_jump_to_their_flow() {
         matches!(h.core.state.selected_flow_row(), Some(FlowRow::Flow(_))),
         "选中它用的流程"
     );
-    assert!(h.chat_title().starts_with("编写流程："));
+    assert!(h.core.state.ui.chat.is_none(), "跳过去左边也不动");
 }
 
 #[tokio::test(start_paused = true)]

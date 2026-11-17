@@ -272,18 +272,41 @@ async fn m25_ownership_line_for_every_origin() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn new_session_row_creates_and_opens() {
+async fn new_session_row_opens_a_draft_and_the_first_words_create_it() {
     let mut h = wb("default").await;
+    h.open_session("重构认证模块").await;
     h.keys("F2").await;
     h.pick_upper(0).await;
     h.keys("Enter").await;
     h.settle().await;
-    assert!(
+    assert!(h.core.state.ui.chat.is_none(), "＋ 新建会话是草稿");
+    assert_eq!(h.core.state.ui.focus, model::Focus::Composer);
+    let created = |h: &common::Harness| {
         h.calls("dev")
             .iter()
-            .any(|c| matches!(c, Command::CreateSession { .. }))
+            .filter(|c| matches!(c, Command::CreateSession { .. }))
+            .count()
+    };
+    assert_eq!(created(&h), 0, "没输入就不建会话");
+    h.type_str("帮我看看日志").await;
+    h.keys("Enter").await;
+    h.settle().await;
+    assert_eq!(created(&h), 1, "第一句话建出会话");
+    let id = h.core.state.ui.chat.clone().expect("左边是新会话");
+    assert_eq!(
+        h.core.state.session_rows()[h.core.state.ui.upper[0].selected],
+        model::SessRow::Session(id),
+        "右栏选中跟到新会话"
     );
-    assert_eq!(h.core.state.ui.focus, model::Focus::Composer);
+    for keys in ["F2 n", "F6"] {
+        h.keys(keys).await;
+    }
+    assert!(h.core.state.ui.chat.is_none(), "n 也是回到草稿");
+    h.open_session("重构认证模块").await;
+    h.type_str("/new").await;
+    h.keys("Enter").await;
+    assert!(h.core.state.ui.chat.is_none(), "/new 也是回到草稿");
+    assert_eq!(created(&h), 1);
 }
 
 #[tokio::test(start_paused = true)]

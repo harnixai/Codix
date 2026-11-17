@@ -293,6 +293,16 @@ impl Harness {
     }
 
     /// 对话区顶部面板的全部内容（不受面板高度限制）；收起时为空。
+    /// 右下框里看得见的行。
+    pub fn lower(&mut self) -> String {
+        let tui::Body::Workbench(w) = self.core.frame().body else {
+            panic!("不在工作台")
+        };
+        w.side
+            .map(|s| s.lower.rows.iter().map(|l| l.text() + "\n").collect())
+            .unwrap_or_default()
+    }
+
     pub fn panel(&self) -> String {
         self.core
             .state

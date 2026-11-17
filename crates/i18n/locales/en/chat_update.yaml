@@ -1,6 +1,7 @@
 chat_update:
   cmd_help: "Help"
   cmd_new: "New session"
+  cmd_rename: "Rename the current session"
   cmd_sessions: "Session list"
   cmd_model: "Switch model"
   cmd_goal: "Set goal"

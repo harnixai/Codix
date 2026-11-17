@@ -59,6 +59,7 @@ fn style(t: Tone) -> Style {
         Tone::Del => s.fg(th.del),
         Tone::Code => s.fg(th.code),
         Tone::Selected => s.bg(th.selected_bg).fg(th.selected_fg),
+        Tone::SelectedInactive => s.bg(th.selected_bg_inactive),
         Tone::Attention => s.fg(th.warn).add_modifier(Modifier::BOLD),
         Tone::UserMsg => s.bg(th.user_bg),
         Tone::Italic => s.add_modifier(Modifier::ITALIC),
@@ -136,10 +137,15 @@ fn rline(l: &Line) -> RLine<'static> {
 
 /// 一行一行放进矩形，超出的截掉；渲染端从不折行（architecture §4.3）。
 fn lines(f: &mut Frame, r: Rect, ls: &[Line], selected: Option<usize>) {
+    marked(f, r, ls, selected, Tone::Selected);
+}
+
+/// 同 [`lines`]，选中行用 `tone` 的底色。
+fn marked(f: &mut Frame, r: Rect, ls: &[Line], selected: Option<usize>, tone: Tone) {
     for (i, l) in ls.iter().take(r.h as usize).enumerate() {
         let mut line = rline(l);
         if selected == Some(i) {
-            line = line.style(style(Tone::Selected));
+            line = line.style(style(tone));
         }
         let row = Rect::new(r.x, r.y + i as u16, r.w, 1);
         f.render_widget(Paragraph::new(line), rr(row));
@@ -307,11 +313,17 @@ fn section(f: &mut Frame, r: Rect, sec: &Section) {
         return;
     }
     let body = Rect::new(r.x + 1, r.y, r.w - 1, r.h);
-    lines(
+    // 没焦点的那一块也留着选中的底色（暗一档）：右栏选中的就是左边在看的。
+    marked(
         f,
         body,
         &sec.rows,
-        if sec.focused { sec.selected } else { None },
+        sec.selected,
+        if sec.focused {
+            Tone::Selected
+        } else {
+            Tone::SelectedInactive
+        },
     );
     if let Some(i) = sec.selected
         && (i as u16) < r.h
@@ -440,5 +452,34 @@ fn centered_lines(f: &mut Frame, size: Size, ls: &[Line]) {
         let w = (l.width() as u16).min(size.cols);
         let r = Rect::new((size.cols - w) / 2, top + i as u16, w, 1);
         lines(f, r, std::slice::from_ref(l), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn the_unfocused_block_keeps_a_dimmer_selected_background() {
+        let th = crate::Theme::claude();
+        THEME.with(|t| *t.borrow_mut() = th.clone());
+        for (focused, bg) in [(true, th.selected_bg), (false, th.selected_bg_inactive)] {
+            let mut term = Terminal::new(TestBackend::new(10, 3)).unwrap();
+            let sec = Section {
+                focused,
+                title: None,
+                title_right: None,
+                rows: vec![Line::plain("a"), Line::toned("b", Tone::Warn)],
+                selected: Some(1),
+            };
+            term.draw(|f| section(f, Rect::new(0, 0, 10, 3), &sec))
+                .unwrap();
+            let buf = term.backend().buffer();
+            assert_eq!(buf[(1, 1)].bg, bg, "focused={focused}");
+            assert_eq!(buf[(1, 1)].fg, th.warn, "行里的颜色照旧");
+            assert_ne!(buf[(1, 0)].bg, bg);
+        }
     }
 }

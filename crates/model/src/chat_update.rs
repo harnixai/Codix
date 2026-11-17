@@ -16,7 +16,7 @@ const DETACH_ARM_MS: u64 = 800;
 
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
 const LOCAL: &[&str] = &[
-    "help", "new", "sessions", "model", "goal", "btw", "doctor", "quit", "exit", "stop",
+    "help", "new", "rename", "sessions", "model", "goal", "btw", "doctor", "quit", "exit", "stop",
 ];
 
 impl State {
@@ -540,12 +540,33 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             s.ui.overlay = Some(Overlay::Exit { selected: 0 });
             vec![]
         }
-        "new" => vec![s.call(
-            Pending::CreateOnly,
-            Command::CreateSession {
-                project: None,
-                scene: None,
-                model: None,
+        "new" => {
+            crate::follow::go_draft(s);
+            vec![]
+        }
+        "rename" if session.is_none() || s.ui.task_view.is_some() => {
+            s.notice(i18n::t!("chat_update.need_session"), true);
+            vec![]
+        }
+        "rename" if arg.is_empty() => {
+            let id = session?;
+            let title = s
+                .domain
+                .sessions
+                .iter()
+                .find(|x| x.id == id)
+                .map(|x| x.title.clone())
+                .unwrap_or_default();
+            s.ui.rename = Some(id);
+            s.ui.composer.insert_str(&title);
+            s.notice(i18n::t!("sessions.notice_rename"), false);
+            vec![]
+        }
+        "rename" => vec![s.call(
+            Pending::Ignore,
+            Command::Rename {
+                session: session?,
+                title: arg,
             },
         )],
         "sessions" => {
@@ -729,7 +750,6 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
             e.extend(send(s, id, text));
             e
         }
-        (Pending::CreateOnly, Reply::Session(summary)) => open_session(s, summary.id),
         (Pending::TaskOutput(task), Reply::TaskOutput { text, .. }) => {
             s.domain.task_output.insert(task, text);
             vec![]

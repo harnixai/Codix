@@ -12,6 +12,7 @@ mod ids;
 mod instance;
 mod job;
 pub mod link;
+pub mod order;
 mod session;
 mod task;
 

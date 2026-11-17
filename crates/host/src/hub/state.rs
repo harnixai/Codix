@@ -128,6 +128,8 @@ impl St {
                 origin: s.origin.clone(),
             },
             updated_ms: s.updated_ms,
+            // 建会话的真实时刻第 2 批再记；全是 0 时列表保持实例给的顺序。
+            created_ms: 0,
             held_by: None,
         })
     }

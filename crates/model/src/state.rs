@@ -165,8 +165,6 @@ pub struct Domain {
     pub run_views: Map<port::RunId, port::RunView>,
     pub flow_details: Map<String, port::FlowDetail>,
     pub job_history: Map<port::JobId, Vec<port::JobEntry>>,
-    /// 流程 / 作业各自的编辑会话：`flow:<名字>`、`job:<id>` → 会话。
-    pub authoring: Map<String, SessionId>,
     /// 列表加载失败的原因，按标签（会话 / 流程 / 作业）。
     pub load_errors: [Option<String>; 3],
 }
@@ -246,10 +244,14 @@ pub struct Ui {
     pub station_collapsed: std::collections::HashSet<String>,
     /// 上一次因为选中而自动展开的流程：同一个流程被 ← 收起后不再自动展开。
     pub flow_auto: Option<String>,
-    /// 流程定义的下半选中了哪一站：编写会话的面板改为显示这一站的配置；回到上半选流程时清掉。
-    pub flow_station: Option<(String, usize)>,
-    /// 上一次"选中即切换"的依据；选中没变就不再切。
+    /// 上一次"选中即切换"的依据（选中的是哪个对象）；选中没变就不再切。
     pub last_follow: Option<String>,
+    /// 右栏的选中按对象记（`[标签][上半 0 / 下半 1]` → 上次确认时的行号与那一行的身份）：列表
+    /// 插入、删除、重排、展开收起之后把选中挪回同一个对象。`None` 表示刚被显式改过，照新行号认。
+    pub anchors: [[Option<(usize, String)>; 2]; 3],
+    /// 左边换了会话、右栏选中已经对上的那个会话（`Some(None)` 是草稿）；没对上时每次 update
+    /// 再试一次，好等列表里出现它（比如刚建的会话，回复先于列表更新到）。
+    pub revealed_for: Option<Option<SessionId>>,
     /// 各标签的过滤字（`/`），以及是否正在输入过滤字。
     pub filter: [String; 3],
     pub filtering: bool,
@@ -359,8 +361,9 @@ impl State {
                 flow_expanded: Default::default(),
                 station_collapsed: Default::default(),
                 flow_auto: None,
-                flow_station: None,
                 last_follow: None,
+                anchors: Default::default(),
+                revealed_for: None,
                 filter: Default::default(),
                 filtering: false,
                 loading: Default::default(),
@@ -427,13 +430,27 @@ impl State {
             .filter(|s| !matches!(s.provenance.origin, port::Origin::SubAgent { .. }))
     }
 
-    /// 会话标签列的会话：人发起的（新建、分叉）。流程和作业开出来的会话在流程、作业标签里找。
-    pub fn user_sessions(&self) -> impl Iterator<Item = &SessionSummary> {
-        self.main_sessions().filter(|s| {
-            matches!(
-                s.provenance.origin,
-                port::Origin::User | port::Origin::Fork { .. }
-            )
+    /// 会话标签列的会话：人发起的（新建、分叉），按规范顺序（`port::order`），`#n` 就是它的位置。
+    /// 流程和作业开出来的会话在流程、作业标签里找。
+    pub fn user_sessions(&self) -> Vec<&SessionSummary> {
+        port::order::sessions(&self.domain.sessions)
+    }
+
+    /// 最近活跃的用户会话（F2 的落点、流程 / 作业标签的 `n` `e` `d` 回到哪里）。
+    pub fn recent_user_session(&self) -> Option<SessionId> {
+        self.user_sessions()
+            .into_iter()
+            .max_by_key(|s| s.updated_ms)
+            .map(|s| s.id.clone())
+    }
+
+    /// 左边是不是一个用户会话（不是运行、作业、子 Agent 的会话，也不是草稿）。
+    pub fn chat_is_user_session(&self) -> bool {
+        self.ui.chat.as_ref().is_some_and(|id| {
+            self.domain
+                .sessions
+                .iter()
+                .any(|s| &s.id == id && port::order::is_user_session(s))
         })
     }
 

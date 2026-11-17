@@ -543,7 +543,7 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
                 (None, false)
                     if s.ui.tab == Tab::Sessions
                         && s.ui.filter[0].is_empty()
-                        && s.user_sessions().next().is_none() =>
+                        && s.user_sessions().is_empty() =>
                 {
                     let mut v = visible;
                     v.push(Line::toned(empty_hint(s), Tone::Dim));

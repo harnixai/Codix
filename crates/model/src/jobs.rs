@@ -1,11 +1,11 @@
-//! 作业标签（需求 J，交互 §5.4）：上半是作业列表，下半是选中作业的详情与触发历史。
-//! 左边是这个作业的编辑会话（顶部面板是作业详情）；新建、修改、删除都在对话里说。
+//! 作业标签（需求 J，交互 §5.4）：上半是作业列表，下半是选中作业的定义、执行统计与触发记录。
+//! 作业本身没有会话，选中它左边不动；新建、修改、删除回到用户会话里说（`n` `e` `d` 放话头）。
 
 use keys::Action;
 use port::{Command, JobId, JobKind, JobOutcome, JobTarget};
 use tui::{Line, Tone};
 
-use crate::panel::{JobDefRow, fmt_clock, job_def, outcome};
+use crate::panel::{JobDefRow, fmt_clock, job_def, job_stats, outcome};
 use crate::state::{Focus, State, Tab};
 use crate::update::{Effect, Pending};
 
@@ -14,6 +14,8 @@ pub enum JobLower {
     Info(usize),
     /// 流程作业的流程：Enter 跳到流程标签里它的位置。
     Flow(String),
+    /// 执行统计的一行（只看）。
+    Stat(usize),
     Heading,
     Entry(usize),
 }
@@ -21,9 +23,8 @@ pub enum JobLower {
 impl State {
     pub fn job_rows(&self) -> Vec<JobId> {
         let filter = &self.ui.filter[Tab::Jobs.index()];
-        self.domain
-            .jobs
-            .iter()
+        port::order::jobs(&self.domain.jobs)
+            .into_iter()
             .filter(|j| filter.is_empty() || j.name.contains(filter.as_str()))
             .map(|j| j.id.clone())
             .collect()
@@ -50,10 +51,21 @@ impl State {
                 JobDefRow::Plain(_) => JobLower::Info(i),
             })
             .collect();
+        let history = self.domain.job_history.get(&id);
+        let stats = job_stats(history.map_or(&[][..], Vec::as_slice)).len();
+        out.extend((0..stats).map(JobLower::Stat));
         out.push(JobLower::Heading);
-        let n = self.domain.job_history.get(&id).map_or(0, Vec::len);
+        let n = history.map_or(0, Vec::len);
         out.extend((0..n).map(JobLower::Entry));
         out
+    }
+
+    /// 作业在规范顺序里的序号（`#n`，从 1 起）。
+    pub(crate) fn job_number(&self, id: &JobId) -> usize {
+        port::order::jobs(&self.domain.jobs)
+            .iter()
+            .position(|j| &j.id == id)
+            .map_or(0, |i| i + 1)
     }
 
     /// 下半选中的那次触发去向哪里。
@@ -68,6 +80,10 @@ impl State {
 }
 
 pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
+    let order: Vec<JobId> = port::order::jobs(&s.domain.jobs)
+        .iter()
+        .map(|j| j.id.clone())
+        .collect();
     s.job_rows()
         .iter()
         .filter_map(|id| s.domain.jobs.iter().find(|j| &j.id == id))
@@ -94,8 +110,10 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 Some(JobOutcome::Running) => (i18n::t!("jobs.running"), Tone::Accent),
                 _ => (String::new(), Tone::Dim),
             };
+            let n = order.iter().position(|x| x == &j.id).map_or(0, |i| i + 1);
             crate::sessions::split_line(
-                Line::toned(format!("{g} "), tone)
+                Line::toned(crate::sessions::number(n, order.len()), Tone::Dim)
+                    .push(format!("{g} "), tone)
                     .push(j.name.clone(), Tone::Normal)
                     .push(format!("  {}", j.cron), Tone::Dim),
                 Line::toned(format!("{next}  "), Tone::Dim).push(last, ltone),
@@ -128,11 +146,13 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
         .position(|r| matches!(r, JobDefRow::Flow(..)))
         .unwrap_or(0);
     let history = s.domain.job_history.get(&id).cloned().unwrap_or_default();
+    let stats = job_stats(&history);
     s.job_lower_rows()
         .iter()
         .map(|r| match r {
             JobLower::Info(i) => line_at(*i),
             JobLower::Flow(_) => line_at(flow_at),
+            JobLower::Stat(i) => stats.get(*i).cloned().unwrap_or_default(),
             JobLower::Heading => Line::toned(
                 if history.is_empty() {
                     i18n::t!("jobs.history_empty")
@@ -141,33 +161,31 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 },
                 Tone::Dim,
             ),
-            JobLower::Entry(i) => {
-                let e = &history[*i];
-                let (o, tone) = outcome(&e.outcome);
-                let target = match &e.target {
-                    Some(JobTarget::Session { title, .. }) => {
-                        i18n::t!("jobs.target_session", title = title)
-                    }
-                    Some(JobTarget::Run { subject, .. }) => {
-                        i18n::t!("jobs.target_run", subject = subject)
-                    }
-                    None => String::new(),
-                };
-                crate::sessions::split_line(
-                    Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim).push(o, tone),
-                    Line::toned(
-                        format!(
-                            "{}  {}  {target}",
-                            crate::sessions::fmt_elapsed(e.elapsed_ms),
-                            crate::chat::fmt_k(e.usage.total())
-                        ),
-                        Tone::Dim,
-                    ),
-                    width,
-                )
-            }
+            JobLower::Entry(i) => entry_line(&history[*i], width),
         })
         .collect()
+}
+
+/// 触发记录的一行：时刻、结局，右边是耗时、用量与去向。
+fn entry_line(e: &port::JobEntry, width: usize) -> Line {
+    let (o, tone) = outcome(&e.outcome);
+    let target = match &e.target {
+        Some(JobTarget::Session { title, .. }) => i18n::t!("jobs.target_session", title = title),
+        Some(JobTarget::Run { subject, .. }) => i18n::t!("jobs.target_run", subject = subject),
+        None => String::new(),
+    };
+    crate::sessions::split_line(
+        Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim).push(o, tone),
+        Line::toned(
+            format!(
+                "{}  {}  {target}",
+                crate::sessions::fmt_elapsed(e.elapsed_ms),
+                crate::chat::fmt_k(e.usage.total())
+            ),
+            Tone::Dim,
+        ),
+        width,
+    )
 }
 
 pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
@@ -176,13 +194,7 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         .as_ref()
         .and_then(|i| s.domain.jobs.iter().find(|j| &j.id == i))
         .cloned();
-    let prefill = |s: &mut State, text: &str| {
-        s.show_chat_pub();
-        s.ui.focus = Focus::Composer;
-        s.ui.composer.clear();
-        s.ui.composer.insert_str(text);
-        s.notice(i18n::t!("jobs.notice_tool"), false);
-    };
+    let n = job.as_ref().map_or(0, |j| s.job_number(&j.id));
     Some(match (a, job) {
         (Action::ToggleEnabled, Some(j)) => vec![s.call(
             Pending::Ignore,
@@ -195,25 +207,31 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             s.notice(i18n::t!("jobs.run_now", name = j.name), false);
             vec![s.call(Pending::Ignore, Command::RunJobNow { job: j.id })]
         }
-        (Action::New, _) => {
-            s.domain.authoring.remove("job:");
-            s.ui.last_follow = None;
-            let e = vec![s.call(
-                Pending::Authoring {
-                    key: "job:".into(),
-                    follow: true,
-                },
-                Command::OpenJobSession { job: None },
-            )];
-            prefill(s, &i18n::t!("jobs.prefill_new"));
-            e
-        }
-        (Action::Edit, Some(_)) => {
-            prefill(s, &i18n::t!("jobs.prefill_edit"));
-            vec![]
-        }
-        (Action::Delete, Some(_)) => {
-            prefill(s, &i18n::t!("jobs.prefill_delete"));
+        (Action::New, _) => prefill(s, &i18n::t!("jobs.prefill_new"), "jobs.notice_tool"),
+        (Action::Edit, Some(j)) => prefill(
+            s,
+            &i18n::t!("jobs.prefill_edit", n = n, name = j.name),
+            "jobs.notice_tool",
+        ),
+        (Action::Delete, Some(j)) => prefill(
+            s,
+            &i18n::t!("jobs.prefill_delete", n = n, name = j.name),
+            "jobs.notice_tool",
+        ),
+        (Action::View, Some(j)) => {
+            let history = s.domain.job_history.get(&j.id).cloned().unwrap_or_default();
+            let mut lines: Vec<String> =
+                job_def(&j, None).iter().map(|r| r.line().text()).collect();
+            lines.push(String::new());
+            lines.extend(job_stats(&history).iter().map(Line::text));
+            lines.push(String::new());
+            lines.push(i18n::t!("jobs.history_all", n = history.len()));
+            lines.extend(history.iter().map(|e| entry_line(e, 200).text()));
+            s.ui.overlay = Some(crate::state::Overlay::Text {
+                title: i18n::t!("jobs.view_title", n = n, name = j.name),
+                lines,
+                scroll: 0,
+            });
             vec![]
         }
         (Action::Open, _) if s.ui.focus == Focus::SideLower && selected_flow_link(s).is_some() => {
@@ -244,7 +262,7 @@ fn selected_flow_link(s: &State) -> Option<String> {
     }
 }
 
-/// 从流程作业跳到流程标签里它用的那个流程（选中即展开它的运行、左边切到它的编写会话）。
+/// 从流程作业跳到流程标签里它用的那个流程（选中即展开它的运行）。
 fn jump_to_flow(s: &mut State, name: &str) {
     s.ui.tab = Tab::Flows;
     s.ui.focus = Focus::SideUpper;
@@ -254,7 +272,18 @@ fn jump_to_flow(s: &mut State, name: &str) {
         .iter()
         .position(|r| r == &crate::flows::FlowRow::Flow(name.to_string()))
     {
-        Some(i) => s.ui.upper_mut().selected = i,
+        Some(i) => crate::follow::select(s, Tab::Flows, true, i),
         None => s.notice(i18n::t!("jobs.no_flow", name = name), true),
     }
+}
+
+/// 回到用户会话，把话头放进输入框（交互 §5.4）：作业、流程本身没有会话，改它们在对话里说。
+pub(crate) fn prefill(s: &mut State, text: &str, notice: &str) -> Vec<Effect> {
+    let e = crate::follow::back_to_user_session(s);
+    s.show_chat_pub();
+    s.ui.focus = Focus::Composer;
+    s.ui.composer.clear();
+    s.ui.composer.insert_str(text);
+    s.notice(i18n::tr(notice), false);
+    e
 }

@@ -90,7 +90,6 @@ pub(crate) enum Pending {
     CreateThenSubmit {
         text: String,
     },
-    CreateOnly,
     TaskOutput(port::TaskId),
     Runs(String),
     FlowDetail(String),
@@ -99,11 +98,6 @@ pub(crate) enum Pending {
         follow: bool,
     },
     JobHistory(port::JobId),
-    /// 流程 / 作业的编辑会话（`flow:<名字>`、`job:<id>`）。
-    Authoring {
-        key: String,
-        follow: bool,
-    },
 }
 
 const RATIO_MIN: u16 = 40;
@@ -729,15 +723,16 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 s.notice(i18n::t!("update.no_panel"), false);
             }
         }
-        Action::TabSessions => switch_tab(s, Tab::Sessions),
-        Action::TabFlows => switch_tab(s, Tab::Flows),
-        Action::TabJobs => switch_tab(s, Tab::Jobs),
+        Action::TabSessions => return switch_tab(s, Tab::Sessions),
+        Action::TabFlows => return switch_tab(s, Tab::Flows),
+        Action::TabJobs => return switch_tab(s, Tab::Jobs),
         Action::FocusToggle => {
             if s.ui.focus.in_side() {
                 s.show_chat();
                 s.ui.focus = Focus::Composer;
             } else {
                 s.show_side(Focus::SideUpper);
+                crate::follow::mark_seen(s);
             }
         }
         Action::PaneToggle => {
@@ -748,6 +743,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 }
             } else if s.ui.showing == ShowPane::Chat {
                 s.show_side(Focus::SideUpper);
+                crate::follow::mark_seen(s);
             } else {
                 s.show_chat();
             }
@@ -823,9 +819,17 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
     vec![]
 }
 
-fn switch_tab(s: &mut State, tab: Tab) {
+/// 切标签（交互 §5）：会话标签落在左边那个用户会话上（不是就换到最近活跃的，或草稿）；
+/// 流程、作业标签左边不动。之后人换了选中才选中即切换。
+fn switch_tab(s: &mut State, tab: Tab) -> Vec<Effect> {
     s.ui.tab = tab;
     s.show_side(Focus::SideUpper);
+    if tab == Tab::Sessions {
+        return crate::follow::land_on_sessions(s);
+    }
+    s.ui.revealed_for = Some(s.ui.chat.clone());
+    crate::follow::mark_seen(s);
+    vec![]
 }
 
 /// 右栏两半的选中项始终在视口里。
@@ -870,11 +874,12 @@ fn move_selection(s: &mut State, focus: Focus, delta: isize) {
         Focus::SideLower => s.ui.lower_mut(),
         _ => s.ui.upper_mut(),
     };
-    if len == 0 {
-        sec.selected = 0;
-        return;
-    }
-    sec.selected = (sec.selected as isize + delta).clamp(0, len as isize - 1) as usize;
+    let at = if len == 0 {
+        0
+    } else {
+        (sec.selected as isize + delta).clamp(0, len as isize - 1) as usize
+    };
+    crate::follow::select(s, s.ui.tab, focus != Focus::SideLower, at);
 }
 
 fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
@@ -1159,7 +1164,6 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
         Pending::FlowDetail(f) => Some(format!("flow:{f}")),
         Pending::RunView { id, .. } => Some(format!("run:{id}")),
         Pending::JobHistory(j) => Some(format!("history:{j}")),
-        Pending::Authoring { key, .. } => Some(format!("authoring:{key}")),
         _ => None,
     };
     if let Some(k) = key {
@@ -1227,13 +1231,6 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
         }
         (Pending::JobHistory(j), Reply::JobHistory(v)) => {
             d.job_history.insert(j, v);
-        }
-        (Pending::Authoring { key, follow }, Reply::Session(sum)) => {
-            d.authoring.insert(key, sum.id.clone());
-            if follow {
-                s.ui.last_follow = None;
-                return crate::follow::show(s, sum.id, vec![], None);
-            }
         }
         (what, reply) => return crate::chat_update::chat_reply(s, what, reply),
     }

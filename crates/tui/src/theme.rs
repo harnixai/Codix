@@ -17,6 +17,8 @@ pub struct Theme {
     pub border_focus: Color,
     pub dim: Color,
     pub selected_bg: Color,
+    /// 没焦点那一块的选中行（交互 §2.3）。
+    pub selected_bg_inactive: Color,
     pub selected_fg: Color,
     pub ok: Color,
     pub warn: Color,
@@ -38,7 +40,9 @@ impl Theme {
             border: Color::Indexed(238),
             border_focus: Color::Indexed(246),
             dim: Color::Indexed(243),
-            selected_bg: Color::Indexed(238),
+            // 暗调的橙：行里提醒色（◐）、主色（◎、强调）、绿红状态色落在上面都还看得清。
+            selected_bg: Color::Rgb(0x5C, 0x34, 0x26),
+            selected_bg_inactive: Color::Rgb(0x3A, 0x27, 0x21),
             selected_fg: Color::Indexed(255),
             ok: Color::Indexed(114),
             warn: Color::Indexed(179),
@@ -54,6 +58,8 @@ impl Theme {
     pub fn aqua() -> Theme {
         Theme {
             accent: Color::Rgb(0x4F, 0xC3, 0xF7),
+            selected_bg: Color::Rgb(0x1E, 0x46, 0x5A),
+            selected_bg_inactive: Color::Rgb(0x1B, 0x30, 0x3B),
             ..Theme::claude()
         }
     }
@@ -80,6 +86,7 @@ impl Theme {
             "border_focus" => &mut self.border_focus,
             "dim" => &mut self.dim,
             "selected_bg" => &mut self.selected_bg,
+            "selected_bg_inactive" => &mut self.selected_bg_inactive,
             "selected_fg" => &mut self.selected_fg,
             "ok" => &mut self.ok,
             "warn" => &mut self.warn,

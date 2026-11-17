@@ -230,8 +230,19 @@ pub(crate) fn split_line(left: Line, right: Line, width: usize) -> Line {
     l
 }
 
+/// `#n `：对象在规范顺序里的位置（`port::order`），淡色，按总数补齐好让名字对齐。
+pub(crate) fn number(n: usize, total: usize) -> String {
+    let w = total.max(1).to_string().len();
+    format!("#{n:<w$} ")
+}
+
 pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
     let rows = s.session_rows();
+    let order: Vec<SessionId> = s.user_sessions().iter().map(|x| x.id.clone()).collect();
+    let numbered = |id: &SessionId| {
+        let n = order.iter().position(|x| x == id).map_or(0, |i| i + 1);
+        number(n, order.len())
+    };
     rows.iter()
         .map(|r| match r {
             SessRow::New => Line::toned(i18n::t!("sessions.new"), Tone::Accent)
@@ -240,7 +251,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 let Some(x) = s.domain.sessions.iter().find(|x| &x.id == id) else {
                     return Line::default();
                 };
-                session_line(s, x, width)
+                session_line(s, x, numbered(id), width)
             }
             SessRow::Goal(id) => {
                 let Some(g) = s.domain.convs.get(id).and_then(|c| c.goal.as_ref()) else {
@@ -339,7 +350,7 @@ fn trim(line: Line, width: usize) -> Line {
     split_line(line, Line::default(), width)
 }
 
-fn session_line(s: &State, x: &SessionSummary, width: usize) -> Line {
+fn session_line(s: &State, x: &SessionSummary, num: String, width: usize) -> Line {
     let (g, tone) = state_glyph(x.state);
     let mark = if s.ui.sess_expanded.contains(&x.id) {
         "▾"
@@ -347,6 +358,7 @@ fn session_line(s: &State, x: &SessionSummary, width: usize) -> Line {
         "▸"
     };
     let left = Line::toned(format!("{mark} "), Tone::Dim)
+        .push(num, Tone::Dim)
         .push(format!("{g} "), tone)
         .push(x.title.clone(), Tone::Normal);
     let icon = origin_icon(&x.provenance.origin);
@@ -476,17 +488,11 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     let row = rows.get(s.ui.upper[0].selected).cloned();
     let id = row.as_ref().and_then(|r| r.session().cloned());
     Some(match (a, row) {
-        (Action::Open, Some(SessRow::New)) => {
+        (Action::Open, Some(SessRow::New)) | (Action::New, _) => {
+            crate::follow::go_draft(s);
             s.show_chat_pub();
             s.ui.focus = Focus::Composer;
-            vec![s.call(
-                Pending::CreateOnly,
-                Command::CreateSession {
-                    project: None,
-                    scene: None,
-                    model: None,
-                },
-            )]
+            vec![]
         }
         (Action::Expand, Some(SessRow::Session(id))) => {
             s.ui.sess_expanded.insert(id);
@@ -555,14 +561,6 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             s.ui.confirm = Some(Confirm::CloseSession(id, title));
             vec![]
         }
-        (Action::New, _) => vec![s.call(
-            Pending::CreateOnly,
-            Command::CreateSession {
-                project: None,
-                scene: None,
-                model: None,
-            },
-        )],
         (Action::Rename, Some(_)) => {
             let id = id?;
             let title = s

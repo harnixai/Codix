@@ -17,8 +17,10 @@ pub enum Tone {
     Add,
     Del,
     Code,
-    /// 选中行（反色）。
+    /// 有焦点那一块的选中行：橙调的底。
     Selected,
+    /// 没焦点那一块的选中行：暗一档的底，好看出右栏选中的就是左边在看的。
+    SelectedInactive,
     /// 需要人处理的高亮。
     Attention,
     /// 转录里用户输入那一块的淡底色（与 Claude Code 一致）。
