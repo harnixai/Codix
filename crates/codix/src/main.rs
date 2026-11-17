@@ -175,18 +175,24 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::List { .. } | Cmd::Host { .. }) => unreachable!(),
         None => {
-            let running: Vec<_> = instances
-                .list(false)
-                .await?
-                .into_iter()
+            let all = instances.list(true).await?;
+            let running: Vec<_> = all
+                .iter()
                 .filter(|i| i.state == port::InstanceState::Running)
+                .cloned()
                 .collect();
             let cwd = std::env::current_dir()?.canonicalize()?;
-            // 在项目目录里运行 codix 就接入这个项目的实例（需求 §1 项目级）。
-            match (mock_mode, client::for_project(&running, &cwd)) {
-                (false, Some(i)) => Start::Op(InstOp::Attach {
+            // 在项目目录里运行 codix 就接入这个项目的实例（需求 §1 项目级）；停着的就拉起来，
+            // 不另建一个——会话归属、作业都记在原来那个实例的目录里。
+            match (mock_mode, client::for_project(&all, &cwd)) {
+                (false, Some(i)) if i.state == port::InstanceState::Running => {
+                    Start::Op(InstOp::Attach {
+                        name: i.name.to_string(),
+                        force: false,
+                    })
+                }
+                (false, Some(i)) => Start::Op(InstOp::Start {
                     name: i.name.to_string(),
-                    force: false,
                 }),
                 _ if running.is_empty() => Start::Op(InstOp::Create {
                     name: None,

@@ -7,6 +7,8 @@ view:
     connecting: "○ 连接中…"
   crumb:
     new_session: "会话 › 新会话（输入即开始）"
+    new_flow: "新流程"
+    new_job: "新作业"
   task:
     empty: "  （还没有输出）"
   new_below: "↓ 有新内容 (End)"

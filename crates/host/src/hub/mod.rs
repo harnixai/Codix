@@ -121,19 +121,23 @@ impl Hub {
             default_model: Mutex::default(),
         }));
         hub.call("daemon.subscribeEvents", json!({})).await?;
-        if let Ok(cfg) = hub
+        let effective = hub
             .call(
                 "config.get",
-                json!({"project_root": hub.0.project, "tier": "effective"}),
+                json!({"scene": "code", "project_root": hub.0.project, "tier": "effective"}),
             )
-            .await
-        {
-            let m = &cfg["settings"]["model"];
-            let name = m
+            .await;
+        if let Err(e) = &effective {
+            tracing::warn!("config.get: {e}");
+        }
+        if let Ok(effective) = effective {
+            tracing::debug!(settings = %effective["settings"], "effective settings");
+            let m = &effective["settings"]["model"];
+            let name = m["model_name"]
                 .as_str()
-                .or_else(|| m["name"].as_str())
-                .or_else(|| m["default"].as_str())
+                .or_else(|| m.as_str())
                 .unwrap_or("");
+            tracing::info!(model = name, "default model");
             *hub.0.default_model.lock().unwrap() = name.to_string();
         }
         hub.load_sessions().await?;

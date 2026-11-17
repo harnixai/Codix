@@ -171,7 +171,15 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         Some(c) => (
             {
                 if task_label.is_none() || s.ui.ctx_parents.is_empty() {
-                    trail.push(c.summary.title.clone());
+                    // 新建流程 / 作业的编辑会话还没有名字：标题是空的，面包屑里写"新流程 / 新作业"。
+                    let title = match &c.summary.provenance.origin {
+                        port::Origin::Editor { of, .. } if c.summary.title.is_empty() => match of {
+                            port::EditorOf::Flow => i18n::t!("view.crumb.new_flow"),
+                            port::EditorOf::Job => i18n::t!("view.crumb.new_job"),
+                        },
+                        _ => c.summary.title.clone(),
+                    };
+                    trail.push(title);
                 }
                 if let Some(t) = &task_label {
                     trail.push(t.clone());
