@@ -371,7 +371,7 @@ Harnix 正在把 flow 拆出来，流程等它发布后再接：拷贝到 `3rds/
 ### 8.7 实例进程的进程级工作
 
 - `codix new` / `start`：子进程跑 `codix host`，`setsid` 脱离终端，stdin 接 `/dev/null`、stdout 与 stderr
-  接 `host.log`；拉起方等 `host.sock` 能连上（至多 10 秒）再接入。
+  接 `host.log`；拉起方等 `host.sock` 能连上（至多 30 秒：macOS 第一次执行新装的二进制要先扫描）再接入。
 - 日志过滤用 `agix::process::log_filter`（否则 rmcp 会把 OAuth 令牌写进日志）；装 panic 钩子。
 - SIGTERM / SIGINT：通知 TUI（`InstanceStopped`）、停调度器、`Embedded::shutdown`，删掉 socket 与发现文件。
   SIGHUP 忽略。

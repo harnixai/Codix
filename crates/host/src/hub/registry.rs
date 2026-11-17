@@ -13,6 +13,9 @@ pub struct Record {
     pub origin: Origin,
     #[serde(default)]
     pub title: Option<String>,
+    /// 名字只是第一句话的摘头：引擎自动起的名字来了可以替掉它。
+    #[serde(default)]
+    pub title_from_text: bool,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]

@@ -13,12 +13,14 @@ use futures::StreamExt;
 use model::{InstOp, Mouse, MouseButton, MouseKind, Msg};
 use port::Instances;
 
+mod host_main;
+
 /// 跑在终端里的 agent 工作台
 #[derive(Parser)]
 #[command(name = "codix", version)]
 struct Cli {
-    /// 用 mock 后端：内置场景名或场景文件路径。阶段 2 不带它也是 mock，打开演示 `demo`。
-    #[arg(long, global = true)]
+    /// 用 mock 后端，不接真实实例：不给值打开演示 `demo`，也可以给场景名或场景文件。
+    #[arg(long, global = true, num_args = 0..=1, default_missing_value = "demo")]
     mock: Option<String>,
     /// mock 时间线的加速倍数。
     #[arg(long, default_value_t = 1.0, global = true)]
@@ -55,6 +57,14 @@ enum Cmd {
     Start { name: String },
     /// 停止实例。
     Stop { name: String },
+    /// 实例进程的入口，由 new / start 拉起，用户不直接调用。
+    #[command(hide = true)]
+    Host {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        project: std::path::PathBuf,
+    },
 }
 
 /// 帮助文字按当前语言重写：clap 的 derive 只认字面量，`///` 里的中文只作源码里的说明，
@@ -93,18 +103,9 @@ async fn main() -> Result<()> {
         Some(&config::home().join("locales")),
     ));
     let cli = Cli::from_arg_matches(&localized_command().get_matches())?;
-    // 真实实例在阶段 3 接入；在那之前直接打开 mock 的演示。
-    let scenario = cli.mock.as_deref().unwrap_or("demo");
-    let scenario = mock::load_scenario(scenario)
-        .or_else(|_| mock::load_seed(scenario).map(|_| mock::Scenario::seed_only(scenario)))
-        .with_context(|| i18n::t!("app.no_scenario", name = scenario))?;
-    let instances = mock::MockInstances::new(
-        scenario,
-        mock::MockOptions {
-            speed: cli.speed,
-            ..mock::MockOptions::default()
-        },
-    );
+    if let Some(Cmd::Host { name, project }) = cli.command {
+        return host_main::run(name, project).await;
+    }
     let idle_override = match &cli.command {
         Some(Cmd::Attach {
             idle_timeout: Some(t),
@@ -114,6 +115,33 @@ async fn main() -> Result<()> {
                 .with_context(|| i18n::t!("app.bad_duration", value = t))?,
         ),
         _ => None,
+    };
+    let (mut settings, more) = cfg.settings();
+    problems.extend(more);
+    if let Some(idle) = idle_override {
+        settings.idle_timeout_ms = idle;
+    }
+    let mock_mode = cli.mock.is_some();
+    let instances: Arc<dyn Instances> = match &cli.mock {
+        Some(scenario) => {
+            let sc = mock::load_scenario(scenario)
+                .or_else(|_| mock::load_seed(scenario).map(|_| mock::Scenario::seed_only(scenario)))
+                .with_context(|| i18n::t!("app.no_scenario", name = scenario))?;
+            Arc::new(mock::MockInstances::new(
+                sc,
+                mock::MockOptions {
+                    speed: cli.speed,
+                    ..mock::MockOptions::default()
+                },
+            ))
+        }
+        None => Arc::new(
+            client::SocketInstances::new(
+                client::Layout::new(config::home()),
+                std::env::current_exe()?,
+            )
+            .with_idle_timeout(settings.idle_timeout_ms),
+        ),
     };
     if let Some(Cmd::List { all }) = cli.command {
         for i in instances.list(all).await? {
@@ -145,26 +173,31 @@ async fn main() -> Result<()> {
             println!("{}", i18n::t!("app.stopped", name = name));
             return Ok(());
         }
-        Some(Cmd::List { .. }) => unreachable!(),
+        Some(Cmd::List { .. } | Cmd::Host { .. }) => unreachable!(),
         None => {
-            let running = instances.list(false).await?;
-            if running.is_empty() {
-                Start::Op(InstOp::Create {
+            let running: Vec<_> = instances
+                .list(false)
+                .await?
+                .into_iter()
+                .filter(|i| i.state == port::InstanceState::Running)
+                .collect();
+            let cwd = std::env::current_dir()?.canonicalize()?;
+            // 在项目目录里运行 codix 就接入这个项目的实例（需求 §1 项目级）。
+            match (mock_mode, client::for_project(&running, &cwd)) {
+                (false, Some(i)) => Start::Op(InstOp::Attach {
+                    name: i.name.to_string(),
+                    force: false,
+                }),
+                _ if running.is_empty() => Start::Op(InstOp::Create {
                     name: None,
-                    project: None,
-                })
-            } else {
-                Start::Picker
+                    project: (!mock_mode).then(|| cwd.to_string_lossy().into_owned()),
+                }),
+                _ => Start::Picker,
             }
         }
     };
-    let (mut settings, more) = cfg.settings();
-    problems.extend(more);
-    if let Some(idle) = idle_override {
-        settings.idle_timeout_ms = idle;
-    }
     let cfg_err = (!problems.is_empty()).then(|| problems.join(&i18n::t!("app.config.joiner")));
-    run(Arc::new(instances), start, cfg, cfg_err, settings).await
+    run(instances, start, cfg, cfg_err, settings, mock_mode).await
 }
 
 async fn run(
@@ -173,6 +206,7 @@ async fn run(
     cfg: config::Config,
     cfg_err: Option<String>,
     settings: model::Settings,
+    mock_mode: bool,
 ) -> Result<()> {
     let mut t = CrosstermTerm::new()?;
     let negotiated = term::negotiate(
@@ -183,7 +217,7 @@ async fn run(
     );
     install_panic_hook();
     t.enter(true)?;
-    let result = event_loop(&mut t, instances, start, cfg_err, settings, true).await;
+    let result = event_loop(&mut t, instances, start, cfg_err, settings, mock_mode).await;
     t.leave()?;
     term::restore(&mut t, negotiated);
     result

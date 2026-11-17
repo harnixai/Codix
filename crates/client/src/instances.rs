@@ -22,7 +22,8 @@ use crate::backend::SocketBackend;
 use crate::layout::{InstanceFile, InstanceMeta, Layout, read_json};
 use crate::local::{hostname, pid_alive, this_client};
 
-const START_TIMEOUT: Duration = Duration::from_secs(10);
+/// macOS 第一次执行一个新写出的二进制要先扫描，大的调试版本能卡十来秒；之后每次是毫秒级。
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(100);
 /// 名字进 socket 路径，而 `sun_path` 在 macOS 上只有 104 字节。
@@ -110,6 +111,11 @@ impl SocketInstances {
         let mut child = std::process::Command::new(&self.exe)
             .args(["host", "--name", name, "--project"])
             .arg(project)
+            // 实例与 TUI 必须认同一个家目录：TUI 的 Layout 不一定来自环境变量（测试、--home）。
+            .env("CODIX_HOME", self.layout.home())
+            // cargo run / cargo test 设的加载器回退路径里有 target/debug/deps：macOS 的 dyld 照着它
+            // 逐个目录找系统库，一次 exec 要十几秒。实例也不该带着开发时的加载路径常驻。
+            .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(failed)?)
             .stderr(log)

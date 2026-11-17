@@ -590,7 +590,7 @@ impl Hub {
             match r {
                 Ok(v) => {
                     if let Some(name) = v["name"].as_str() {
-                        hub.retitle(&id, name, false);
+                        hub.retitle(&id, name, Titler::Engine);
                     }
                 }
                 Err(RpcError::Remote { message, .. }) => {
@@ -609,14 +609,24 @@ impl Hub {
         turn
     }
 
-    /// 起名：用户改的名字总算数；引擎首轮自动起的名字只在还没有名字时才用。
-    fn retitle(&self, id: &str, title: &str, by_user: bool) {
+    /// 起名：用户改的名字总算数；引擎首轮自动起的名字只替掉"第一句话"那种临时名字；
+    /// 第一句话只在还没有名字时用（Agix 不报冷会话的名字，没有它列表里只剩 id）。
+    fn retitle(&self, id: &str, title: &str, by: Titler) {
         {
             let mut reg = self.0.reg.lock().unwrap();
-            if !by_user && reg.get(id).and_then(|r| r.title.as_ref()).is_some() {
+            let rec = reg.get(id).cloned().unwrap_or_default();
+            let keep = match by {
+                Titler::User => false,
+                Titler::Engine => rec.title.is_some() && !rec.title_from_text,
+                Titler::FirstText => rec.title.is_some(),
+            };
+            if keep {
                 return;
             }
-            reg.update(id, |r| r.title = Some(title.to_string()));
+            reg.update(id, |r| {
+                r.title = Some(title.to_string());
+                r.title_from_text = by == Titler::FirstText;
+            });
         }
         if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(id) {
             s.title = title.to_string();
@@ -863,7 +873,7 @@ impl Hub {
                         json!({"session_id": session.0, "name": title}),
                     )
                     .await;
-                self.retitle(&session.0, &title, true);
+                self.retitle(&session.0, &title, Titler::User);
                 Ok(Reply::Ok)
             }
             C::Close { session } => {
@@ -887,6 +897,17 @@ impl Hub {
                 ..
             } => {
                 self.ensure_known(&session.0).await?;
+                // 往哪个会话说话就是在看哪个会话：新建会话后 model 先放一个空转录、不等快照就提交。
+                self.0
+                    .link
+                    .lock()
+                    .unwrap()
+                    .watched
+                    .insert(session.0.clone());
+                let first: String = text.lines().next().unwrap_or("").chars().take(40).collect();
+                if !first.trim().is_empty() {
+                    self.retitle(&session.0, first.trim(), Titler::FirstText);
+                }
                 let on_busy = match mode {
                     SubmitMode::Turn => "reject",
                     SubmitMode::Steer => "steer",
@@ -1132,6 +1153,13 @@ fn wanted(ev: &Event, watched: &HashSet<String>, st: &St) -> bool {
         }
         e => e.session().is_none_or(|s| watched.contains(&s.0)),
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Titler {
+    User,
+    Engine,
+    FirstText,
 }
 
 fn rand_suffix() -> String {

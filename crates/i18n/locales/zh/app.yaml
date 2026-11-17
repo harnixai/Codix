@@ -14,7 +14,7 @@ app:
   stopped: "已停止 {name}"
   cli:
     about: "跑在终端里的 agent 工作台"
-    mock: "用 mock 后端：内置场景名或场景文件路径。阶段 2 不带它也是 mock，打开演示 `demo`。"
+    mock: "用 mock 后端，不接真实实例：不给值打开演示 `demo`，也可以给内置场景名或场景文件路径。"
     speed: "mock 时间线的加速倍数。"
     new: "新建实例并接入。"
     list: "列出本机的实例。"
