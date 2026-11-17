@@ -32,6 +32,7 @@ pub struct Sess {
     pub todos: Vec<Todo>,
     pub usage: Usage,
     pub updated_ms: u64,
+    pub created_ms: u64,
     pub(super) last_step: Option<u32>,
     pub(super) step_mark: usize,
     /// 这一轮到此刻的回答文字：快照里补上正在写的那段，作业与侧问取它当结果。
@@ -128,8 +129,7 @@ impl St {
                 origin: s.origin.clone(),
             },
             updated_ms: s.updated_ms,
-            // 建会话的真实时刻第 2 批再记；全是 0 时列表保持实例给的顺序。
-            created_ms: 0,
+            created_ms: s.created_ms,
             held_by: None,
         })
     }
@@ -169,6 +169,22 @@ impl St {
     /// （子 Agent 的帧经父会话发出，答也用父会话）。
     pub fn on_event(&mut self, sid: &str, rpc: &str, ev: SessionEvent, now: u64, out: &mut Out) {
         let session = || SessionId(sid.to_string());
+        // 宿主工具挂在连接上，哪个会话调都会来；不认识的会话也得回答，否则那一轮卡到超时。
+        // 能动什么由 Hub 按会话查，不认识的什么都不给。
+        if let SessionEvent::HostToolCall {
+            call_id,
+            name,
+            input,
+        } = ev
+        {
+            out.todo.push(Todo2::HostCall {
+                rpc_session: rpc.to_string(),
+                call_id,
+                name,
+                input,
+            });
+            return;
+        }
         // 不认识的会话不凭一帧建出来：关掉的会话还会迟到几帧（任务收尾至多 15 秒），
         // 建出来就是一个没有项目、没有归属的幽灵条目。
         let Some(s) = self.sessions.get_mut(sid) else {
@@ -288,16 +304,7 @@ impl St {
                 resolution,
                 reason,
             } => self.resolve_prompt(&prompt_id, &resolution, reason, out),
-            SessionEvent::HostToolCall {
-                call_id,
-                name,
-                input,
-            } => out.todo.push(Todo2::HostCall {
-                rpc_session: rpc.to_string(),
-                call_id,
-                name,
-                input,
-            }),
+            SessionEvent::HostToolCall { .. } => {}
             SessionEvent::SubagentProgress {
                 agent_label,
                 agent_session_id,

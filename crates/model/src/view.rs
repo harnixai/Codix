@@ -171,15 +171,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         Some(c) => (
             {
                 if task_label.is_none() || s.ui.ctx_parents.is_empty() {
-                    // 新建流程 / 作业的编辑会话还没有名字：标题是空的，面包屑里写"新流程 / 新作业"。
-                    let title = match &c.summary.provenance.origin {
-                        port::Origin::Editor { of, .. } if c.summary.title.is_empty() => match of {
-                            port::EditorOf::Flow => i18n::t!("view.crumb.new_flow"),
-                            port::EditorOf::Job => i18n::t!("view.crumb.new_job"),
-                        },
-                        _ => c.summary.title.clone(),
-                    };
-                    trail.push(title);
+                    trail.push(c.summary.title.clone());
                 }
                 if let Some(t) = &task_label {
                     trail.push(t.clone());
@@ -334,16 +326,8 @@ fn crumb_root(s: &State, c: &crate::chat::Conversation) -> String {
             .and_then(|(id, _)| s.domain.sessions.iter().find(|x| &x.id == id))
             .unwrap_or(&c.summary);
     match &root.provenance.origin {
-        port::Origin::FlowStation { .. }
-        | port::Origin::Editor {
-            of: port::EditorOf::Flow,
-            ..
-        } => i18n::t!("view.root.flow"),
-        port::Origin::Job { .. }
-        | port::Origin::Editor {
-            of: port::EditorOf::Job,
-            ..
-        } => i18n::t!("view.root.job"),
+        port::Origin::FlowStation { .. } => i18n::t!("view.root.flow"),
+        port::Origin::Job { .. } => i18n::t!("view.root.job"),
         _ => i18n::t!("view.root.session"),
     }
 }
@@ -372,12 +356,6 @@ fn badge_text(sum: &port::SessionSummary) -> String {
         port::Origin::Fork { from_title, .. } => {
             Some(i18n::t!("view.badge.fork", from_title = from_title))
         }
-        port::Origin::Editor { of, name } => Some(match (of, name.is_empty()) {
-            (port::EditorOf::Flow, false) => i18n::t!("view.badge.editor_flow", name = name),
-            (port::EditorOf::Flow, true) => i18n::t!("view.badge.editor_flow_new"),
-            (port::EditorOf::Job, false) => i18n::t!("view.badge.editor_job", name = name),
-            (port::EditorOf::Job, true) => i18n::t!("view.badge.editor_job_new"),
-        }),
     };
     let held = sum
         .held_by

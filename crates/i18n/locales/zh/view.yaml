@@ -7,8 +7,6 @@ view:
     connecting: "○ 连接中…"
   crumb:
     new_session: "会话 › 新会话（输入即开始）"
-    new_flow: "新流程"
-    new_job: "新作业"
   task:
     empty: "  （还没有输出）"
   new_below: "↓ 有新内容 (End)"
@@ -36,10 +34,6 @@ view:
     flow_station: "流程「{flow_title}」› {subject} › {station_title}"
     sub_agent: "子 Agent ← {parent_title}"
     fork: "⑂ 分叉自 {from_title}"
-    editor_flow: "流程「{name}」的编写会话"
-    editor_flow_new: "新流程的编写会话"
-    editor_job: "作业「{name}」的编辑会话"
-    editor_job_new: "新作业的编辑会话"
     held: "⚠ 被实例 {holder} 占用"
     running: "● 运行中"
     waiting: "◐ 等你"

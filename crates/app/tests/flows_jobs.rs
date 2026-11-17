@@ -52,12 +52,6 @@ async fn selecting_a_flow_keeps_the_chat_and_shows_its_design_below() {
     }
     assert!(h.text().contains("流程设计：需求到上线"), "右下框的标题");
     assert!(h.panel().is_empty(), "左上不再有流程设计");
-    assert!(
-        !h.calls("dev")
-            .iter()
-            .any(|c| matches!(c, Command::OpenAuthoring { .. })),
-        "不再开编写会话"
-    );
     h.snapshot("flow-design");
     h.keys("v").await;
     assert!(h.text().contains("feature-to-ship 的定义"), "查看 YAML");

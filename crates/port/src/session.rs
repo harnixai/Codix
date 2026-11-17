@@ -73,21 +73,6 @@ pub enum Origin {
         from: SessionId,
         from_title: String,
     },
-    /// 编写某个流程、编辑某个作业用的会话（选中流程 / 作业时左边的那个）。不是人"原生"
-    /// 发起的会话，不进会话列表。
-    Editor {
-        of: EditorOf,
-        /// 流程或作业的名字；新建时为空。
-        #[serde(default)]
-        name: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EditorOf {
-    Flow,
-    Job,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

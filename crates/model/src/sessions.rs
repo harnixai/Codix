@@ -187,7 +187,7 @@ pub(crate) fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
 
 pub(crate) fn origin_icon(o: &Origin) -> &'static str {
     match o {
-        Origin::User | Origin::SubAgent { .. } | Origin::Editor { .. } => "",
+        Origin::User | Origin::SubAgent { .. } => "",
         Origin::Job { .. } => "⏰",
         Origin::FlowStation { .. } => "⇶",
         Origin::Fork { .. } => "⑂",

@@ -1,5 +1,5 @@
 //! Codix 自己记的会话归属（architecture §8.4，`sessions.json`）。Agix 不知道一个会话是作业
-//! 触发的还是编辑作业用的，冷会话的名字它也不报，所以这些由实例记下来。
+//! 触发的、哪个会话分叉来的，冷会话的名字它也不报，所以这些由实例记下来。
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,9 +20,9 @@ pub struct Record {
     pub model: Option<String>,
     #[serde(default)]
     pub updated_ms: u64,
-    /// 编辑会话的键（`job:<id>`），同一个作业总是同一个会话。
+    /// 实例建这个会话的时刻（会话列表的顺序、`#n` 按它）；0 是没记，用引擎报的。
     #[serde(default)]
-    pub editor_key: Option<String>,
+    pub created_ms: u64,
     /// 在 Codix 里关掉的：Agix 的列表里还有它（transcript 在），会话标签里不再列。
     #[serde(default)]
     pub closed: bool,
@@ -35,12 +35,17 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// 读不出来就从空的开始：归属丢了只是退回 `User`，不该让实例起不来。
+    /// 读不出来就从空的开始：归属丢了只是退回 `User`，不该让实例起不来。逐条读：一条读不懂
+    /// （旧版本写的、已不存在的归属）只丢那一条，不连累别的。
     pub fn open(path: PathBuf) -> Registry {
-        let records = std::fs::read_to_string(&path)
+        let raw: BTreeMap<String, serde_json::Value> = std::fs::read_to_string(&path)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
+        let records = raw
+            .into_iter()
+            .filter_map(|(id, v)| Some((id, serde_json::from_value(v).ok()?)))
+            .collect();
         Registry {
             path: Some(path),
             records,
@@ -53,13 +58,6 @@ impl Registry {
 
     pub fn get(&self, id: &str) -> Option<&Record> {
         self.records.get(id)
-    }
-
-    pub fn by_editor_key(&self, key: &str) -> Option<String> {
-        self.records
-            .iter()
-            .find(|(_, r)| r.editor_key.as_deref() == Some(key))
-            .map(|(id, _)| id.clone())
     }
 
     pub fn update(&mut self, id: &str, f: impl FnOnce(&mut Record)) {
@@ -89,19 +87,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn records_survive_reopen_and_editor_keys_resolve() {
+    fn records_survive_reopen_and_an_unreadable_one_drops_alone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.json");
         let mut r = Registry::open(path.clone());
         r.update("s1", |x| {
-            x.origin = Origin::Editor {
-                of: port::EditorOf::Job,
-                name: "nightly".into(),
+            x.origin = Origin::Fork {
+                from: port::SessionId("s0".into()),
+                from_title: "t".into(),
             };
-            x.editor_key = Some("job:j1".into());
+            x.created_ms = 7;
         });
+        let mut text: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        text["old"] = serde_json::json!({"origin": {"editor": {"of": "job", "name": "x"}}});
+        std::fs::write(&path, text.to_string()).unwrap();
         let r = Registry::open(path);
-        assert_eq!(r.by_editor_key("job:j1").as_deref(), Some("s1"));
-        assert!(matches!(r.get("s1").unwrap().origin, Origin::Editor { .. }));
+        assert!(matches!(r.get("s1").unwrap().origin, Origin::Fork { .. }));
+        assert_eq!(r.get("s1").unwrap().created_ms, 7);
+        assert!(r.get("old").is_none());
     }
 }

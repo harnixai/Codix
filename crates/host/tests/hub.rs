@@ -316,36 +316,68 @@ async fn a_failed_run_turn_is_a_failed_turn() {
     assert_eq!(r.calls("session.run_turn")[0]["on_busy"], "reject");
 }
 
+fn tool_call(sid: &str, call_id: &str, name: &str, input: Value) -> Value {
+    json!({"kind":"host_tool_call","call_id":call_id,"tool_use_id":"t","name":name,
+        "input":input,"timeout_ms":1000,"task_id":null,"agent_session_id":null,"cwd":PROJECT,"depth":0,
+        "session_id":sid})
+}
+
+impl Rig {
+    /// 工具的回答：`(是否出错, 文本)`。
+    fn answer(&self, call_id: &str) -> (bool, String) {
+        let r = self
+            .calls("session.respondToolCall")
+            .into_iter()
+            .find(|c| c["call_id"] == call_id)
+            .unwrap_or_else(|| panic!("{call_id} 没有回答"));
+        (
+            r["result"]["is_error"].as_bool().unwrap(),
+            r["result"]["content"].as_str().unwrap().to_string(),
+        )
+    }
+}
+
 #[tokio::test]
-async fn job_editor_tools_save_jobs_and_firing_records_the_outcome() {
+async fn host_tools_hang_on_the_connection_and_a_user_session_saves_jobs() {
     let mut r = rig().await;
-    let Reply::Session(ed) = r
-        .hub
-        .handle(Command::OpenJobSession { job: None })
-        .await
+    let set = &r.calls("daemon.setHostTools")[0];
+    let names: Vec<&str> = set["host_tools"]
+        .as_array()
         .unwrap()
-    else {
-        panic!()
-    };
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"job_save") && names.contains(&"session_rename"));
+    r.hub
+        .handle(Command::CreateSession {
+            project: None,
+            scene: None,
+            model: None,
+        })
+        .await
+        .unwrap();
     let create = &r.calls("session.create")[0];
-    assert_eq!(create["options"]["host_tools"][1]["name"], "JobSave");
-    assert_eq!(create["project_root"], PROJECT);
-    // 同一个作业再打开还是那个会话。
-    let Reply::Session(again) = r
-        .hub
-        .handle(Command::OpenJobSession { job: None })
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(again.id, ed.id);
+    assert!(
+        create["options"]["permission_rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["tool_name"] == "job_list" && x["behavior"] == "allow"),
+        "查看类工具不用每次问"
+    );
+    assert!(
+        create["options"]["host_tools"].is_null(),
+        "不再按会话挂工具"
+    );
 
     r.frame(
-        &ed.id.0,
-        json!({"kind":"host_tool_call","call_id":"hc1","tool_use_id":"t","name":"JobSave",
-            "input":{"name":"nightly","cron":"0 2 * * *","prompt":"跑测试"},
-            "timeout_ms":1000,"task_id":null,"agent_session_id":null,"cwd":PROJECT,"depth":0}),
+        "s1",
+        tool_call(
+            "s1",
+            "hc1",
+            "job_save",
+            json!({"name":"nightly","cron":"0 2 * * *","prompt":"跑测试"}),
+        ),
     );
     let ev = r.events().await;
     let job = ev
@@ -355,9 +387,9 @@ async fn job_editor_tools_save_jobs_and_firing_records_the_outcome() {
             _ => None,
         })
         .expect("保存的作业推出来了");
-    let resp = &r.calls("session.respondToolCall")[0];
-    assert_eq!(resp["call_id"], "hc1");
-    assert_eq!(resp["result"]["is_error"], false);
+    let (err, text) = r.answer("hc1");
+    assert!(!err, "{text}");
+    assert!(text.contains(&job.id.0), "回显名字与 ID：{text}");
 
     r.hub
         .handle(Command::RunJobNow {
@@ -512,4 +544,117 @@ async fn late_frames_do_not_resurrect_a_closed_session() {
         panic!()
     };
     assert!(v.iter().all(|s| s.id.0 != "s2"), "{v:?}");
+}
+
+#[tokio::test]
+async fn a_job_fired_session_may_change_only_its_own_job() {
+    let mut r = rig().await;
+    let save = |name: &str| port::Job {
+        id: port::JobId(String::new()),
+        name: name.into(),
+        cron: "0 2 * * *".into(),
+        kind: port::JobKind::Simple {
+            prompt: "跑测试".into(),
+            skills: vec![],
+            project: None,
+            scene: None,
+            model: None,
+        },
+        enabled: true,
+        catch_up: false,
+        next_fire_ms: None,
+        last: None,
+    };
+    let Reply::Job(mine) = r
+        .hub
+        .handle(Command::SaveJob { job: save("mine") })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    let Reply::Job(other) = r
+        .hub
+        .handle(Command::SaveJob { job: save("other") })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    r.hub
+        .handle(Command::RunJobNow {
+            job: mine.id.clone(),
+        })
+        .await
+        .unwrap();
+    r.events().await;
+    // 触发出来的会话是 new1（假引擎建的会话都叫这个）。
+    r.frame(
+        "new1",
+        tool_call(
+            "new1",
+            "a",
+            "job_enable",
+            json!({"target": other.id.0, "enabled": false}),
+        ),
+    );
+    r.frame(
+        "new1",
+        tool_call(
+            "new1",
+            "b",
+            "job_enable",
+            json!({"target": mine.id.0, "enabled": false}),
+        ),
+    );
+    r.frame(
+        "new1",
+        tool_call(
+            "new1",
+            "c",
+            "job_save",
+            json!({"name":"x","cron":"* * * * *","prompt":"p"}),
+        ),
+    );
+    r.frame(
+        "new1",
+        tool_call(
+            "new1",
+            "d",
+            "session_rename",
+            json!({"target": "s1", "title": "改别人"}),
+        ),
+    );
+    r.frame(
+        "new1",
+        tool_call("new1", "e", "session_rename", json!({"title": "改自己"})),
+    );
+    // 子 Agent 的调用经根会话来，作用域也是根会话的。
+    r.frame(
+        "new1",
+        json!({"kind":"subagent_progress","agent_label":"子","agent_session_id":"c9","task_id":"t9",
+            "event": tool_call("new1", "f", "job_delete", json!({"target": other.id.0}))}),
+    );
+    r.frame("zz", tool_call("zz", "g", "job_list", json!({})));
+    r.frame("s1", tool_call("s1", "h", "job_list", json!({})));
+    r.events().await;
+    for (id, ok) in [
+        ("a", false),
+        ("b", true),
+        ("c", false),
+        ("d", false),
+        ("e", true),
+        ("f", false),
+        ("g", false),
+        ("h", true),
+    ] {
+        let (err, text) = r.answer(id);
+        assert_eq!(!err, ok, "{id}: {text}");
+    }
+    let (_, list) = r.answer("h");
+    assert!(
+        list.starts_with("#1  ") && list.contains("#2  "),
+        "按 #n 列：{list}"
+    );
+    assert!(list.contains("mine") && list.contains("other"));
 }

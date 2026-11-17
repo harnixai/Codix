@@ -240,13 +240,10 @@ async fn flows_and_jobs_have_no_sessions_of_their_own() {
         "话头放在用户会话（或草稿）里"
     );
     assert!(
-        !h.calls("dev").iter().any(|c| matches!(
-            c,
-            port::Command::OpenAuthoring { .. }
-                | port::Command::OpenJobSession { .. }
-                | port::Command::CreateSession { .. }
-        )),
-        "不开编写 / 编辑会话，也不预先建会话"
+        !h.calls("dev")
+            .iter()
+            .any(|c| matches!(c, port::Command::CreateSession { .. })),
+        "不预先建会话"
     );
     h.keys("F2").await;
     for r in h.core.state.session_rows() {

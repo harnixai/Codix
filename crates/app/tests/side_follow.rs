@@ -30,13 +30,12 @@ fn session_id(h: &Harness, title: &str) -> SessionId {
         .clone()
 }
 
-fn no_editor_or_eager_sessions(h: &Harness) {
+fn no_eager_sessions(h: &Harness) {
     assert!(
-        !h.calls("dev").iter().any(|c| matches!(
-            c,
-            Command::OpenAuthoring { .. } | Command::OpenJobSession { .. }
-        )),
-        "流程、作业不再开自己的会话"
+        !h.calls("dev")
+            .iter()
+            .any(|c| matches!(c, Command::CreateSession { .. })),
+        "选中流程、作业，按 n e d，都不建会话"
     );
 }
 
@@ -182,7 +181,7 @@ async fn selecting_a_flow_or_a_job_keeps_the_chat() {
     h.keys("F3").await;
     h.pick_upper(0).await;
     assert_eq!(h.core.state.ui.chat, Some(mine));
-    no_editor_or_eager_sessions(&h);
+    no_eager_sessions(&h);
 }
 
 #[tokio::test(start_paused = true)]
@@ -222,7 +221,7 @@ async fn n_e_d_put_a_lead_in_into_the_user_session() {
     h.keys("Ctrl+U F3 n").await;
     assert_eq!(h.core.state.ui.composer.text, "新建一个流程：");
     assert_eq!(h.core.state.ui.chat, Some(mine), "一直在同一个用户会话里");
-    no_editor_or_eager_sessions(&h);
+    no_eager_sessions(&h);
 }
 
 #[tokio::test(start_paused = true)]

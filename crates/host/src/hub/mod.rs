@@ -144,6 +144,20 @@ impl Hub {
             default_model: Mutex::default(),
         }));
         hub.call("daemon.subscribeEvents", json!({})).await?;
+        // 工具挂在连接上：每个会话都有，此后建起来（新建、恢复、重建）的引擎都带上。
+        match hub
+            .call(
+                "daemon.setHostTools",
+                json!({"host_tools": tools::declarations()}),
+            )
+            .await
+        {
+            Ok(r) if r["refused"].as_array().is_some_and(|a| !a.is_empty()) => {
+                tracing::warn!(refused = %r["refused"], "host tools refused")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("daemon.setHostTools: {e}"),
+        }
         let effective = hub
             .call(
                 "config.get",
@@ -276,7 +290,7 @@ impl Hub {
                 name,
                 input,
             } => {
-                let (content, is_error) = match self.host_tool(&name, &input) {
+                let (content, is_error) = match self.host_tool(&rpc_session, &name, &input).await {
                     Ok(c) => (c, false),
                     Err(e) => (e, true),
                 };
@@ -394,6 +408,10 @@ impl Hub {
             updated_ms: parse_rfc3339_ms(&info.last_active)
                 .or_else(|| parse_rfc3339_ms(&info.created_at))
                 .unwrap_or(rec.updated_ms),
+            created_ms: Some(rec.created_ms)
+                .filter(|ms| *ms > 0)
+                .or_else(|| parse_rfc3339_ms(&info.created_at))
+                .unwrap_or(rec.updated_ms),
             ..Sess::default()
         }
     }
@@ -475,9 +493,11 @@ impl Hub {
         scene: Option<String>,
         model: Option<String>,
         extra: Value,
-        editor_key: Option<String>,
     ) -> Result<String, PortError> {
-        let mut options = json!({"prompt_types": ["permission", "question"]});
+        let mut options = json!({
+            "prompt_types": ["permission", "question"],
+            "permission_rules": tools::read_only_rules(),
+        });
         if let (Some(o), Some(e)) = (options.as_object_mut(), extra.as_object()) {
             o.extend(e.clone());
         }
@@ -496,7 +516,7 @@ impl Hub {
             rec.title = title.clone();
             rec.model = model.clone();
             rec.updated_ms = now;
-            rec.editor_key = editor_key.clone();
+            rec.created_ms = now;
         });
         let sess = Sess {
             id: id.clone(),
@@ -511,6 +531,7 @@ impl Hub {
             origin,
             live: true,
             updated_ms: now,
+            created_ms: now,
             ..Sess::default()
         };
         self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
@@ -780,7 +801,6 @@ impl Hub {
                         scene.clone(),
                         model.clone(),
                         extra,
-                        None,
                     )
                     .await
                 {
@@ -842,57 +862,201 @@ impl Hub {
         }
     }
 
-    fn host_tool(&self, name: &str, input: &Value) -> Result<String, String> {
-        let sched = self.scheduler().map_err(|e| e.to_string())?;
+    /// 宿主工具（tools.rs）：先按发起调用的会话定作用域，再经和端口命令同一条路执行，
+    /// 事件照常推给 TUI。
+    async fn host_tool(&self, rpc: &str, name: &str, input: &Value) -> Result<String, String> {
+        let scope = {
+            let st = self.0.st.lock().unwrap();
+            tools::scope_of(st.sessions.get(rpc).map(|s| &s.origin))
+        };
+        if scope == tools::Scope::None {
+            return Err("this session is not one of this Codix instance's sessions".into());
+        }
+        let port_err = |e: PortError| e.to_string();
         match name {
-            tools::LIST => Ok(serde_json::to_string_pretty(&sched.list()).unwrap_or_default()),
-            tools::SAVE => {
-                let existing = input
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .and_then(|id| sched.get(id));
-                let job = tools::job_from_input(input, existing)?;
-                let saved = sched.upsert(job)?;
-                self.emit_events(vec![Event::JobUpserted(saved.clone())]);
-                Ok(serde_json::to_string_pretty(&saved).unwrap_or_default())
-            }
-            tools::DELETE => {
-                let id = input.get("id").and_then(Value::as_str).unwrap_or("");
-                if sched.delete(id)? {
-                    self.emit_events(vec![Event::JobRemoved {
-                        job: JobId(id.to_string()),
-                    }]);
-                    Ok(format!("deleted {id}"))
-                } else {
-                    Err(format!("no job {id}"))
+            tools::SESSION_LIST => {
+                let all = input.get("all").and_then(Value::as_bool).unwrap_or(false);
+                let sums = self.top_sessions();
+                let mut lines: Vec<String> = port::order::sessions(&sums)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| session_line(Some(i + 1), s))
+                    .collect();
+                if all {
+                    lines.extend(
+                        sums.iter()
+                            .filter(|s| !port::order::is_user_session(s))
+                            .map(|s| session_line(None, s)),
+                    );
                 }
+                Ok(if lines.is_empty() {
+                    "no sessions".into()
+                } else {
+                    lines.join("\n")
+                })
+            }
+            tools::SESSION_SHOW => {
+                let id = self.session_target(input)?;
+                let st = self.0.st.lock().unwrap();
+                let (Some(sum), Some(s)) = (st.summary(&id), st.sessions.get(&id)) else {
+                    return Err(format!("no session {id}"));
+                };
+                Ok(serde_json::to_string_pretty(&json!({
+                    "id": sum.id, "title": sum.title, "state": sum.state, "origin": sum.provenance.origin,
+                    "scene": sum.provenance.scene, "model": sum.provenance.model, "usage": sum.usage,
+                    "goal": s.goal, "todos": s.todos, "tasks": s.tasks.values().collect::<Vec<_>>(),
+                }))
+                .unwrap_or_default())
+            }
+            tools::SESSION_RENAME => {
+                let title = tools::str_of(input, "title")
+                    .filter(|t| !t.trim().is_empty())
+                    .ok_or("title must not be empty")?;
+                let id = match input.get("target") {
+                    Some(_) => self.session_target(input)?,
+                    None => rpc.to_string(),
+                };
+                self.may_touch_session(&scope, rpc, &id)?;
+                self.dispatch(Command::Rename {
+                    session: SessionId(id.clone()),
+                    title: title.clone(),
+                })
+                .await
+                .map_err(port_err)?;
+                Ok(format!("renamed {id} to \"{title}\""))
+            }
+            tools::SESSION_CLOSE => {
+                let id = self.session_target(input)?;
+                self.may_touch_session(&scope, rpc, &id)?;
+                let title = self.summary(&id).map(|s| s.title).unwrap_or_default();
+                self.dispatch(Command::Close {
+                    session: SessionId(id.clone()),
+                })
+                .await
+                .map_err(port_err)?;
+                Ok(format!("closed \"{title}\" ({id})"))
+            }
+            tools::JOB_LIST => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let jobs = sched.list();
+                let lines: Vec<String> = port::order::jobs(&jobs)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, j)| job_line(i + 1, j))
+                    .collect();
+                Ok(if lines.is_empty() {
+                    "no jobs".into()
+                } else {
+                    lines.join("\n")
+                })
+            }
+            tools::JOB_SHOW => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let job = job_target(&sched.list(), input)?;
+                Ok(serde_json::to_string_pretty(&json!({
+                    "job": job,
+                    "recent_firings": sched.history(&job.id.0, 10),
+                }))
+                .unwrap_or_default())
+            }
+            tools::JOB_SAVE => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let existing = match input.get("target") {
+                    Some(_) => Some(job_target(&sched.list(), input)?),
+                    None => None,
+                };
+                match (&scope, &existing) {
+                    (tools::Scope::Full, _) => {}
+                    (tools::Scope::Job(mine), Some(j)) if &j.id.0 == mine => {}
+                    _ => return Err(out_of_scope(&scope)),
+                }
+                let job = tools::job_from_input(input, existing)?;
+                let Reply::Job(saved) = self
+                    .dispatch(Command::SaveJob { job })
+                    .await
+                    .map_err(port_err)?
+                else {
+                    return Err("the job was not saved".into());
+                };
+                Ok(format!(
+                    "saved \"{}\" ({})\n{}",
+                    saved.name,
+                    saved.id,
+                    serde_json::to_string_pretty(&saved).unwrap_or_default()
+                ))
+            }
+            tools::JOB_DELETE | tools::JOB_ENABLE | tools::JOB_RUN => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let job = job_target(&sched.list(), input)?;
+                match &scope {
+                    tools::Scope::Full => {}
+                    tools::Scope::Job(mine) if mine == &job.id.0 => {}
+                    _ => return Err(out_of_scope(&scope)),
+                }
+                let (cmd, done) = match name {
+                    tools::JOB_DELETE => (
+                        Command::DeleteJob {
+                            job: job.id.clone(),
+                        },
+                        "deleted",
+                    ),
+                    tools::JOB_ENABLE => {
+                        let enabled = input
+                            .get("enabled")
+                            .and_then(Value::as_bool)
+                            .ok_or("enabled is required")?;
+                        (
+                            Command::SetJobEnabled {
+                                job: job.id.clone(),
+                                enabled,
+                            },
+                            if enabled { "enabled" } else { "disabled" },
+                        )
+                    }
+                    _ => (
+                        Command::RunJobNow {
+                            job: job.id.clone(),
+                        },
+                        "fired",
+                    ),
+                };
+                self.dispatch(cmd).await.map_err(port_err)?;
+                Ok(format!("{done} \"{}\" ({})", job.name, job.id))
             }
             other => Err(format!("unknown tool {other}")),
         }
     }
 
-    async fn open_job_session(&self, job: Option<JobId>) -> Result<Reply, PortError> {
-        let key = format!("job:{}", job.as_ref().map(|j| j.0.as_str()).unwrap_or(""));
-        let existing = self.0.reg.lock().unwrap().by_editor_key(&key);
-        if let Some(id) = existing
-            && self.ensure_known(&id).await.is_ok()
-        {
-            return self.summary(&id).map(Reply::Session);
+    /// 会话标签与工具看的那些：顶层的（子 Agent 的侧链不算）。
+    fn top_sessions(&self) -> Vec<port::SessionSummary> {
+        let st = self.0.st.lock().unwrap();
+        st.sessions
+            .values()
+            .filter(|s| s.parent.is_none())
+            .filter_map(|s| st.summary(&s.id))
+            .collect()
+    }
+
+    /// `target` 指的会话：`#n` 按会话列表的顺序，否则按 id（作业、流程开出来的会话也行）。
+    fn session_target(&self, input: &Value) -> Result<String, String> {
+        let key = tools::str_of(input, "target").ok_or("target is required")?;
+        let sums = self.top_sessions();
+        if let Some(s) = port::order::resolve(&port::order::sessions(&sums), &key, |s| &s.id.0) {
+            return Ok(s.id.0.clone());
         }
-        let current = job.as_ref().and_then(|j| self.scheduler().ok()?.get(&j.0));
-        let name = current.as_ref().map(|j| j.name.clone()).unwrap_or_default();
-        let extra = json!({
-            "host_tools": tools::declarations(),
-            "prompt": {"append": tools::prompt(current.as_ref())},
-        });
-        let origin = Origin::Editor {
-            of: port::EditorOf::Job,
-            name: name.clone(),
-        };
-        let id = self
-            .create_session(origin, Some(name), None, None, extra, Some(key))
-            .await?;
-        self.summary(&id).map(Reply::Session)
+        let k = key.trim();
+        if self.0.st.lock().unwrap().sessions.contains_key(k) {
+            return Ok(k.to_string());
+        }
+        Err(format!("no session {key}"))
+    }
+
+    fn may_touch_session(&self, scope: &tools::Scope, rpc: &str, id: &str) -> Result<(), String> {
+        if *scope == tools::Scope::Full || id == rpc {
+            Ok(())
+        } else {
+            Err(out_of_scope(scope))
+        }
     }
 
     // ---- 命令 ----
@@ -928,7 +1092,7 @@ impl Hub {
             }
             C::CreateSession { scene, model, .. } => {
                 let id = self
-                    .create_session(Origin::User, None, scene, model, json!({}), None)
+                    .create_session(Origin::User, None, scene, model, json!({}))
                     .await?;
                 self.summary(&id).map(Reply::Session)
             }
@@ -1083,6 +1247,7 @@ impl Hub {
                     r.origin = origin.clone();
                     r.title = Some(title.clone());
                     r.updated_ms = now;
+                    r.created_ms = now;
                 });
                 self.0.st.lock().unwrap().sessions.insert(
                     id.clone(),
@@ -1094,6 +1259,7 @@ impl Hub {
                         model: base.model,
                         origin,
                         updated_ms: now,
+                        created_ms: now,
                         ..Sess::default()
                     },
                 );
@@ -1174,12 +1340,9 @@ impl Hub {
             }
             C::ListFlows => Ok(Reply::Flows(vec![])),
             C::ListRuns { .. } => Ok(Reply::Runs(vec![])),
-            C::GetFlow { .. }
-            | C::GetRun { .. }
-            | C::StartRun { .. }
-            | C::RunOp { .. }
-            | C::OpenAuthoring { .. } => Err(PortError::Unsupported("flows".into())),
-            C::OpenJobSession { job } => self.open_job_session(job).await,
+            C::GetFlow { .. } | C::GetRun { .. } | C::StartRun { .. } | C::RunOp { .. } => {
+                Err(PortError::Unsupported("flows".into()))
+            }
             C::ListJobs => Ok(Reply::Jobs(self.scheduler()?.list())),
             C::SaveJob { job } => {
                 let saved = self.scheduler()?.upsert(job).map_err(PortError::Failed)?;
@@ -1226,6 +1389,73 @@ impl Hub {
 }
 
 /// 摘要类全推；一轮的细节只推 Watch 着的会话（architecture §8.4）。
+fn out_of_scope(scope: &tools::Scope) -> String {
+    match scope {
+        tools::Scope::Job(job) => format!(
+            "not allowed: a session started by a scheduled job may change only that job ({job}) and itself"
+        ),
+        tools::Scope::Run(run) => format!(
+            "not allowed: a session inside a flow run may change only that run ({run}) and itself"
+        ),
+        _ => "not allowed from this session".into(),
+    }
+}
+
+fn local_time(ms: u64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(ms as i64)
+        .single()
+        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default()
+}
+
+fn session_line(n: Option<usize>, s: &port::SessionSummary) -> String {
+    let no = n.map(|n| format!("#{n}  ")).unwrap_or_default();
+    let origin = match &s.provenance.origin {
+        Origin::User => String::new(),
+        Origin::Fork { from_title, .. } => format!("  forked from \"{from_title}\""),
+        Origin::Job { name, .. } => format!("  started by job \"{name}\""),
+        Origin::FlowStation {
+            flow_title,
+            subject,
+            ..
+        } => {
+            format!("  in flow run \"{flow_title}\" / {subject}")
+        }
+        Origin::SubAgent { parent_title, .. } => format!("  sub-agent of \"{parent_title}\""),
+    };
+    format!("{no}{}  \"{}\"  {:?}{origin}", s.id, s.title, s.state)
+}
+
+fn job_line(n: usize, j: &Job) -> String {
+    let next = j
+        .next_fire_ms
+        .filter(|_| j.enabled)
+        .map(|ms| format!("  next {}", local_time(ms)))
+        .unwrap_or_default();
+    let last = j
+        .last
+        .as_ref()
+        .map(|o| format!("  last {o:?}"))
+        .unwrap_or_default();
+    format!(
+        "#{n}  {}  \"{}\"  {}  {}{next}{last}",
+        j.id,
+        j.name,
+        j.cron,
+        if j.enabled { "enabled" } else { "disabled" }
+    )
+}
+
+/// `target` 指的作业：`#n` 按作业列表的顺序，否则按 id。
+fn job_target(jobs: &[Job], input: &Value) -> Result<Job, String> {
+    let key = tools::str_of(input, "target").ok_or("target is required")?;
+    port::order::resolve(&port::order::jobs(jobs), &key, |j| &j.id.0)
+        .cloned()
+        .ok_or_else(|| format!("no job {key}"))
+}
+
 fn wanted(ev: &Event, watched: &HashSet<String>, st: &St) -> bool {
     match ev {
         Event::SessionUpserted(_) | Event::SessionRemoved { .. } | Event::TaskUpserted(_) => true,

@@ -7,8 +7,6 @@ view:
     connecting: "○ Connecting…"
   crumb:
     new_session: "Session › New session (type to start)"
-    new_flow: "New flow"
-    new_job: "New job"
   task:
     empty: "  (no output yet)"
   new_below: "↓ New content (End)"
@@ -36,10 +34,6 @@ view:
     flow_station: "Flow \"{flow_title}\" › {subject} › {station_title}"
     sub_agent: "Sub-agent ← {parent_title}"
     fork: "⑂ Forked from {from_title}"
-    editor_flow: "Authoring session for flow \"{name}\""
-    editor_flow_new: "Authoring session for a new flow"
-    editor_job: "Editing session for job \"{name}\""
-    editor_job_new: "Editing session for a new job"
     held: "⚠ Held by instance {holder}"
     running: "● Running"
     waiting: "◐ Waiting for you"

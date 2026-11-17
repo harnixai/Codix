@@ -93,7 +93,7 @@ pub trait Backend: Send + Sync + 'static {
 | 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
 | goal | `SetGoal`、`UpdateGoal{action: Pause \| Resume \| Edit \| Clear}` |
 | 任务 | `StopTask`、`MessageTask`、`TaskOutput{task, from_byte}` |
-| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`GetRun{id}`、`StartRun{flow, subject, inputs}`、`RunOp{run, op}`、`OpenAuthoring{flow?}` |
+| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`GetRun{id}`、`StartRun{flow, subject, inputs}`、`RunOp{run, op}` |
 | 作业 | `ListJobs`、`SaveJob`、`DeleteJob`、`SetJobEnabled`、`RunJobNow`、`JobHistory{job}` |
 
 ### 3.3 事件（`Event`）
@@ -327,10 +327,10 @@ codix（一个二进制）
   - 一轮的细节（文字增量、工具、提问……）只推 TUI `Watch` 着的会话；子 Agent 的侧链会话被 Watch 时，
     父会话上的 `subagent_progress` 解包成那个侧链会话的事件。
 - **只列这个项目的会话**：`session.list` 的条目按 `project_root == 实例的项目` 过滤。
-- **会话归属**记在 `sessions.json`：Codix 建的会话记下 `origin`（用户、作业的哪次触发、作业编辑、分叉）
-  与编辑会话的键（同一个作业总是同一个会话）；没记过的按 `User`。子 Agent 的上级来自任务的
+- **会话归属**记在 `sessions.json`：Codix 建的会话记下 `origin`（用户、作业的哪次触发、分叉）
+  与建会话的时刻（会话列表的顺序、`#n` 按它）；没记过的按 `User`，时刻取引擎报的。子 Agent 的上级来自任务的
   `agent_session_id`。
-- 建会话一律带 `prompt_types: ["permission", "question"]`，项目根就是实例的项目。
+- 建会话一律带 `prompt_types: ["permission", "question"]` 与只读宿主工具的 allow 规则，项目根就是实例的项目。
 
 帧、方法与领域事件、命令的对应：
 
@@ -345,7 +345,7 @@ codix（一个二进制）
 | `user_message_delivered` / `user_messages_returned` | `SteerDelivered` / `SteerReturned` |
 | `task_started` / `task_updated` / `task_finished` / `task_progress` | `TaskUpserted` / `TaskOutput` |
 | `goal_changed` / `compact` / `skills_changed` / `notification` | `GoalChanged` / `Compacted` / `CommandsChanged` / `Notice` |
-| `host_tool_call` | 由 `Hub` 自己执行（作业工具，§8.5），`session.respondToolCall` 作答 |
+| `host_tool_call` | 由 `Hub` 自己执行（宿主工具，§8.5），`session.respondToolCall` 作答 |
 | `daemon.event` 的 `turn_started` / `turn_completed` / `session_*` | `SessionUpserted` / `SessionRemoved` |
 | `Submit{mode}` | `session.run_turn{on_busy}`：`run_turn` 是长调用，`Hub` 另起任务等它，命令立刻回 `Submitted` |
 | `Watch` | `session.subscribe{resume: true}` → `session.history`（最后 500 条）→ `session.goal` / `session.tasks`，拼成 `Watched` |
@@ -362,8 +362,20 @@ codix（一个二进制）
 - 简单作业一次触发：新建一个会话（归属 `Job{job, name, fired_ms}`），把提示词作为第一轮提交；作业里列了
   skills 的，附加进这个会话的系统提示词。触发记录先写 `Running`，那一轮结束时补上结局、耗时、用量。
 - 流程作业：流程接入之前记一条 `Skipped`。
-- 作业的编辑会话（`OpenJobSession`）带三个宿主工具：`JobList`、`JobSave`、`JobDelete`。模型经它们读写
-  作业，`Hub` 执行并推 `JobUpserted` / `JobRemoved`。界面不另开表单（§4.4）。
+- 作业没有自己的会话：新建、修改、清理都在用户会话里说，由宿主工具执行（下面）。界面不另开表单（§4.4）。
+
+**宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、
+`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程接入后再加 `flow_*`。
+
+- 经 `daemon.setHostTools` 挂在实例与引擎的连接上，**每个会话都有**，子 Agent 也有。只对此后建起来的
+  引擎生效：老会话在下一次恢复或重建时拿到。
+- **能动什么由发起调用的会话决定**，`Hub` 执行前查（子 Agent 的调用以根会话回答，算根会话的）：
+  用户会话（新建、分叉）什么都能动；作业触发出来的会话只能动触发它的那个作业和它自己；流程运行里的
+  会话只能动它的运行和它自己；不是本实例的会话什么都不给。提示词只说明，不当约束。
+- 目标用 `#n` 或 ID：`#n` 是右栏列表此刻的位置，两边都用 `port::order` 排，所以说的是同一个；
+  改东西的工具回显名字与 ID，号对错了一眼看得出。
+- 查看类的工具建会话时给 allow 规则，不用每次问；改东西的走 Agix 正常的权限询问。
+- 执行走和端口命令同一条路（`dispatch`），所以 TUI 照常收到 `JobUpserted`、`SessionUpserted` 这些事件。
 
 ### 8.6 流程（暂缓）
 

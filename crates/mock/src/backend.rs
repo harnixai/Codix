@@ -56,7 +56,6 @@ pub struct ScriptedBackend {
     seq: AtomicU64,
     current_message: Mutex<Option<port::MessageId>>,
     /// 流程 / 作业各自的编辑会话：同一个对象总是同一个会话。
-    authoring: Mutex<BTreeMap<String, SessionSummary>>,
     opts: MockOptions,
     started: Instant,
 }
@@ -77,7 +76,6 @@ impl ScriptedBackend {
             calls: CallLog::default(),
             seq: AtomicU64::new(1),
             current_message: Mutex::new(None),
-            authoring: Mutex::new(BTreeMap::new()),
             opts,
             started: Instant::now(),
         });
@@ -477,57 +475,6 @@ impl ScriptedBackend {
                 }
                 Ok(Reply::Ok)
             }
-            OpenAuthoring { flow } => {
-                let title = match flow {
-                    Some(f) => {
-                        let t = st()
-                            .flows
-                            .iter()
-                            .find(|x| &x.summary.name == f)
-                            .map(|x| x.summary.title.clone())
-                            .unwrap_or_else(|| f.clone());
-                        format!("编写流程：{t}")
-                    }
-                    None => "新流程".to_string(),
-                };
-                let key = format!("flow:{}", flow.clone().unwrap_or_default());
-                let origin = port::Origin::Editor {
-                    of: port::EditorOf::Flow,
-                    name: title.trim_start_matches("编写流程：").to_string(),
-                };
-                Ok(Reply::Session(self.authoring_session(
-                    &key,
-                    &title,
-                    "flow-author",
-                    flow.is_some(),
-                    origin,
-                )))
-            }
-            OpenJobSession { job } => {
-                let title = match job {
-                    Some(j) => {
-                        let n = st()
-                            .jobs
-                            .get(j)
-                            .map(|(x, _)| x.name.clone())
-                            .unwrap_or_else(|| j.to_string());
-                        format!("作业：{n}")
-                    }
-                    None => "新作业".to_string(),
-                };
-                let key = format!("job:{}", job.as_ref().map(|j| j.as_str()).unwrap_or(""));
-                let origin = port::Origin::Editor {
-                    of: port::EditorOf::Job,
-                    name: title.trim_start_matches("作业：").to_string(),
-                };
-                Ok(Reply::Session(self.authoring_session(
-                    &key,
-                    &title,
-                    "jobs",
-                    job.is_some(),
-                    origin,
-                )))
-            }
             ListJobs => Ok(Reply::Jobs(
                 st().jobs.values().map(|(j, _)| j.clone()).collect(),
             )),
@@ -608,29 +555,6 @@ impl ScriptedBackend {
                 Ok(Reply::Ok)
             }
         }
-    }
-
-    /// 编辑会话：有就复用，没有就建一个（新建流程 / 作业每次都是新的）。
-    fn authoring_session(
-        &self,
-        key: &str,
-        title: &str,
-        scene: &str,
-        reuse: bool,
-        origin: port::Origin,
-    ) -> SessionSummary {
-        if reuse && let Some(s) = self.authoring.lock().unwrap().get(key) {
-            return s.clone();
-        }
-        let s = self.new_session(title, None, Some(scene.into()), None, origin);
-        self.emit_now(Event::SessionUpserted(s.clone()));
-        if reuse {
-            self.authoring
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), s.clone());
-        }
-        s
     }
 
     fn summary(&self, id: &SessionId) -> Option<SessionSummary> {
