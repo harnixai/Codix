@@ -640,6 +640,9 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
         ));
     }
     let Some(c) = s.domain.convs.get_mut(&id) else {
+        if s.ui.watching.contains(&id) {
+            s.ui.watch_buffer.entry(id).or_default().push(ev.clone());
+        }
         return effects;
     };
     if let Some(note) = c.apply(ev.clone(), now) {
@@ -660,20 +663,25 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
     match (what, reply) {
         (Pending::Watch(id), Reply::Watched(w)) => {
             s.ui.watching.remove(&id);
+            let buffered = s.ui.watch_buffer.remove(&id).unwrap_or_default();
             let conv = Conversation::from_watched(*w, s.ui.now_ms);
             let prompt_waiting = !conv.prompts.is_empty();
+            let mut out = vec![];
             match s.domain.convs.get_mut(&id) {
                 // 本地已经有这段对话（比如刚建的会话已经发了第一句）：它比快照新，
                 // 只补快照里的状态，转录留着本地的。
                 Some(existing) => existing.merge_state(conv),
                 None => {
                     s.domain.convs.insert(id.clone(), conv);
+                    for ev in &buffered {
+                        out.extend(chat_event(s, ev));
+                    }
                 }
             }
             if s.ui.chat.as_ref() == Some(&id) && prompt_waiting && s.ui.composer.is_empty() {
                 s.ui.ask_active = true;
             }
-            vec![]
+            out
         }
         (Pending::Commands(id), Reply::Commands(cmds)) => {
             if let Some(c) = s.domain.convs.get_mut(&id) {

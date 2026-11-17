@@ -93,14 +93,29 @@ pub fn job_from_input(input: &Value, existing: Option<Job>) -> Result<Job, Strin
     if let Some(c) = input.get("catch_up").and_then(Value::as_bool) {
         job.catch_up = c;
     }
-    let (old_prompt, old_skills, old_model) = match &job.kind {
+    // 流程作业的编辑这里不管（流程还没接入）：没给提示词就原样留着它的种类。
+    if matches!(job.kind, JobKind::Flow { .. }) && str_of("prompt").is_none() {
+        return if job.name.trim().is_empty() {
+            Err("name is required".into())
+        } else {
+            Ok(job)
+        };
+    }
+    let (old_prompt, old_skills, old_project, old_scene, old_model) = match &job.kind {
         JobKind::Simple {
             prompt,
             skills,
+            project,
+            scene,
             model,
-            ..
-        } => (prompt.clone(), skills.clone(), model.clone()),
-        JobKind::Flow { .. } => (String::new(), vec![], None),
+        } => (
+            prompt.clone(),
+            skills.clone(),
+            project.clone(),
+            scene.clone(),
+            model.clone(),
+        ),
+        JobKind::Flow { .. } => (String::new(), vec![], None, None, None),
     };
     job.kind = JobKind::Simple {
         prompt: str_of("prompt").unwrap_or(old_prompt),
@@ -113,8 +128,8 @@ pub fn job_from_input(input: &Value, existing: Option<Job>) -> Result<Job, Strin
                     .collect()
             })
             .unwrap_or(old_skills),
-        project: None,
-        scene: None,
+        project: old_project,
+        scene: old_scene,
         model: str_of("model").or(old_model),
     };
     if job.name.trim().is_empty() {

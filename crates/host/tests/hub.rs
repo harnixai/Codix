@@ -398,3 +398,118 @@ async fn job_editor_tools_save_jobs_and_firing_records_the_outcome() {
     };
     assert_eq!(h.len(), 1, "开始与结局是同一条记录");
 }
+
+#[tokio::test]
+async fn a_busy_session_returns_the_message_instead_of_failing_the_turn() {
+    let mut r = rig_with(Box::new(|m, p| {
+        if m == "session.run_turn" {
+            Err(RpcError::Remote {
+                code: -32015,
+                message: "session is busy".into(),
+                data: Value::Null,
+            })
+        } else {
+            default_handler(m, p)
+        }
+    }))
+    .await;
+    let Reply::Submitted { message } = r
+        .hub
+        .handle(Command::Submit {
+            session: SessionId("s1".into()),
+            text: "再来".into(),
+            mode: SubmitMode::Turn,
+            permission: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    let ev = r.events().await;
+    assert!(
+        ev.iter().any(
+            |e| matches!(e, Event::SteerReturned { messages, .. } if messages == std::slice::from_ref(&message))
+        ),
+        "{ev:?}"
+    );
+    assert!(!ev.iter().any(|e| matches!(e, Event::TurnFailed { .. })));
+}
+
+#[tokio::test]
+async fn a_mid_turn_snapshot_adds_only_the_unpersisted_step() {
+    let mut r = rig().await;
+    r.frame("s1", json!({"kind":"turn_start"}));
+    r.frame("s1", json!({"kind":"step_start","step":0}));
+    r.frame("s1", json!({"kind":"text_delta","text":"先看看"}));
+    r.frame(
+        "s1",
+        json!({"kind":"step_end","step":0,"stop_reason":"tool_use","tool_calls":1,"seq":3,"usage":{}}),
+    );
+    r.frame("s1", json!({"kind":"step_start","step":1}));
+    r.frame("s1", json!({"kind":"text_delta","text":"找到了"}));
+    r.events().await;
+    let Reply::Watched(w) = r
+        .hub
+        .handle(Command::Watch {
+            session: SessionId("s1".into()),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(w.running);
+    assert_eq!(
+        w.history.last(),
+        Some(&port::HistoryItem::Assistant {
+            text: "找到了".into()
+        }),
+        "落了盘的那一步在历史里，不再补一遍"
+    );
+}
+
+#[tokio::test]
+async fn per_turn_permission_modes_are_refused_not_ignored() {
+    let r = rig().await;
+    let e = r
+        .hub
+        .handle(Command::Submit {
+            session: SessionId("s1".into()),
+            text: "只读看看".into(),
+            mode: SubmitMode::Turn,
+            permission: Some(port::PermissionMode::Plan),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(e, port::PortError::Unsupported(_)));
+    assert!(r.calls("session.run_turn").is_empty());
+}
+
+#[tokio::test]
+async fn late_frames_do_not_resurrect_a_closed_session() {
+    let mut r = rig().await;
+    r.hub
+        .handle(Command::Close {
+            session: SessionId("s2".into()),
+        })
+        .await
+        .unwrap();
+    r.frame(
+        "s2",
+        json!({"kind":"task_finished","task":{"task_id":"t1","kind":"shell","status":"stopped",
+            "started_ms":0,"detail":{"command":"sleep 9"}}}),
+    );
+    r.events().await;
+    let Reply::Sessions(v) = r
+        .hub
+        .handle(Command::ListSessions {
+            filter: Default::default(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(v.iter().all(|s| s.id.0 != "s2"), "{v:?}");
+}

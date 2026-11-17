@@ -21,6 +21,7 @@ pub enum SessionEvent {
         #[serde(default)]
         step: u32,
     },
+    StepEnd {},
     ModelRetry {
         #[serde(default)]
         attempt: u32,

@@ -39,6 +39,16 @@ pub struct Sess {
     pub(super) tools_started: Vec<String>,
 }
 
+impl Sess {
+    /// 正在写、还没随 `step_end` 落盘的那一步的文字。
+    pub fn pending_step_text(&self) -> String {
+        self.turn_text
+            .get(self.step_mark..)
+            .unwrap_or_default()
+            .to_string()
+    }
+}
+
 /// 回答一个提问要知道的：用哪个会话答、答哪一种、选项的 key。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptMeta {
@@ -157,17 +167,11 @@ impl St {
     /// （子 Agent 的帧经父会话发出，答也用父会话）。
     pub fn on_event(&mut self, sid: &str, rpc: &str, ev: SessionEvent, now: u64, out: &mut Out) {
         let session = || SessionId(sid.to_string());
-        if !self.sessions.contains_key(sid) {
-            self.sessions.insert(
-                sid.to_string(),
-                Sess {
-                    id: sid.to_string(),
-                    title: short(sid),
-                    ..Sess::default()
-                },
-            );
-        }
-        let s = self.sessions.get_mut(sid).expect("inserted above");
+        // 不认识的会话不凭一帧建出来：关掉的会话还会迟到几帧（任务收尾至多 15 秒），
+        // 建出来就是一个没有项目、没有归属的幽灵条目。
+        let Some(s) = self.sessions.get_mut(sid) else {
+            return;
+        };
         match ev {
             SessionEvent::TurnStart {} => {
                 s.running = true;
@@ -179,6 +183,7 @@ impl St {
                 out.events.push(Event::TurnStarted { session: session() });
                 self.upsert(sid, out);
             }
+            SessionEvent::StepEnd {} => s.step_mark = s.turn_text.len(),
             SessionEvent::StepStart { step } => {
                 if s.last_step == Some(step) {
                     s.turn_text.truncate(s.step_mark);

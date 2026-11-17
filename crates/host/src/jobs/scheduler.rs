@@ -18,6 +18,8 @@ pub trait Fire: Send + Sync + 'static {
 
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
+const MAX_SLEEP_MS: u64 = 60_000;
+
 /// 调度器句柄，可克隆。存储由调用方持有一份 `Arc<Mutex<_>>`，`Fire` 的实现要写历史也用同一份。
 #[derive(Clone)]
 pub struct Scheduler {
@@ -150,7 +152,9 @@ impl Scheduler {
 
             match self.earliest() {
                 Some(t) => {
-                    let wait = t.saturating_sub(self.now());
+                    // tokio 的时钟是单调钟，机器睡眠时不走：一口气睡到点，醒来后会晚触发
+                    // 睡眠那么久。每次至多睡一分钟、醒来按墙上时间重算。
+                    let wait = t.saturating_sub(self.now()).min(MAX_SLEEP_MS);
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(wait)) => {}
                         _ = self.wake.notified() => {}

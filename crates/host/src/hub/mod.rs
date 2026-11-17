@@ -30,6 +30,9 @@ use crate::service::{Service, Sink};
 
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
+/// 协议 §9：会话正在跑一轮（或原地重建），`on_busy: "reject"` 的消息没有投递。
+const SESSION_BUSY: i64 = -32015;
+
 /// 快照里带多少条历史：再早的翻页没有做，500 条足够接上下文。
 const HISTORY_TAIL: u64 = 500;
 
@@ -70,6 +73,26 @@ struct Inner {
 struct Link {
     sink: Option<Sink>,
     watched: HashSet<String>,
+    /// 接入者每换一次加一；会话每被 Unwatch 一次加一。Watch 要等好几个调用，期间换了
+    /// 接入者或被 Unwatch 了，它就不该在收尾时把会话加回去。
+    epoch: u64,
+    unwatched: std::collections::HashMap<String, u64>,
+}
+
+impl Link {
+    fn generation(&self, id: &str) -> (u64, u64) {
+        (self.epoch, self.unwatched.get(id).copied().unwrap_or(0))
+    }
+}
+
+fn send(link: &Link, st: &St, events: Vec<Event>) {
+    if let Some(sink) = &link.sink {
+        for ev in events {
+            if wanted(&ev, &link.watched, st) {
+                let _ = sink.send(ServerFrame::Event { event: ev });
+            }
+        }
+    }
 }
 
 fn rpc_err(e: RpcError) -> PortError {
@@ -152,6 +175,26 @@ impl Hub {
         if let Some(store) = cfg.jobs {
             let fire = Arc::new(Firer(Arc::downgrade(&hub.0)));
             let sched = Scheduler::start(Arc::new(Mutex::new(store)), hub.0.clock.clone(), fire);
+            // 上一次实例退出时还没跑完的触发：那一轮已经不会有结局了。
+            {
+                let store = sched.store();
+                let s = store.lock().unwrap();
+                for j in s.list(0) {
+                    for e in s.history(&j.id.0, 20) {
+                        if e.outcome == JobOutcome::Running {
+                            let _ = s.finish(
+                                &j.id.0,
+                                e.fired_ms,
+                                JobOutcome::Failed {
+                                    message: "interrupted: the instance stopped".into(),
+                                },
+                                e.elapsed_ms,
+                                e.usage,
+                            );
+                        }
+                    }
+                }
+            }
             *hub.0.jobs.lock().unwrap() = Some(sched);
         }
         Ok(hub)
@@ -186,15 +229,26 @@ impl Hub {
         {
             let st = self.0.st.lock().unwrap();
             let link = self.0.link.lock().unwrap();
-            if let Some(sink) = &link.sink {
-                for ev in out.events {
-                    if wanted(&ev, &link.watched, &st) {
-                        let _ = sink.send(ServerFrame::Event { event: ev });
-                    }
-                }
-            }
+            send(&link, &st, out.events);
         }
-        for t in out.todo {
+        self.spawn_todo(out.todo);
+    }
+
+    /// 改状态与发出事件在同一把锁里：Watch 收尾时取的快照与之后发出的事件之间没有缝，
+    /// 快照里有的不会再作为事件来一遍，快照里没有的一定作为事件来。
+    fn apply(&self, f: impl FnOnce(&mut St, &mut Out)) {
+        let mut out = Out::default();
+        {
+            let mut st = self.0.st.lock().unwrap();
+            f(&mut st, &mut out);
+            let link = self.0.link.lock().unwrap();
+            send(&link, &st, std::mem::take(&mut out.events));
+        }
+        self.spawn_todo(out.todo);
+    }
+
+    fn spawn_todo(&self, todo: Vec<Todo2>) {
+        for t in todo {
             let hub = self.clone();
             tokio::spawn(async move { hub.follow_up(t).await });
         }
@@ -255,13 +309,7 @@ impl Hub {
                 session_id, event, ..
             } => {
                 let ev = SessionEvent::parse(&event);
-                let mut out = Out::default();
-                self.0
-                    .st
-                    .lock()
-                    .unwrap()
-                    .on_event(&session_id, &session_id, ev, now, &mut out);
-                self.emit(out);
+                self.apply(|st, out| st.on_event(&session_id, &session_id, ev, now, out));
             }
             Notification::Daemon(v) => match DaemonEvent::parse(&v) {
                 DaemonEvent::SessionCreated {
@@ -388,7 +436,14 @@ impl Hub {
         };
         if let Ok(info) = serde_json::from_value::<SessionInfo>(v) {
             let s = self.sess_from_info(&info);
-            self.0.st.lock().unwrap().sessions.insert(id.to_string(), s);
+            // 和建会话赛跑时别把那边已有的状态（悬着的提问等）盖掉。
+            self.0
+                .st
+                .lock()
+                .unwrap()
+                .sessions
+                .entry(id.to_string())
+                .or_insert(s);
             self.upsert(id);
         }
     }
@@ -401,18 +456,15 @@ impl Hub {
                 json!({"session_id": id, "resume": resume}),
             )
             .await?;
-        let mut out = Out::default();
         let now = self.now();
-        {
-            let mut st = self.0.st.lock().unwrap();
+        self.apply(|st, out| {
             if let Some(s) = st.sessions.get_mut(id) {
                 s.live = true;
             }
             for p in v["pending_prompts"].as_array().into_iter().flatten() {
-                st.on_event(id, id, SessionEvent::parse(p), now, &mut out);
+                st.on_event(id, id, SessionEvent::parse(p), now, out);
             }
-        }
-        self.emit(out);
+        });
         Ok(())
     }
 
@@ -511,13 +563,19 @@ impl Hub {
 
     async fn watch(&self, id: &str) -> Result<Reply, PortError> {
         self.ensure_known(id).await?;
-        let parent = self.0.st.lock().unwrap().sessions[id].parent.clone();
-        let mut running = false;
+        let gone = || PortError::Failed(format!("no session {id}"));
+        let generation = self.0.link.lock().unwrap().generation(id);
+        let (parent, was_live) = {
+            let st = self.0.st.lock().unwrap();
+            let s = st.sessions.get(id).ok_or_else(gone)?;
+            (s.parent.clone(), s.live)
+        };
+        let mut running_hint = None;
         match &parent {
             None => {
                 self.subscribe(id, true).await.map_err(rpc_err)?;
                 if let Ok(g) = self.call("session.get", json!({"session_id": id})).await {
-                    running = g["turn_state"].as_str() == Some("running");
+                    running_hint = Some(g["turn_state"].as_str() == Some("running"));
                 }
                 if let Ok(g) = self.call("session.goal", json!({"session_id": id})).await {
                     let goal = serde_json::from_value::<wire::frames::GoalView>(g["goal"].clone())
@@ -530,47 +588,53 @@ impl Hub {
                 if let Ok(t) = self.call("session.tasks", json!({"session_id": id})).await {
                     let infos: Vec<wire::frames::TaskInfo> =
                         serde_json::from_value(t["tasks"].clone()).unwrap_or_default();
-                    let mut out = Out::default();
                     let now = self.now();
-                    let mut st = self.0.st.lock().unwrap();
-                    for i in infos {
-                        st.on_event(id, id, SessionEvent::TaskUpdated { task: i }, now, &mut out);
-                    }
+                    self.apply(|st, out| {
+                        for i in infos {
+                            st.on_event(id, id, SessionEvent::TaskUpdated { task: i }, now, out);
+                        }
+                    });
                 }
             }
             // 侧链的帧经父会话来：父会话订阅着就够了。
             Some(p) => {
                 let _ = self.subscribe(p, false).await;
-                running = self.0.st.lock().unwrap().sessions[id].running;
             }
         }
         let msgs = self.history(id).await;
         let conv = history::convert(&msgs);
+        // 收尾在 st 与 link 两把锁里一次做完：之后的帧都作为事件发出，之前的都在快照里。
         let mut st = self.0.st.lock().unwrap();
-        let s = st.sessions.get_mut(id).expect("known above");
-        s.running = running;
+        let s = st.sessions.get_mut(id).ok_or_else(gone)?;
+        // 实例早就订阅着的会话，它自己跟着帧记的状态比刚才那次 session.get 新。
+        if !was_live && let Some(r) = running_hint {
+            s.running = r;
+        }
         if s.todos.is_empty()
             && let Some(t) = conv.todos
         {
             s.todos = t;
         }
         let mut items = conv.items;
-        // 正在写的这一轮还没落盘：快照里补上已经到了的那段文字，之后的增量接着它。
-        if s.running && !s.turn_text.is_empty() {
-            items.push(port::HistoryItem::Assistant {
-                text: s.turn_text.clone(),
-            });
+        // 每一步在 step_end 时连同工具结果落盘；正在写的这一步还没进历史，补上已经到了的那段。
+        let pending = s.pending_step_text();
+        if s.running && !pending.is_empty() {
+            items.push(port::HistoryItem::Assistant { text: pending });
         }
+        let s = &st.sessions[id];
         let watched = Watched {
-            session: st.summary(id).expect("known above"),
+            session: st.summary(id).ok_or_else(gone)?,
             history: items,
-            running,
-            goal: st.sessions[id].goal.clone(),
-            todos: st.sessions[id].todos.clone(),
-            tasks: st.sessions[id].tasks.values().cloned().collect(),
-            prompts: st.sessions[id].prompts.clone(),
+            running: s.running,
+            goal: s.goal.clone(),
+            todos: s.todos.clone(),
+            tasks: s.tasks.values().cloned().collect(),
+            prompts: s.prompts.clone(),
         };
-        self.0.link.lock().unwrap().watched.insert(id.to_string());
+        let mut link = self.0.link.lock().unwrap();
+        if link.generation(id) == generation {
+            link.watched.insert(id.to_string());
+        }
         Ok(Reply::Watched(Box::new(watched)))
     }
 
@@ -597,15 +661,18 @@ impl Hub {
                         hub.retitle(&id, name, Titler::Engine);
                     }
                 }
+                // 会话正忙、消息没有投递（协议 §5.3）：不是这一轮失败，是这句话被退回了。
+                Err(RpcError::Remote {
+                    code: SESSION_BUSY, ..
+                }) => {
+                    hub.emit_events(vec![Event::SteerReturned {
+                        session: SessionId(id.clone()),
+                        messages: vec![port::MessageId(t.clone())],
+                    }]);
+                }
                 Err(RpcError::Remote { message, .. }) => {
-                    let mut out = Out::default();
                     let now = hub.now();
-                    hub.0
-                        .st
-                        .lock()
-                        .unwrap()
-                        .turn_failed(&id, message, now, &mut out);
-                    hub.emit(out);
+                    hub.apply(|st, out| st.turn_failed(&id, message, now, out));
                 }
                 Err(RpcError::Closed) => {}
             }
@@ -867,7 +934,9 @@ impl Hub {
             }
             C::Watch { session } => self.watch(&session.0).await,
             C::Unwatch { session } => {
-                self.0.link.lock().unwrap().watched.remove(&session.0);
+                let mut link = self.0.link.lock().unwrap();
+                link.watched.remove(&session.0);
+                *link.unwatched.entry(session.0).or_default() += 1;
                 Ok(Reply::Ok)
             }
             C::Rename { session, title } => {
@@ -881,6 +950,12 @@ impl Hub {
                 Ok(Reply::Ok)
             }
             C::Close { session } => {
+                if self.0.job_runs.lock().unwrap().contains_key(&session.0) {
+                    self.turn_done(&session.0, false, "session closed".into(), Usage::default());
+                }
+                let _ = self
+                    .call("session.unsubscribe", json!({"session_id": session.0}))
+                    .await;
                 let _ = self
                     .call("session.close", json!({"session_id": session.0}))
                     .await;
@@ -898,8 +973,13 @@ impl Hub {
                 session,
                 text,
                 mode,
-                ..
+                permission,
             } => {
+                // Agix 的 run_turn 只在建会话时收 permission_mode：对已有的会话照常跑会让
+                // "这一轮只读"的选择悄悄失效，所以宁可拒绝（需求 C-20 等 Agix 支持）。
+                if permission.is_some_and(|p| p != port::PermissionMode::Default) {
+                    return Err(PortError::Unsupported("permission_mode".into()));
+                }
                 self.ensure_known(&session.0).await?;
                 // 往哪个会话说话就是在看哪个会话：新建会话后 model 先放一个空转录、不等快照就提交。
                 self.0
@@ -1182,6 +1262,7 @@ impl Service for Hub {
         let mut link = self.0.link.lock().unwrap();
         link.sink = sink;
         link.watched.clear();
+        link.epoch += 1;
     }
 
     fn hello(&self) -> (InstanceInfo, bool, bool) {

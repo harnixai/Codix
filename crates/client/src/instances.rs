@@ -125,7 +125,8 @@ impl SocketInstances {
         let socket = self.layout.socket(name);
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
-            if UnixStream::connect(&socket).await.is_ok() {
+            // 实例先绑 socket、再写发现文件；接入要读发现文件，两样都在才算起来了。
+            if self.layout.discovery(name).exists() && UnixStream::connect(&socket).await.is_ok() {
                 break;
             }
             if let Ok(Some(status)) = child.try_wait() {
@@ -258,7 +259,10 @@ impl Instances for SocketInstances {
             return Err(PortError::NoSuchInstance(name.into()));
         }
         let discovery = self.layout.discovery(name);
-        let Some(f) = read_json::<InstanceFile>(&discovery) else {
+        // 先确认实例真在（socket 连得上）：崩溃留下的发现文件里的 pid 可能已被别的进程用了，
+        // 照它发 SIGTERM 会误杀。
+        let Some(f) = self.running(name).await else {
+            self.clean_stale(name);
             return Ok(());
         };
         let pid = i32::try_from(f.pid)

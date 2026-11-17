@@ -230,6 +230,9 @@ pub struct Ui {
     pub finished_expanded: std::collections::HashSet<SessionId>,
     /// 已发出 Watch、还没回来的。
     pub watching: std::collections::HashSet<SessionId>,
+    /// 快照还没回来的会话先到的事件：快照回来后按序补上。实例只推快照之后的事件，但它们
+    /// 可能比快照的回复先到（两条 channel），丢了就少几个字。
+    pub watch_buffer: std::collections::HashMap<SessionId, Vec<port::Event>>,
     /// 对话区的上下文栈（面包屑）：进入子 Agent 或任务输出之前的那些会话与标题。
     pub ctx_parents: Vec<(SessionId, String)>,
     /// 对话区是子 Agent 的侧链会话时，它对应的任务：输入的话经"给任务发消息"送达（C-16）。
@@ -348,6 +351,7 @@ impl State {
                 tree_collapsed: Default::default(),
                 finished_expanded: Default::default(),
                 watching: Default::default(),
+                watch_buffer: Default::default(),
                 ctx_parents: vec![],
                 via_task: None,
                 task_view: None,
