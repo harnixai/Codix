@@ -340,3 +340,21 @@ async fn tree_rows_end_with_time_and_tokens_not_status_words() {
     }
     assert!(lower.contains("8m00s, "), "{lower}");
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_long_panel_scrolls_when_it_has_the_focus() {
+    // 矮一点的终端：面板最多占对话区的 1/3，goal + 7 条 todo 放不下，要滚。
+    let mut h = Harness::new("default", Size::new(160, 24)).await;
+    h.open_session("重构认证模块").await;
+    assert!(h.text().contains("Shift+↑↓"), "放不下时下沿标出可以滚动");
+    h.keys("Esc Ctrl+Up Ctrl+Up").await;
+    assert_eq!(
+        h.core.state.ui.focus,
+        model::Focus::Panel,
+        "转录里 Ctrl+↑ 到面板"
+    );
+    let before = h.text();
+    h.keys("Shift+Down Down").await;
+    assert_ne!(before, h.text(), "面板有焦点时滚面板");
+    assert!(h.text().contains("↑2 "));
+}
