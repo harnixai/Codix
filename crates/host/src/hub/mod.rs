@@ -1470,7 +1470,7 @@ impl Hub {
                 permission,
             } => {
                 // Agix 的 run_turn 只在建会话时收 permission_mode：对已有的会话照常跑会让
-                // "这一轮只读"的选择悄悄失效，所以宁可拒绝（需求 C-20 等 Agix 支持）。
+                // "这一轮只读"的选择悄悄失效，所以宁可拒绝（需求 C-20 等 openatta/Agix#89）。
                 if permission.is_some_and(|p| p != port::PermissionMode::Default) {
                     return Err(PortError::Unsupported("permission_mode".into()));
                 }
