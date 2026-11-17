@@ -568,6 +568,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "host",
  "nix 0.29.0",
  "port",
  "serde",
