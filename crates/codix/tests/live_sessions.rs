@@ -212,7 +212,6 @@ async fn per_turn_permission_modes_and_flows_are_refused() {
     assert!(matches!(c.ok(Command::ListFlows).await, Reply::Flows(v) if v.is_empty()));
     for cmd in [
         Command::GetFlow { name: "x".into() },
-        Command::OpenAuthoring { flow: None },
         Command::StartRun {
             flow: "x".into(),
             subject: "y".into(),

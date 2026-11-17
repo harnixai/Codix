@@ -1,9 +1,9 @@
 //! LIVE：作业（architecture §8.5）——增删改与启停、立即运行触发出的会话与结局、触发记录落盘、
-//! 停实例时跑到一半的那次记为失败、崩溃后没有结局的那次在启动时记为中断、错过的触发补跑一次、作业编辑会话的宿主工具。
+//! 停实例时跑到一半的那次记为失败、崩溃后没有结局的那次在启动时记为中断、错过的触发补跑一次。宿主工具在 live_tools.rs。
 
 mod live;
 
-use live::{Answering, Live, QUICK, TURN};
+use live::{Live, QUICK, TURN};
 use port::{Command, Event, Job, JobId, JobKind, JobOutcome, JobTarget, Origin, Reply};
 
 fn job(name: &str, cron: &str, prompt: &str, catch_up: bool) -> Job {
@@ -296,72 +296,4 @@ async fn a_missed_firing_is_caught_up_once_only_when_asked() {
         nb.next_fire_ms.unwrap() > live::now_ms(),
         "不补跑的排到下一个整点"
     );
-}
-
-/// 第 2 批会把作业工具换成所有会话都有的 `job_*` 并按调用会话限作用域、删掉编辑会话；
-/// 那时这个用例改成在普通会话里调工具。
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "live"]
-async fn the_job_editor_session_changes_jobs_through_its_host_tools() {
-    let lv = Live::new();
-    let mut c = lv.start().await;
-    c.answering(Answering::Auto);
-    let Reply::Session(ed) = c.ok(Command::OpenJobSession { job: None }).await else {
-        panic!("open_job_session")
-    };
-    assert!(matches!(
-        ed.provenance.origin,
-        Origin::Editor {
-            of: port::EditorOf::Job,
-            ..
-        }
-    ));
-    let Reply::Session(again) = c.ok(Command::OpenJobSession { job: None }).await else {
-        panic!("open_job_session")
-    };
-    assert_eq!(again.id, ed.id, "同一个键总是同一个编辑会话");
-    assert_eq!(
-        lv.read("sessions.json")[&ed.id.0]["editor_key"],
-        "job:",
-        "编辑键记在 sessions.json"
-    );
-    c.watch(&ed.id).await;
-
-    let t = c
-        .turn(
-            &ed.id,
-            "Call the JobSave tool once with name \"live-tool\", cron \"0 4 * * *\" and prompt \
-             \"say hi\". Do not ask me to confirm. Then reply with only the word SAVED.",
-        )
-        .await;
-    t.ended();
-    assert!(t.tools.iter().any(|n| n == "JobSave"), "{:?}", t.tools);
-    let made = c
-        .events()
-        .into_iter()
-        .find_map(|e| match e {
-            Event::JobUpserted(j) if j.name == "live-tool" => Some(j),
-            _ => None,
-        })
-        .expect("JobSave 推了 JobUpserted");
-    assert_eq!(made.cron, "0 4 * * *");
-    assert!(list(&c).await.iter().any(|j| j.id == made.id));
-
-    let t = c
-        .turn(
-            &ed.id,
-            "Call JobList, then call JobDelete for the job named \"live-tool\". Do not ask me to \
-             confirm. Then reply with only the word DELETED.",
-        )
-        .await;
-    t.ended();
-    assert!(t.tools.iter().any(|n| n == "JobDelete"), "{:?}", t.tools);
-    let id = made.id.clone();
-    assert!(
-        c.events()
-            .iter()
-            .any(|e| matches!(e, Event::JobRemoved { job } if *job == id)),
-        "JobDelete 推了 JobRemoved"
-    );
-    assert!(list(&c).await.is_empty());
 }
