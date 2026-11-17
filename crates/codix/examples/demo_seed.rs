@@ -56,6 +56,7 @@ async fn new_session(b: &Arc<dyn Backend>) -> SessionId {
             project: None,
             scene: None,
             model: None,
+            permission: None,
         },
     )
     .await
@@ -179,7 +180,6 @@ async fn main() {
                 session: id.clone(),
                 text: text.to_string(),
                 mode: SubmitMode::Turn,
-                permission: None,
             },
         )
         .await;

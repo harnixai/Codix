@@ -261,7 +261,6 @@ scripts:
             session: "x".into(),
             text: "t".into(),
             mode: port::SubmitMode::Turn,
-            permission: None,
         }));
     }
 

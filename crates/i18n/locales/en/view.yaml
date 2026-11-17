@@ -22,6 +22,8 @@ view:
     interrupt: "esc to interrupt"
     shortcuts: "? for shortcuts"
   mode:
+    default: "default mode"
+    dont_ask: "⏹ don't ask: anything not allowed is refused (shift+tab to cycle)"
     accept_edits: "⏵⏵ accept edits on (shift+tab to cycle)"
     plan: "⏸ plan mode on (shift+tab to cycle)"
     bypass: "⏵⏵ bypass permissions on (shift+tab to cycle)"

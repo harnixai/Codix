@@ -138,6 +138,13 @@ pub enum SessionEvent {
         goal: Option<GoalView>,
     },
     Rewound {},
+    /// 会话的权限模式变了：宿主 `session.setPermissionMode`（`source: "host"`）或模型的
+    /// `EnterPlanMode` / `ExitPlanMode`（`"model"`）。
+    PermissionModeChanged {
+        mode: String,
+        #[serde(default)]
+        source: String,
+    },
     SubscriptionDropped {},
     #[serde(other)]
     Unknown,
@@ -348,6 +355,15 @@ mod tests {
         assert_eq!(
             SessionEvent::parse(&json!({"kind":"text_delta","text":"hi","extra":true})),
             SessionEvent::TextDelta { text: "hi".into() }
+        );
+        assert_eq!(
+            SessionEvent::parse(
+                &json!({"kind":"permission_mode_changed","mode":"plan","source":"model"})
+            ),
+            SessionEvent::PermissionModeChanged {
+                mode: "plan".into(),
+                source: "model".into()
+            }
         );
         assert_eq!(
             DaemonEvent::parse(&json!({"kind":"mcp_connected","server":"x"})),

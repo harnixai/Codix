@@ -22,6 +22,8 @@ view:
     interrupt: "esc 中断"
     shortcuts: "? 快捷键"
   mode:
+    default: "缺省模式"
+    dont_ask: "⏹ 不询问，未放行的一律拒绝 (shift+tab 切换)"
     accept_edits: "⏵⏵ 自动接受编辑 (shift+tab 切换)"
     plan: "⏸ 计划模式 (shift+tab 切换)"
     bypass: "⏵⏵ 绕过权限 (shift+tab 切换)"

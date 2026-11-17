@@ -56,7 +56,6 @@ async fn default_answer_streams_and_updates_the_summary() {
             session: s1(),
             text: "你好".into(),
             mode: SubmitMode::Turn,
-            permission: None,
         })
         .await
         .unwrap();
@@ -98,7 +97,6 @@ async fn interrupt_cancels_what_has_not_happened_yet() {
         session: s1(),
         text: "一段很长很长很长很长的话".into(),
         mode: SubmitMode::Turn,
-        permission: None,
     })
     .await
     .unwrap();
@@ -144,7 +142,6 @@ scripts:
         session: s1(),
         text: "ping".into(),
         mode: SubmitMode::Turn,
-        permission: None,
     })
     .await
     .unwrap();

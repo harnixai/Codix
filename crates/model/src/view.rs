@@ -272,15 +272,12 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     } else {
         Line::toned(i18n::t!("view.hint.shortcuts"), Tone::Dim)
     };
-    let hint_right = match s.ui.permission {
+    let hint_right = match s.permission_shown() {
         port::PermissionMode::Default => Line::default(),
-        port::PermissionMode::AcceptEdits => {
-            Line::toned(i18n::t!("view.mode.accept_edits"), Tone::Accent)
+        m @ (port::PermissionMode::BypassPermissions | port::PermissionMode::DontAsk) => {
+            Line::toned(permission_label(m), Tone::Error)
         }
-        port::PermissionMode::Plan => Line::toned(i18n::t!("view.mode.plan"), Tone::Accent),
-        port::PermissionMode::BypassPermissions => {
-            Line::toned(i18n::t!("view.mode.bypass"), Tone::Error)
-        }
+        m => Line::toned(permission_label(m), Tone::Accent),
     };
     ChatPane {
         focused,
@@ -971,5 +968,16 @@ impl State {
         let cur = self.composer_offset(len, rows) as isize;
         let off = (cur + lines).clamp(0, len.saturating_sub(rows) as isize) as usize;
         self.ui.composer_scroll = Some((self.composer_key(), off));
+    }
+}
+
+/// 输入框下右边那句：权限模式与切换键。缺省模式不写（与 Claude Code 一致），这里给出也只用于提示。
+pub(crate) fn permission_label(m: port::PermissionMode) -> String {
+    match m {
+        port::PermissionMode::Default => i18n::t!("view.mode.default"),
+        port::PermissionMode::AcceptEdits => i18n::t!("view.mode.accept_edits"),
+        port::PermissionMode::Plan => i18n::t!("view.mode.plan"),
+        port::PermissionMode::BypassPermissions => i18n::t!("view.mode.bypass"),
+        port::PermissionMode::DontAsk => i18n::t!("view.mode.dont_ask"),
     }
 }

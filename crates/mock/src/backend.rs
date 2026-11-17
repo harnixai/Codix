@@ -264,14 +264,16 @@ impl ScriptedBackend {
                 project,
                 scene,
                 model,
+                permission,
             } => {
-                let s = self.new_session(
+                let mut s = self.new_session(
                     "新会话",
                     project.clone(),
                     scene.clone(),
                     model.clone(),
                     port::Origin::User,
                 );
+                s.permission = permission.unwrap_or_default();
                 self.emit_now(Event::SessionUpserted(s.clone()));
                 Ok(Reply::Session(s))
             }
@@ -339,6 +341,19 @@ impl ScriptedBackend {
                 Ok(Reply::Ok)
             }
             TrustProject { .. } => Ok(Reply::Ok),
+            SetPermissionMode { session, mode } => {
+                let mut s = self
+                    .summary(session)
+                    .ok_or_else(|| PortError::Failed(format!("没有会话 {session}")))?;
+                if effects {
+                    s.permission = *mode;
+                    self.emit_now(Event::SessionUpserted(s));
+                }
+                Ok(Reply::PermissionMode {
+                    mode: *mode,
+                    clamped: false,
+                })
+            }
             SetModel { session, model } => {
                 if effects && let Some(mut s) = self.summary(session) {
                     s.provenance.model = model.clone();
@@ -593,6 +608,7 @@ impl ScriptedBackend {
             updated_ms: self.now_ms(),
             created_ms: self.now_ms(),
             held_by: None,
+            permission: Default::default(),
         }
     }
 
@@ -735,6 +751,7 @@ fn command_session(cmd: &Command) -> Option<SessionId> {
         | Interrupt { session }
         | Answer { session, .. }
         | SetModel { session, .. }
+        | SetPermissionMode { session, .. }
         | Commands { session }
         | SideQuestion { session, .. }
         | SetGoal { session, .. }

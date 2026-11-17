@@ -301,7 +301,6 @@ async fn a_failed_run_turn_is_a_failed_turn() {
             session: SessionId("s1".into()),
             text: "hi".into(),
             mode: SubmitMode::Turn,
-            permission: None,
         })
         .await
         .unwrap();
@@ -353,6 +352,7 @@ async fn host_tools_hang_on_the_connection_and_a_user_session_saves_jobs() {
             project: None,
             scene: None,
             model: None,
+            permission: None,
         })
         .await
         .unwrap();
@@ -451,7 +451,6 @@ async fn a_busy_session_returns_the_message_instead_of_failing_the_turn() {
             session: SessionId("s1".into()),
             text: "再来".into(),
             mode: SubmitMode::Turn,
-            permission: None,
         })
         .await
         .unwrap()
@@ -502,20 +501,85 @@ async fn a_mid_turn_snapshot_adds_only_the_unpersisted_step() {
 }
 
 #[tokio::test]
-async fn per_turn_permission_modes_are_refused_not_ignored() {
-    let r = rig().await;
-    let e = r
+async fn permission_modes_are_set_on_the_session_and_its_frames_keep_them() {
+    let mut r = rig_with(Box::new(|m, p| match m {
+        "session.setPermissionMode" => {
+            // 设置不许 bypass：夹到 default。
+            let (mode, clamped) = match p["mode"].as_str() {
+                Some("bypassPermissions") => ("default", true),
+                Some(x) => (x, false),
+                None => ("default", false),
+            };
+            Ok(json!({"session_id": p["session_id"], "mode": mode,
+                      "requested": p["mode"], "clamped": clamped}))
+        }
+        _ => default_handler(m, p),
+    }))
+    .await;
+    let reply = r
         .hub
-        .handle(Command::Submit {
+        .handle(Command::SetPermissionMode {
             session: SessionId("s1".into()),
-            text: "只读看看".into(),
-            mode: SubmitMode::Turn,
-            permission: Some(port::PermissionMode::Plan),
+            mode: port::PermissionMode::Plan,
         })
         .await
-        .unwrap_err();
-    assert!(matches!(e, port::PortError::Unsupported(_)));
-    assert!(r.calls("session.run_turn").is_empty());
+        .unwrap();
+    assert_eq!(
+        reply,
+        Reply::PermissionMode {
+            mode: port::PermissionMode::Plan,
+            clamped: false
+        }
+    );
+    assert_eq!(r.calls("session.setPermissionMode")[0]["mode"], "plan");
+    let ev = r.events().await;
+    assert!(
+        ev.iter().any(|e| matches!(e, Event::SessionUpserted(s)
+            if s.id.0 == "s1" && s.permission == port::PermissionMode::Plan)),
+        "{ev:?}"
+    );
+
+    // 模型自己 ExitPlanMode / EnterPlanMode 也推帧：摘要跟着变。
+    r.frame(
+        "s1",
+        json!({"kind":"permission_mode_changed","mode":"acceptEdits","source":"model"}),
+    );
+    let ev = r.events().await;
+    assert!(
+        ev.iter().any(|e| matches!(e, Event::SessionUpserted(s)
+            if s.id.0 == "s1" && s.permission == port::PermissionMode::AcceptEdits)),
+        "{ev:?}"
+    );
+
+    let Reply::PermissionMode { mode, clamped } = r
+        .hub
+        .handle(Command::SetPermissionMode {
+            session: SessionId("s1".into()),
+            mode: port::PermissionMode::BypassPermissions,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (mode, clamped),
+        (port::PermissionMode::Default, true),
+        "以实际生效的为准"
+    );
+
+    // 草稿里选的模式随建会话带上；Submit 不再带模式。
+    r.hub
+        .handle(Command::CreateSession {
+            project: None,
+            scene: None,
+            model: None,
+            permission: Some(port::PermissionMode::AcceptEdits),
+        })
+        .await
+        .unwrap();
+    let create = r.calls("session.create").last().cloned().unwrap();
+    assert_eq!(create["options"]["permission_mode"], "acceptEdits");
 }
 
 #[tokio::test]

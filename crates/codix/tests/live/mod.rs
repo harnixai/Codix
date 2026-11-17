@@ -326,6 +326,8 @@ pub enum Answering {
     Manual,
     /// 权限一律允许，问题选第一个选项（没有选项的答 "ok"）。
     Auto,
+    /// 权限一律拒绝（问题同 `Auto`）：用例要确认某件事没被做成时用，比如计划模式里写文件。
+    Deny,
 }
 
 /// 心跳：像一个开着的 TUI 那样每 10 秒报一次"刚有输入"，长的一轮也不会被实例当成僵死或空闲。
@@ -364,8 +366,9 @@ impl Client {
             let (shared, backend) = (shared.clone(), Arc::downgrade(&backend));
             tokio::spawn(async move {
                 while let Some(ev) = rx.recv().await {
+                    let how = *shared.answering.lock().unwrap();
                     if let Event::PromptPending { session, prompt } = &ev
-                        && *shared.answering.lock().unwrap() == Answering::Auto
+                        && how != Answering::Manual
                         && let Some(b) = backend.upgrade()
                     {
                         let (session, prompt) = (session.clone(), prompt.clone());
@@ -373,7 +376,7 @@ impl Client {
                             let _ = b
                                 .call(Command::Answer {
                                     session,
-                                    answer: auto_answer(&prompt),
+                                    answer: auto_answer(&prompt, how),
                                     prompt: prompt.id,
                                 })
                                 .await;
@@ -560,6 +563,7 @@ impl Client {
                 project: None,
                 scene: None,
                 model: None,
+                permission: None,
             })
             .await
         else {
@@ -580,13 +584,14 @@ impl Client {
             Reply::Watched(w) => *w,
             r => panic!("watch 回的是 {r:?}"),
         };
-        if *self.shared.answering.lock().unwrap() == Answering::Auto {
+        let how = *self.shared.answering.lock().unwrap();
+        if how != Answering::Manual {
             for p in &w.prompts {
                 let _ = self
                     .call(Command::Answer {
                         session: id.clone(),
                         prompt: p.id.clone(),
-                        answer: auto_answer(p),
+                        answer: auto_answer(p, how),
                     })
                     .await;
             }
@@ -611,7 +616,6 @@ impl Client {
             session: id.clone(),
             text: text.into(),
             mode,
-            permission: None,
         })
         .await
     }
@@ -694,8 +698,11 @@ impl Drop for Client {
     }
 }
 
-fn auto_answer(p: &Prompt) -> Answer {
+fn auto_answer(p: &Prompt, how: Answering) -> Answer {
     match &p.kind {
+        PromptKind::Permission { .. } if how == Answering::Deny => Answer::Deny {
+            reason: Some("the test denies every permission".into()),
+        },
         PromptKind::Permission { .. } => Answer::Permit,
         PromptKind::Question { options, .. } if !options.is_empty() => Answer::Choice { index: 0 },
         PromptKind::Question { .. } => Answer::Text { text: "ok".into() },

@@ -33,6 +33,8 @@ pub struct Sess {
     pub usage: Usage,
     pub updated_ms: u64,
     pub created_ms: u64,
+    /// 会话此刻的权限模式：建会话时给的、`session.resume` 报的、`permission_mode_changed` 帧改的。
+    pub permission: port::PermissionMode,
     pub(super) last_step: Option<u32>,
     pub(super) step_mark: usize,
     /// 这一轮到此刻的回答文字：快照里补上正在写的那段，作业与侧问取它当结果。
@@ -130,6 +132,7 @@ impl St {
             },
             updated_ms: s.updated_ms,
             created_ms: s.created_ms,
+            permission: s.permission,
             held_by: None,
         })
     }
@@ -416,6 +419,14 @@ impl St {
             SessionEvent::SubscriptionDropped {} => out.todo.push(Todo2::Resubscribe {
                 session: sid.to_string(),
             }),
+            SessionEvent::PermissionModeChanged { mode, .. } => {
+                if let Some(m) = permission_mode(&mode)
+                    && s.permission != m
+                {
+                    s.permission = m;
+                    self.upsert(sid, out);
+                }
+            }
             SessionEvent::Rewound {} | SessionEvent::Unknown => {}
         }
     }
@@ -676,4 +687,17 @@ pub fn answer_params(meta: &PromptMeta, prompt: &str, answer: &port::Answer) -> 
         }
     }
     p
+}
+
+/// Agix 报的模式名（§4.5，camelCase；`auto` / `yolo` 它已经报成 `bypassPermissions`）→ 端口的。
+pub fn permission_mode(name: &str) -> Option<port::PermissionMode> {
+    serde_json::from_value(serde_json::Value::String(name.to_string())).ok()
+}
+
+/// 端口的模式 → Agix 的名字。
+pub fn permission_name(m: port::PermissionMode) -> String {
+    serde_json::to_value(m)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "default".into())
 }

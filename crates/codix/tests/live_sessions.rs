@@ -1,13 +1,12 @@
 //! LIVE：会话代理里 Codix 自己做的部分（architecture §8.4）——只列本项目的会话、第一句话做
 //! 名字、改名与关闭记在 `sessions.json` 里并跨重启保留、换模型、命令表、Watch 快照的历史转换
-//! 与 todo、Codix 拒绝的逐轮权限模式。
+//! 与 todo、会话的权限模式（Shift+Tab：立即生效、跨重启保留）。
 
 mod live;
 
-use live::{Live, NAME, QUICK};
+use live::{Answering, Live, NAME, QUICK};
 use port::{
-    Command, Event, HistoryItem, Origin, PermissionMode, PortError, Reply, SessionId, SubmitMode,
-    TodoStatus,
+    Command, Event, HistoryItem, Origin, PermissionMode, PortError, Reply, SessionId, TodoStatus,
 };
 
 const OK: &str = "Reply with only the word OK.";
@@ -182,33 +181,82 @@ async fn a_watch_snapshot_rebuilds_history_and_todos() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live"]
-async fn per_turn_permission_modes_are_refused() {
+async fn the_permission_mode_is_the_sessions_and_takes_effect_at_once() {
     let lv = Live::new();
     let mut c = lv.start().await;
+    // 计划模式里写不成文件；模型若想 ExitPlanMode，问到人这里一律拒绝。
+    c.answering(Answering::Deny);
     let s = c.new_session().await;
+    c.watch(&s).await;
     let r = c
-        .call(Command::Submit {
+        .ok(Command::SetPermissionMode {
             session: s.clone(),
-            text: OK.into(),
-            mode: SubmitMode::Turn,
-            permission: Some(PermissionMode::Plan),
+            mode: PermissionMode::Plan,
         })
         .await;
-    assert!(
-        matches!(&r, Err(PortError::Unsupported(w)) if w == "permission_mode"),
-        "{r:?}"
+    assert_eq!(
+        r,
+        Reply::PermissionMode {
+            mode: PermissionMode::Plan,
+            clamped: false
+        }
     );
-    // 缺省模式照常跑。
-    c.skip_past();
-    c.ok(Command::Submit {
-        session: s.clone(),
-        text: OK.into(),
-        mode: SubmitMode::Turn,
-        permission: Some(PermissionMode::Default),
+    let me = s.clone();
+    c.wait_upsert("会话的模式是 plan", |x| {
+        x.id == me && x.permission == PermissionMode::Plan
     })
     .await;
-    c.finish_turn(&s).await.ended();
+    let t = c
+        .turn(
+            &s,
+            "Use the Write tool to create a file named plan.txt containing hi. If you cannot, \
+             reply with only the word BLOCKED.",
+        )
+        .await;
+    t.ended();
+    assert!(
+        !std::path::Path::new(&lv.project_path())
+            .join("plan.txt")
+            .exists(),
+        "计划模式里文件没写出来：{:?}",
+        t.results
+    );
+    // 切回缺省；重启实例后会话仍记得（Agix 记在会话日志里）。
+    let r = c
+        .ok(Command::SetPermissionMode {
+            session: s.clone(),
+            mode: PermissionMode::AcceptEdits,
+        })
+        .await;
+    assert!(matches!(
+        r,
+        Reply::PermissionMode {
+            mode: PermissionMode::AcceptEdits,
+            ..
+        }
+    ));
+    drop(c);
+    let c = lv.restart().await;
+    let sum = c
+        .sessions()
+        .await
+        .into_iter()
+        .find(|x| x.id == s)
+        .expect("会话还在");
+    let watched = c.watch(&s).await;
+    assert_eq!(
+        watched.session.permission,
+        PermissionMode::AcceptEdits,
+        "重启后快照里是会话记下的模式（列表里是 {:?}）",
+        sum.permission
+    );
+}
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn flow_commands_are_wired() {
+    let lv = Live::new();
+    let c = lv.start().await;
     // 流程接上了：不认识的流程是普通的失败，不再是"不支持"。
     let r = c.call(Command::GetFlow { name: "x".into() }).await;
     assert!(matches!(&r, Err(PortError::Failed(_))), "{r:?}");

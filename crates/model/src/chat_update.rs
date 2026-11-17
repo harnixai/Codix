@@ -274,11 +274,27 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             crate::update::scroll_focused(s, if a == Action::PageUp { -h } else { h });
         }
         Action::CycleMode => {
-            s.ui.permission = match s.ui.permission {
+            let next = match s.permission_shown() {
                 PermissionMode::Default => PermissionMode::AcceptEdits,
                 PermissionMode::AcceptEdits => PermissionMode::Plan,
-                PermissionMode::Plan | PermissionMode::BypassPermissions => PermissionMode::Default,
+                PermissionMode::Plan
+                | PermissionMode::BypassPermissions
+                | PermissionMode::DontAsk => PermissionMode::Default,
             };
+            // 模式是会话的：有会话就切它的，立即生效；草稿记在本地，建会话时带上。
+            match s.permission_session() {
+                Some(session) => {
+                    return Some(vec![s.call(
+                        Pending::PermissionSet(session.clone()),
+                        Command::SetPermissionMode {
+                            session,
+                            mode: next,
+                        },
+                    )]);
+                }
+                None if s.ui.task_view.is_some() => {}
+                None => s.ui.permission = next,
+            }
         }
         Action::Back => {
             if s.ui.rename.take().is_some() {
@@ -478,6 +494,7 @@ fn submit(s: &mut State) -> Vec<Effect> {
                 project: None,
                 scene: None,
                 model: None,
+                permission: (s.ui.permission != PermissionMode::Default).then_some(s.ui.permission),
             },
         )];
     };
@@ -499,7 +516,6 @@ pub(crate) fn send(s: &mut State, session: SessionId, text: String) -> Vec<Effec
         return vec![s.call(Pending::Ignore, Command::MessageTask { task, text })];
     }
     let running = s.domain.convs.get(&session).is_some_and(|c| c.running);
-    let permission = (s.ui.permission != PermissionMode::Default).then_some(s.ui.permission);
     let block = match s.domain.convs.get_mut(&session) {
         Some(c) => {
             c.follow = true;
@@ -525,7 +541,6 @@ pub(crate) fn send(s: &mut State, session: SessionId, text: String) -> Vec<Effec
             } else {
                 SubmitMode::Turn
             },
-            permission,
         },
     )]
 }
@@ -687,6 +702,25 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
 
 pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effect> {
     match (what, reply) {
+        (Pending::PermissionSet(id), Reply::PermissionMode { mode, clamped }) => {
+            // 以实例回的为准：设置可能把请求夹窄了。SessionUpserted 随后也会到，这里先改上。
+            if let Some(x) = s.domain.sessions.iter_mut().find(|x| x.id == id) {
+                x.permission = mode;
+            }
+            if let Some(c) = s.domain.convs.get_mut(&id) {
+                c.summary.permission = mode;
+            }
+            if clamped {
+                s.notice(
+                    i18n::t!(
+                        "chat_update.permission_clamped",
+                        mode = crate::view::permission_label(mode)
+                    ),
+                    true,
+                );
+            }
+            vec![]
+        }
         (Pending::Trusted(t), Reply::Ok) => {
             s.notice(
                 if t {
@@ -738,6 +772,8 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
             vec![]
         }
         (Pending::CreateThenSubmit { text }, Reply::Session(summary)) => {
+            // 草稿里选的模式已经随建会话带过去，记在会话上了；下一个草稿从缺省起。
+            s.ui.permission = PermissionMode::Default;
             let now = s.ui.now_ms;
             let id = summary.id.clone();
             let mut e = open_session(s, id.clone());
@@ -771,5 +807,30 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
             vec![]
         }
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clamped_mode_is_shown_as_what_it_really_is() {
+        let mut s = State::new(
+            std::sync::Arc::new(keys::Keymap::default()),
+            tui::Size::new(160, 45),
+            0,
+        );
+        let id = SessionId("s1".into());
+        chat_reply(
+            &mut s,
+            Pending::PermissionSet(id),
+            Reply::PermissionMode {
+                mode: PermissionMode::Default,
+                clamped: true,
+            },
+        );
+        let n = s.ui.notice.as_ref().expect("底栏说了");
+        assert!(n.error && n.text.contains("缺省模式"), "{}", n.text);
     }
 }

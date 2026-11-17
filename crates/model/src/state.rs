@@ -209,7 +209,7 @@ pub struct Ui {
     pub panel_scroll: (String, usize),
     /// 输入框手动滚到的位置，连同当时的（光标、文字长度）：一编辑就回到跟着光标走。
     pub composer_scroll: Option<((usize, usize), usize)>,
-    /// Shift+Tab 轮换的权限模式。
+    /// 草稿里 Shift+Tab 选的权限模式（建会话时带上）；打开了会话时显示与切换的是会话自己的。
     pub permission: PermissionMode,
     /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
     pub ask_active: bool,
@@ -416,6 +416,33 @@ impl State {
     pub fn conv_mut(&mut self) -> Option<&mut Conversation> {
         let id = self.ui.chat.clone()?;
         self.domain.convs.get_mut(&id)
+    }
+
+    /// Shift+Tab 切的是哪个会话：对话区里的会话；在子 Agent 里时是它的根会话（模式随根会话）。
+    /// 看任务输出、草稿时没有。
+    pub fn permission_session(&self) -> Option<SessionId> {
+        if self.ui.task_view.is_some() {
+            return None;
+        }
+        if self.ui.via_task.is_some() {
+            return self.ui.ctx_parents.first().map(|(id, _)| id.clone());
+        }
+        self.ui.chat.clone()
+    }
+
+    /// 输入框下显示的权限模式：会话的（以最新的摘要为准）；草稿时是本地选的。
+    pub fn permission_shown(&self) -> PermissionMode {
+        match self.permission_session() {
+            Some(id) => self
+                .domain
+                .sessions
+                .iter()
+                .find(|x| x.id == id)
+                .map(|x| x.permission)
+                .or_else(|| self.domain.convs.get(&id).map(|c| c.summary.permission))
+                .unwrap_or_default(),
+            None => self.ui.permission,
+        }
     }
 
     pub fn ask_visible(&self) -> bool {

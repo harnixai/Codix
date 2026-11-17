@@ -23,3 +23,4 @@ chat_update:
   steer_missed: "插话没赶上这一轮，已放回输入框"
   trusted: "已信任这个项目：它自己的设置与流程从下一轮起生效"
   untrusted: "已不再信任这个项目"
+  permission_clamped: "设置不允许这个模式，实际是：{mode}"

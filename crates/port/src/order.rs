@@ -63,6 +63,7 @@ mod tests {
             updated_ms: 0,
             created_ms,
             held_by: None,
+            permission: Default::default(),
         }
     }
 

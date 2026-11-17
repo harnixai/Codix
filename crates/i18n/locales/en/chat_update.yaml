@@ -23,3 +23,4 @@ chat_update:
   steer_missed: "Your message missed this turn and was put back in the input box"
   trusted: "This project is trusted now: its own settings and flows apply from the next turn"
   untrusted: "This project is no longer trusted"
+  permission_clamped: "The settings do not allow that mode; it is: {mode}"

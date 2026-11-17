@@ -63,6 +63,7 @@ async fn one_turn(r: &mut Rig, text: &str) -> Vec<Event> {
             project: None,
             scene: None,
             model: None,
+            permission: None,
         })
         .await
         .unwrap()
@@ -80,7 +81,6 @@ async fn one_turn(r: &mut Rig, text: &str) -> Vec<Event> {
             session: s.id.clone(),
             text: text.into(),
             mode: SubmitMode::Turn,
-            permission: None,
         })
         .await
         .unwrap();

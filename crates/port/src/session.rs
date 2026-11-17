@@ -23,6 +23,9 @@ pub struct SessionSummary {
     /// 会话被另一个实例打开着（Agix 的会话写者锁在它那里）。
     #[serde(default)]
     pub held_by: Option<InstanceName>,
+    /// 会话此刻的权限模式（输入框下显示的就是它，Shift+Tab 改它）。
+    #[serde(default)]
+    pub permission: crate::PermissionMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

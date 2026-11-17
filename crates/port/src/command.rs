@@ -33,6 +33,9 @@ pub enum Command {
         project: Option<String>,
         scene: Option<String>,
         model: Option<String>,
+        /// 草稿里 Shift+Tab 选的权限模式，建会话时带上；`None` 用设置的。
+        #[serde(default)]
+        permission: Option<PermissionMode>,
     },
     /// 订阅一个会话的细节事件，回 `Watched` 快照；会话不在内存时先恢复。
     Watch {
@@ -54,9 +57,6 @@ pub enum Command {
         session: SessionId,
         text: String,
         mode: SubmitMode,
-        /// Shift+Tab 选的权限模式，逐轮生效（需求 C-20）；`None` 用会话自己的。
-        #[serde(default)]
-        permission: Option<PermissionMode>,
     },
     Interrupt {
         session: SessionId,
@@ -69,6 +69,12 @@ pub enum Command {
     SetModel {
         session: SessionId,
         model: String,
+    },
+    /// Shift+Tab：切这个会话的权限模式，立即生效、记在会话上（需求 C-20，Agix
+    /// `session.setPermissionMode`）。回 `PermissionMode`，以其中实际生效的为准。
+    SetPermissionMode {
+        session: SessionId,
+        mode: PermissionMode,
     },
     /// 信任 / 不再信任实例的项目（Agix 的 `project.trust`）：受信的项目才读它自己的设置、
     /// 流程包，才能往它里面存流程。只由人发（`/trust`），模型的工具做不了这件事。
@@ -166,6 +172,7 @@ impl Command {
             Command::Interrupt { .. } => "interrupt",
             Command::Answer { .. } => "answer",
             Command::SetModel { .. } => "set_model",
+            Command::SetPermissionMode { .. } => "set_permission_mode",
             Command::TrustProject { .. } => "trust_project",
             Command::Commands { .. } => "commands",
             Command::SideQuestion { .. } => "side_question",
@@ -206,14 +213,17 @@ pub enum SubmitMode {
     Queue,
 }
 
-/// 与 Agix 的 `permission_mode` 取值一致（协议 §4.5）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 与 Agix 的 `permission_mode` 取值一致（协议 §4.5；程序专用的 `bubble` 不会出现在会话上）。
+/// Shift+Tab 不轮到 `DontAsk`，但设置可以把会话夹到它，所以得认得。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionMode {
+    #[default]
     Default,
     AcceptEdits,
     Plan,
     BypassPermissions,
+    DontAsk,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,6 +270,11 @@ pub struct Watched {
 #[serde(rename_all = "snake_case")]
 pub enum Reply {
     Ok,
+    /// `SetPermissionMode` 的回复：`mode` 是会话此刻实际的模式；`clamped` 表示设置把请求夹窄了。
+    PermissionMode {
+        mode: PermissionMode,
+        clamped: bool,
+    },
     Hello {
         instance: InstanceInfo,
         flows: bool,

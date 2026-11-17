@@ -759,7 +759,35 @@ impl Hub {
                 st.on_event(id, id, SessionEvent::parse(p), now, out);
             }
         });
+        self.refresh_permission(id).await;
         Ok(())
+    }
+
+    /// 会话此刻的权限模式：订阅之后它一定在内存里，`session.resume` 只报状态（`already_active`）。
+    /// 订阅之前切的、设置夹过的、重建后按设置得到的，帧都不报，只能这样读。
+    async fn refresh_permission(&self, id: &str) {
+        let Ok(r) = self.call("session.resume", json!({"session_id": id})).await else {
+            return;
+        };
+        let Some(m) = r["permission"]["mode"]
+            .as_str()
+            .and_then(state::permission_mode)
+        else {
+            return;
+        };
+        let changed = {
+            let mut st = self.0.st.lock().unwrap();
+            match st.sessions.get_mut(id) {
+                Some(s) if s.permission != m => {
+                    s.permission = m;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.upsert(id);
+        }
     }
 
     async fn create_session(
@@ -1427,9 +1455,18 @@ impl Hub {
                 v.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
                 Ok(Reply::Sessions(v))
             }
-            C::CreateSession { scene, model, .. } => {
+            C::CreateSession {
+                scene,
+                model,
+                permission,
+                ..
+            } => {
+                let extra = match permission {
+                    Some(m) => json!({"permission_mode": state::permission_name(m)}),
+                    None => json!({}),
+                };
                 let id = self
-                    .create_session(Origin::User, None, scene, model, json!({}))
+                    .create_session(Origin::User, None, scene, model, extra)
                     .await?;
                 self.summary(&id).map(Reply::Session)
             }
@@ -1474,13 +1511,7 @@ impl Hub {
                 session,
                 text,
                 mode,
-                permission,
             } => {
-                // Agix 的 run_turn 只在建会话时收 permission_mode：对已有的会话照常跑会让
-                // "这一轮只读"的选择悄悄失效，所以宁可拒绝（需求 C-20 等 openatta/Agix#89）。
-                if permission.is_some_and(|p| p != port::PermissionMode::Default) {
-                    return Err(PortError::Unsupported("permission_mode".into()));
-                }
                 self.ensure_known(&session.0).await?;
                 // 往哪个会话说话就是在看哪个会话：新建会话后 model 先放一个空转录、不等快照就提交。
                 self.0
@@ -1533,6 +1564,37 @@ impl Hub {
                     f.trust_changed().await;
                 }
                 Ok(Reply::Ok)
+            }
+            C::SetPermissionMode { session, mode } => {
+                self.ensure_known(&session.0).await?;
+                let r = self
+                    .call(
+                        "session.setPermissionMode",
+                        json!({"session_id": session.0, "mode": state::permission_name(mode)}),
+                    )
+                    .await
+                    .map_err(rpc_err)?;
+                let got = r["mode"]
+                    .as_str()
+                    .and_then(state::permission_mode)
+                    .unwrap_or(mode);
+                let changed = {
+                    let mut st = self.0.st.lock().unwrap();
+                    match st.sessions.get_mut(&session.0) {
+                        Some(s) if s.permission != got => {
+                            s.permission = got;
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if changed {
+                    self.upsert(&session.0);
+                }
+                Ok(Reply::PermissionMode {
+                    mode: got,
+                    clamped: r["clamped"].as_bool().unwrap_or(false),
+                })
             }
             C::SetModel { session, model } => {
                 self.call(
