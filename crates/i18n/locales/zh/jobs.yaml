@@ -1,0 +1,17 @@
+# 作业标签。
+jobs:
+  next_fire: "下次 {time}"
+  disabled: "已停用"
+  last_failed: "上次 ✗"
+  last_done: "上次 ✓"
+  running: "运行中"
+  history_empty: "触发记录：还没有"
+  history_open: "触发记录 · Enter 打开那一次"
+  target_session: "→ 会话「{title}」"
+  target_run: "→ 运行「{subject}」"
+  notice_tool: "在对话里说清楚就行；阶段 3 由引擎侧的作业工具执行"
+  run_now: "「{name}」立即运行一次"
+  prefill_new: "新建一个作业："
+  prefill_edit: "把这个作业改成："
+  prefill_delete: "删除这个作业"
+  no_flow: "这个项目里没有流程 {name}"

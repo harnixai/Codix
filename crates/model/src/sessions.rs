@@ -234,8 +234,8 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
     let rows = s.session_rows();
     rows.iter()
         .map(|r| match r {
-            SessRow::New => Line::toned("＋ 新建会话", Tone::Accent)
-                .push("  Enter · 或在输入框里 /new", Tone::Dim),
+            SessRow::New => Line::toned(i18n::t!("sessions.new"), Tone::Accent)
+                .push(i18n::t!("sessions.new_hint"), Tone::Dim),
             SessRow::Session(id) => {
                 let Some(x) = s.domain.sessions.iter().find(|x| &x.id == id) else {
                     return Line::default();
@@ -250,15 +250,22 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     GoalPhase::Active => (
                         "●",
                         Tone::Ok,
-                        format!("第 {}/{} 轮", g.rounds_started, g.max_rounds),
+                        i18n::t!(
+                            "sessions.goal_round",
+                            n = g.rounds_started,
+                            max = g.max_rounds
+                        ),
                     ),
-                    GoalPhase::Paused => ("⏸", Tone::Dim, "已暂停".into()),
+                    GoalPhase::Paused => ("⏸", Tone::Dim, i18n::t!("sessions.goal_paused")),
                     GoalPhase::Blocked => (
                         "◐",
                         Tone::Attention,
-                        format!("受阻：{}", g.blocked_reason.as_deref().unwrap_or("")),
+                        i18n::t!(
+                            "sessions.goal_blocked",
+                            reason = g.blocked_reason.as_deref().unwrap_or("")
+                        ),
                     ),
-                    GoalPhase::Complete => ("✓", Tone::Dim, "已完成".into()),
+                    GoalPhase::Complete => ("✓", Tone::Dim, i18n::t!("sessions.goal_complete")),
                 };
                 let line = Line::toned("     goal ", Tone::Dim)
                     .push(format!("{glyph} "), tone)
@@ -371,7 +378,8 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     .map(|x| state_glyph(x.state))
                     .unwrap_or(("○", Tone::Dim));
                 split_line(
-                    Line::toned(format!("{g} "), tone).push("主 Agent", Tone::Strong),
+                    Line::toned(format!("{g} "), tone)
+                        .push(i18n::t!("sessions.main_agent"), Tone::Strong),
                     Line::toned(crate::marks::cost(0, sum.map(|x| &x.usage)), Tone::Dim),
                     width,
                 )
@@ -386,7 +394,13 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 } else {
                     "▸"
                 };
-                Line::toned(format!("{prefix}{mark} 已结束 ({count})"), Tone::Dim)
+                Line::toned(
+                    format!(
+                        "{prefix}{mark} {}",
+                        i18n::t!("sessions.finished", count = count)
+                    ),
+                    Tone::Dim,
+                )
             }
             TreeRow::Task { id, prefix } => {
                 let Some(t) = s.task(id) else {
@@ -399,7 +413,10 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     (None, _) => "",
                 };
                 let kind = match &t.kind {
-                    TaskKind::Agent => t.agent_type.clone().unwrap_or_else(|| "子 Agent".into()),
+                    TaskKind::Agent => t
+                        .agent_type
+                        .clone()
+                        .unwrap_or_else(|| i18n::t!("sessions.sub_agent")),
                     k => k.label().to_string(),
                 };
                 let end = t.ended_ms.unwrap_or(now);
@@ -427,7 +444,7 @@ pub(crate) fn lower_summary(s: &State) -> Option<String> {
     let root = s.selected_session()?;
     let c = s.domain.convs.get(&root)?;
     let running = c.tasks.iter().filter(|t| !t.status.finished()).count();
-    (running > 0).then(|| format!("{running} 个在跑"))
+    (running > 0).then(|| i18n::t!("sessions.running", n = running))
 }
 
 use keys::Action;
@@ -501,7 +518,7 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             crate::chat_update::open_session(s, id)
         }
         (Action::Open, Some(SessRow::Goal(_))) => {
-            s.notice("修改 goal：在输入框里写 /goal 新的目标", false);
+            s.notice(i18n::t!("sessions.notice_goal"), false);
             vec![]
         }
         (Action::PauseResume, Some(SessRow::Goal(id))) => {
@@ -560,7 +577,7 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             s.ui.composer.insert_str(&title);
             s.show_chat_pub();
             s.ui.focus = Focus::Composer;
-            s.notice("改好名字后按 Enter；Esc 放弃", false);
+            s.notice(i18n::t!("sessions.notice_rename"), false);
             vec![]
         }
         _ => return None,
@@ -609,7 +626,7 @@ fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             match &t.agent_session {
                 Some(child) => crate::chat_update::open_sidechain(s, child.clone(), t.id.clone()),
                 None if a == Action::Message => {
-                    s.notice("只有子 Agent 能接收消息", true);
+                    s.notice(i18n::t!("sessions.notice_sub_only"), true);
                     vec![]
                 }
                 None => crate::chat_update::open_task_output(s, root, t.id.clone()),
@@ -618,7 +635,7 @@ fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         (Action::Stop, TreeRow::Task { id, .. }) => {
             let t = s.task(&id)?;
             if t.status.finished() {
-                s.notice("它已经结束了", false);
+                s.notice(i18n::t!("sessions.notice_ended"), false);
                 return Some(vec![]);
             }
             s.ui.confirm = Some(Confirm::StopTask(id.clone(), t.label.clone()));

@@ -82,7 +82,7 @@ impl State {
                 let open = self.panel_open();
                 self.ui.panel.insert(id, !open);
             }
-            None => self.notice("这个会话没有 goal 和 todo · 用 /goal 设定一个目标", false),
+            None => self.notice(i18n::t!("panel.no_goal_todo"), false),
         }
     }
 
@@ -96,23 +96,28 @@ impl State {
                     .map(|d| d.summary.title.clone())
                     .or_else(|| f.map(|f| f.title.clone()))
                     .unwrap_or_else(|| name.clone());
-                let mut l = Line::toned(format!("流程设计：{title}"), Tone::Strong);
+                let mut l = Line::toned(i18n::t!("panel.flow_title", title = title), Tone::Strong);
                 if let (Some(d), Some(i)) = (d, self.station_in_view(name)) {
                     return l
                         .push(
-                            format!(" › 第 {} 站 {}", i + 1, d.stations[i].title),
+                            i18n::t!(
+                                "panel.flow_in_station",
+                                n = i + 1,
+                                title = d.stations[i].title
+                            ),
                             Tone::Strong,
                         )
-                        .push(" · 回到上半看整个流程", Tone::Dim);
+                        .push(i18n::t!("panel.flow_back"), Tone::Dim);
                 }
                 if let Some(d) = d {
                     let origin = d.summary.origin.label();
                     l = l.push(
-                        format!(
-                            " · {} · {origin} · {} 站 · {} 个在跑",
-                            d.summary.name,
-                            d.stations.len(),
-                            d.summary.active_runs
+                        i18n::t!(
+                            "panel.flow_meta",
+                            name = d.summary.name,
+                            origin = origin,
+                            stations = d.stations.len(),
+                            active = d.summary.active_runs
                         ),
                         Tone::Dim,
                     );
@@ -120,11 +125,19 @@ impl State {
                 l
             }
             PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
-                Some(j) => Line::toned(format!("作业：{}", j.name), Tone::Strong).push(
-                    format!(" · {}", if j.enabled { "启用" } else { "已停用" }),
-                    Tone::Dim,
-                ),
-                None => Line::toned("新建作业", Tone::Strong),
+                Some(j) => Line::toned(i18n::t!("panel.job_title", name = j.name), Tone::Strong)
+                    .push(
+                        format!(
+                            " · {}",
+                            if j.enabled {
+                                i18n::t!("panel.job_on")
+                            } else {
+                                i18n::t!("panel.job_off")
+                            }
+                        ),
+                        Tone::Dim,
+                    ),
+                None => Line::toned(i18n::t!("panel.job_new"), Tone::Strong),
             },
             PanelKind::Run(run) => match self.domain.run_views.get(run) {
                 Some(v) => {
@@ -136,29 +149,32 @@ impl State {
                         .find(|f| f.name == v.summary.flow)
                         .map(|f| f.title.clone())
                         .unwrap_or_else(|| v.summary.flow.clone());
-                    Line::toned(format!("运行：{}", v.summary.subject), Tone::Strong)
-                        .push(format!("（{flow}） · "), Tone::Dim)
-                        .push(format!("{g} {text}"), tone)
-                        .push(
-                            format!(" · {}", crate::flows::progress(&v.summary)),
-                            Tone::Dim,
-                        )
+                    Line::toned(
+                        i18n::t!("panel.run_title", subject = v.summary.subject),
+                        Tone::Strong,
+                    )
+                    .push(i18n::t!("panel.run_flow", flow = flow), Tone::Dim)
+                    .push(format!("{g} {text}"), tone)
+                    .push(
+                        format!(" · {}", crate::flows::progress(&v.summary)),
+                        Tone::Dim,
+                    )
                 }
-                None => Line::toned("运行", Tone::Strong),
+                None => Line::toned(i18n::t!("panel.run"), Tone::Strong),
             },
             PanelKind::Goal => {
-                let mut l = Line::toned("goal 与 todo", Tone::Strong);
+                let mut l = Line::toned(i18n::t!("panel.goal_todo"), Tone::Strong);
                 if let Some(c) = conv {
                     if let Some(g) = &c.goal {
                         let m = goal_mark(g.phase);
                         let word = match g.phase {
-                            GoalPhase::Active => "进行中",
-                            GoalPhase::Paused => "已暂停",
-                            GoalPhase::Blocked => "受阻",
-                            GoalPhase::Complete => "已完成",
+                            GoalPhase::Active => i18n::t!("panel.phase.active"),
+                            GoalPhase::Paused => i18n::t!("panel.phase.paused"),
+                            GoalPhase::Blocked => i18n::t!("panel.phase.blocked"),
+                            GoalPhase::Complete => i18n::t!("panel.phase.complete"),
                         };
                         l = l
-                            .push(" · goal ", Tone::Dim)
+                            .push(i18n::t!("panel.goal_tag"), Tone::Dim)
                             .push(format!("{} {word}", m.glyph()), m.tone());
                     }
                     if !c.todos.is_empty() {
@@ -167,7 +183,10 @@ impl State {
                             .iter()
                             .filter(|t| t.status == port::TodoStatus::Done)
                             .count();
-                        l = l.push(format!(" · todo {done}/{}", c.todos.len()), Tone::Dim);
+                        l = l.push(
+                            i18n::t!("panel.todo_count", done = done, total = c.todos.len()),
+                            Tone::Dim,
+                        );
                     }
                 }
                 l
@@ -190,7 +209,7 @@ impl State {
                     Some(i) => station_body(d, i),
                     None => flow_body(d, width),
                 },
-                None => vec![Line::toned("流程设计加载中 …", Tone::Dim)],
+                None => vec![Line::toned(i18n::t!("panel.flow_loading"), Tone::Dim)],
             },
             PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
                 Some(j) => {
@@ -202,10 +221,7 @@ impl State {
                         .unwrap_or_default();
                     job_body(j, &h, width)
                 }
-                None => vec![Line::toned(
-                    "在下面的对话里说要做什么、什么时候做",
-                    Tone::Dim,
-                )],
+                None => vec![Line::toned(i18n::t!("panel.job_hint"), Tone::Dim)],
             },
             PanelKind::Run(run) => match self.domain.run_views.get(run) {
                 Some(v) => run_body(v, width),
@@ -291,10 +307,10 @@ impl State {
         let focused = self.ui.focus == crate::state::Focus::Panel;
         let mut out = vec![rule(
             Some(title),
-            if open {
-                " Ctrl+T 收起 "
+            &if open {
+                i18n::t!("panel.collapse")
             } else {
-                " Ctrl+T 展开 "
+                i18n::t!("panel.expand")
             },
             width,
             focused,
@@ -367,14 +383,17 @@ fn goal_lines(c: &Conversation, width: usize) -> Vec<Line> {
         let (m, tail) = match g.phase {
             GoalPhase::Active => (
                 marks::Mark::Active,
-                format!("第 {}/{} 轮", g.rounds_started, g.max_rounds),
+                i18n::t!("panel.goal_round", n = g.rounds_started, max = g.max_rounds),
             ),
-            GoalPhase::Paused => (marks::Mark::Paused, "已暂停".into()),
+            GoalPhase::Paused => (marks::Mark::Paused, i18n::t!("panel.phase.paused")),
             GoalPhase::Blocked => (
                 marks::Mark::Waiting,
-                format!("受阻：{}", g.blocked_reason.as_deref().unwrap_or("")),
+                i18n::t!(
+                    "panel.goal_blocked",
+                    reason = g.blocked_reason.as_deref().unwrap_or("")
+                ),
             ),
-            GoalPhase::Complete => (marks::Mark::Done, "已完成".into()),
+            GoalPhase::Complete => (marks::Mark::Done, i18n::t!("panel.phase.complete")),
         };
         out.push(
             Line::toned("goal ", Tone::Dim)
@@ -481,12 +500,12 @@ fn run_body(v: &RunView, width: usize) -> Vec<Line> {
                 m.text_tone(),
             );
         if let Some(u) = &st.unmet {
-            l = l.push(format!("：{u}"), Tone::Error);
+            l = l.push(i18n::t!("panel.unmet", reason = u), Tone::Error);
         }
         if !st.tasks.is_empty() {
             let done = st.tasks.iter().filter(|t| t.status.finished()).count();
             l = l.push(
-                format!("  子 Agent {done}/{} 完成", st.tasks.len()),
+                i18n::t!("panel.sub_done", done = done, total = st.tasks.len()),
                 Tone::Dim,
             );
         }
@@ -533,7 +552,13 @@ fn flow_body(d: &FlowDetail, inner: usize) -> Vec<Line> {
             line = line.push(format!("  skill {sk}"), Tone::Code);
         }
         if !s.exit.is_empty() {
-            line = line.push(format!("  出口 {}", s.exit.join("、")), Tone::Dim);
+            line = line.push(
+                i18n::t!(
+                    "panel.exit_list",
+                    list = s.exit.join(&i18n::t!("panel.sep"))
+                ),
+                Tone::Dim,
+            );
         }
         if s.needs.len() > 1 {
             let names: Vec<&str> = s
@@ -546,14 +571,17 @@ fn flow_body(d: &FlowDetail, inner: usize) -> Vec<Line> {
                         .map(|x| x.title.as_str())
                 })
                 .collect();
-            line = line.push(format!("  ← 等 {}", names.join("、")), Tone::Warn);
+            line = line.push(
+                i18n::t!(
+                    "panel.waits_for",
+                    names = names.join(&i18n::t!("panel.sep"))
+                ),
+                Tone::Warn,
+            );
         }
         out.push(line);
     }
-    out.push(Line::toned(
-        "在下面的对话里修改：加一站、改出口条件、调整顺序、启动一次运行…",
-        Tone::Dim,
-    ));
+    out.push(Line::toned(i18n::t!("panel.flow_hint"), Tone::Dim));
     out
 }
 
@@ -565,12 +593,12 @@ fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
             .filter_map(|n| d.stations.iter().find(|x| &x.id == n))
             .map(|x| x.title.as_str())
             .collect::<Vec<_>>()
-            .join("、")
+            .join(&i18n::t!("panel.sep"))
     };
     let before = if st.needs.is_empty() {
         i.checked_sub(1)
             .map(|j| d.stations[j].title.clone())
-            .unwrap_or_else(|| "（起点）".into())
+            .unwrap_or_else(|| i18n::t!("panel.start"))
     } else {
         names(&st.needs)
     };
@@ -581,33 +609,42 @@ fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
         .filter(|(j, x)| x.needs.contains(&st.id) || (x.needs.is_empty() && *j == i + 1))
         .map(|(_, x)| x.title.as_str())
         .collect();
-    let label_w = label_width(&["id", "执行", "skill", "出口", "前一站", "下一站", "定义"]);
+    let (l_id, l_work, l_skill, l_exit, l_prev, l_next, l_def) = (
+        i18n::t!("panel.field.id"),
+        i18n::t!("panel.field.work"),
+        i18n::t!("panel.field.skill"),
+        i18n::t!("panel.field.exit"),
+        i18n::t!("panel.field.prev"),
+        i18n::t!("panel.field.next"),
+        i18n::t!("panel.field.def"),
+    );
+    let label_w = label_width(&[&l_id, &l_work, &l_skill, &l_exit, &l_prev, &l_next, &l_def]);
     let field =
         |k: &str, v: String, tone: Tone| Line::toned(pad(k, label_w), Tone::Dim).push(v, tone);
     let mut out = vec![
-        field("id", st.id.to_string(), Tone::Code),
-        field("执行", st.work.clone(), Tone::Normal),
+        field(&l_id, st.id.to_string(), Tone::Code),
+        field(&l_work, st.work.clone(), Tone::Normal),
         field(
-            "skill",
+            &l_skill,
             st.skill.clone().unwrap_or_else(|| "—".into()),
             Tone::Code,
         ),
         field(
-            "出口",
+            &l_exit,
             if st.exit.is_empty() {
                 "—".into()
             } else {
-                st.exit.join("、")
+                st.exit.join(&i18n::t!("panel.sep"))
             },
             Tone::Normal,
         ),
-        field("前一站", before, Tone::Normal),
+        field(&l_prev, before, Tone::Normal),
         field(
-            "下一站",
+            &l_next,
             if after.is_empty() {
-                "（终点）".into()
+                i18n::t!("panel.end")
             } else {
-                after.join("、")
+                after.join(&i18n::t!("panel.sep"))
             },
             Tone::Normal,
         ),
@@ -615,7 +652,7 @@ fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
     let yaml = station_yaml(&d.yaml, st.id.as_str());
     // "定义"也是一个字段：YAML 从值那一列起，续行同样缩到那一列，中线和上面一致。
     for (k, l) in yaml.into_iter().enumerate() {
-        let name = if k == 0 { "定义" } else { "" };
+        let name = if k == 0 { l_def.as_str() } else { "" };
         out.push(Line::toned(pad(name, label_w), Tone::Dim).push(l, Tone::Code));
     }
     out
@@ -672,10 +709,10 @@ pub(crate) fn fmt_clock(ms: u64) -> String {
 pub(crate) fn outcome(o: &JobOutcome) -> (String, Tone) {
     let m = marks::outcome(o);
     let text = match o {
-        JobOutcome::Running => "运行中".into(),
-        JobOutcome::Done => "完成".into(),
-        JobOutcome::Failed { message } => format!("失败：{message}"),
-        JobOutcome::Skipped => "跳过".into(),
+        JobOutcome::Running => i18n::t!("panel.outcome.running"),
+        JobOutcome::Done => i18n::t!("panel.outcome.done"),
+        JobOutcome::Failed { message } => i18n::t!("panel.outcome.failed", message = message),
+        JobOutcome::Skipped => i18n::t!("panel.outcome.skipped"),
     };
     (format!("{} {text}", m.glyph()), m.tone())
 }
@@ -697,29 +734,46 @@ impl JobDefRow {
 /// 作业的定义（右下）：触发规则、状态，简单作业的提示词与 skills，流程作业的流程与主题。
 /// 会话、流程、作业都是项目级的，所以这里不再写项目。
 pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
-    let labels: &[&str] = match &j.kind {
-        JobKind::Simple { .. } => &["触发", "状态", "提示词", "skills", "场景"],
-        JobKind::Flow { .. } => &["触发", "状态", "流程", "主题", "输入"],
+    let (l_trigger, l_status) = (
+        i18n::t!("panel.job_field.trigger"),
+        i18n::t!("panel.job_field.status"),
+    );
+    let (l_a, l_b, l_c) = match &j.kind {
+        JobKind::Simple { .. } => (
+            i18n::t!("panel.job_field.prompt"),
+            i18n::t!("panel.job_field.skills"),
+            i18n::t!("panel.job_field.scene"),
+        ),
+        JobKind::Flow { .. } => (
+            i18n::t!("panel.job_field.flow"),
+            i18n::t!("panel.job_field.subject"),
+            i18n::t!("panel.job_field.input"),
+        ),
     };
-    let label_w = label_width(labels);
+    let label_w = label_width(&[&l_trigger, &l_status, &l_a, &l_b, &l_c]);
     let field = |k: &str| Line::toned(pad(k, label_w), Tone::Dim);
     let next = j
         .next_fire_ms
-        .map(|t| format!("下次 {}", fmt_clock(t)))
-        .unwrap_or_else(|| "不会再触发".into());
+        .map(|t| i18n::t!("panel.next_fire", time = fmt_clock(t)))
+        .unwrap_or_else(|| i18n::t!("panel.no_more"));
     let mut out = vec![
-        JobDefRow::Plain(field("触发").push(j.cron.clone(), Tone::Code).push(
-            format!(
-                "（{next}）· 错过补跑：{}",
-                if j.catch_up { "是" } else { "否" }
+        JobDefRow::Plain(field(&l_trigger).push(j.cron.clone(), Tone::Code).push(
+            i18n::t!(
+                "panel.job_trigger",
+                next = next,
+                catch_up = if j.catch_up {
+                    i18n::t!("panel.yes")
+                } else {
+                    i18n::t!("panel.no")
+                }
             ),
             Tone::Dim,
         )),
-        JobDefRow::Plain(field("状态").push(
+        JobDefRow::Plain(field(&l_status).push(
             if j.enabled {
-                "启用 · 空格停用"
+                i18n::t!("panel.job_on_hint")
             } else {
-                "已停用 · 空格启用"
+                i18n::t!("panel.job_off_hint")
             },
             if j.enabled { Tone::Normal } else { Tone::Dim },
         )),
@@ -733,21 +787,22 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
             ..
         } => {
             out.push(JobDefRow::Plain(
-                field("提示词").push(prompt.clone(), Tone::Normal),
+                field(&l_a).push(prompt.clone(), Tone::Normal),
             ));
-            out.push(JobDefRow::Plain(field("skills").push(
+            out.push(JobDefRow::Plain(field(&l_b).push(
                 if skills.is_empty() {
                     "—".into()
                 } else {
-                    skills.join("、")
+                    skills.join(&i18n::t!("panel.sep"))
                 },
                 Tone::Code,
             )));
-            out.push(JobDefRow::Plain(field("场景").push(
-                format!(
-                    "{} · 模型 {}",
-                    scene.as_deref().unwrap_or("缺省"),
-                    model.as_deref().unwrap_or("缺省")
+            let default = i18n::t!("panel.default");
+            out.push(JobDefRow::Plain(field(&l_c).push(
+                i18n::t!(
+                    "panel.job_scene",
+                    scene = scene.as_deref().unwrap_or(&default),
+                    model = model.as_deref().unwrap_or(&default)
                 ),
                 Tone::Normal,
             )));
@@ -759,16 +814,16 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
         } => {
             out.push(JobDefRow::Flow(
                 flow.clone(),
-                field("流程")
+                field(&l_a)
                     .push(format!("▸ {}", flow_title.unwrap_or(flow)), Tone::Accent)
-                    .push("  Enter 跳到这个流程", Tone::Dim),
+                    .push(i18n::t!("panel.job_flow_jump"), Tone::Dim),
             ));
             out.push(JobDefRow::Plain(
-                field("主题").push(subject.clone(), Tone::Normal),
+                field(&l_b).push(subject.clone(), Tone::Normal),
             ));
             if !inputs.is_null() && inputs.as_object().is_none_or(|o| !o.is_empty()) {
                 out.push(JobDefRow::Plain(
-                    field("输入").push(inputs.to_string(), Tone::Code),
+                    field(&l_c).push(inputs.to_string(), Tone::Code),
                 ));
             }
         }
@@ -780,7 +835,7 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
 fn job_body(j: &Job, history: &[JobEntry], inner: usize) -> Vec<Line> {
     let mut out = vec![];
     if history.is_empty() {
-        out.push(Line::toned("还没有执行过 · R 立即运行一次", Tone::Dim));
+        out.push(Line::toned(i18n::t!("panel.no_runs"), Tone::Dim));
     } else {
         let n = history.len();
         let count = |f: fn(&JobOutcome) -> bool| history.iter().filter(|e| f(&e.outcome)).count();
@@ -802,38 +857,45 @@ fn job_body(j: &Job, history: &[JobEntry], inner: usize) -> Vec<Line> {
         };
         let total: u64 = history.iter().map(|e| e.usage.total()).sum();
         out.push(
-            Line::toned(format!("执行 {n} 次 · "), Tone::Normal)
-                .push(format!("成功 {done}"), Tone::Ok)
+            Line::toned(i18n::t!("panel.run_count", n = n), Tone::Normal)
+                .push(i18n::t!("panel.run_ok", n = done), Tone::Ok)
                 .push(" · ", Tone::Dim)
                 .push(
-                    format!("失败 {failed}"),
+                    i18n::t!("panel.run_failed", n = failed),
                     if failed > 0 { Tone::Error } else { Tone::Dim },
                 )
-                .push(format!(" · 跳过 {skipped} · 成功率 {rate}%"), Tone::Dim),
+                .push(
+                    i18n::t!("panel.run_tail", skipped = skipped, rate = rate),
+                    Tone::Dim,
+                ),
         );
         out.push(Line::toned(
-            format!(
-                "成功的平均耗时 {} · 平均 {} tokens · 合计 {}",
-                crate::sessions::fmt_elapsed(avg(|e| e.elapsed_ms)),
-                crate::chat::fmt_k(avg(|e| e.usage.total())),
-                crate::chat::fmt_k(total)
+            i18n::t!(
+                "panel.run_avg",
+                elapsed = crate::sessions::fmt_elapsed(avg(|e| e.elapsed_ms)),
+                avg = crate::chat::fmt_k(avg(|e| e.usage.total())),
+                total = crate::chat::fmt_k(total)
             ),
             Tone::Dim,
         ));
     }
     out.push(Line::toned(
         match j.next_fire_ms {
-            Some(t) if j.enabled => format!("下次 {}", fmt_clock(t)),
-            _ if !j.enabled => "已停用，不会触发".into(),
-            _ => "不会再触发".into(),
+            Some(t) if j.enabled => i18n::t!("panel.next_fire", time = fmt_clock(t)),
+            _ if !j.enabled => i18n::t!("panel.disabled_no_fire"),
+            _ => i18n::t!("panel.no_more"),
         },
         Tone::Dim,
     ));
     for e in history.iter().take(8) {
         let (o, tone) = outcome(&e.outcome);
         let target = match &e.target {
-            Some(port::JobTarget::Session { title, .. }) => format!("  → 「{title}」"),
-            Some(port::JobTarget::Run { subject, .. }) => format!("  → 运行「{subject}」"),
+            Some(port::JobTarget::Session { title, .. }) => {
+                i18n::t!("panel.target_session", title = title)
+            }
+            Some(port::JobTarget::Run { subject, .. }) => {
+                i18n::t!("panel.target_run", subject = subject)
+            }
             None => String::new(),
         };
         out.push(

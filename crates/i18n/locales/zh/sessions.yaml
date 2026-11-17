@@ -1,0 +1,16 @@
+# 会话标签。
+sessions:
+  new: "＋ 新建会话"
+  new_hint: "  Enter · 或在输入框里 /new"
+  goal_round: "第 {n}/{max} 轮"
+  goal_paused: "已暂停"
+  goal_blocked: "受阻：{reason}"
+  goal_complete: "已完成"
+  main_agent: "主 Agent"
+  finished: "已结束 ({count})"
+  sub_agent: "子 Agent"
+  running: "{n} 个在跑"
+  notice_goal: "修改 goal：在输入框里写 /goal 新的目标"
+  notice_rename: "改好名字后按 Enter；Esc 放弃"
+  notice_sub_only: "只有子 Agent 能接收消息"
+  notice_ended: "它已经结束了"

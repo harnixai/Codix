@@ -83,16 +83,16 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
 
             let next = if j.enabled {
                 j.next_fire_ms
-                    .map(|t| format!("下次 {}", fmt_clock(t)))
+                    .map(|t| i18n::t!("jobs.next_fire", time = fmt_clock(t)))
                     .unwrap_or_default()
             } else {
-                "已停用".into()
+                i18n::t!("jobs.disabled")
             };
             let (last, ltone) = match &j.last {
-                Some(JobOutcome::Failed { .. }) => ("上次 ✗", Tone::Error),
-                Some(JobOutcome::Done) => ("上次 ✓", Tone::Ok),
-                Some(JobOutcome::Running) => ("运行中", Tone::Accent),
-                _ => ("", Tone::Dim),
+                Some(JobOutcome::Failed { .. }) => (i18n::t!("jobs.last_failed"), Tone::Error),
+                Some(JobOutcome::Done) => (i18n::t!("jobs.last_done"), Tone::Ok),
+                Some(JobOutcome::Running) => (i18n::t!("jobs.running"), Tone::Accent),
+                _ => (String::new(), Tone::Dim),
             };
             crate::sessions::split_line(
                 Line::toned(format!("{g} "), tone)
@@ -135,9 +135,9 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
             JobLower::Flow(_) => line_at(flow_at),
             JobLower::Heading => Line::toned(
                 if history.is_empty() {
-                    "触发记录：还没有"
+                    i18n::t!("jobs.history_empty")
                 } else {
-                    "触发记录 · Enter 打开那一次"
+                    i18n::t!("jobs.history_open")
                 },
                 Tone::Dim,
             ),
@@ -145,8 +145,12 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 let e = &history[*i];
                 let (o, tone) = outcome(&e.outcome);
                 let target = match &e.target {
-                    Some(JobTarget::Session { title, .. }) => format!("→ 会话「{title}」"),
-                    Some(JobTarget::Run { subject, .. }) => format!("→ 运行「{subject}」"),
+                    Some(JobTarget::Session { title, .. }) => {
+                        i18n::t!("jobs.target_session", title = title)
+                    }
+                    Some(JobTarget::Run { subject, .. }) => {
+                        i18n::t!("jobs.target_run", subject = subject)
+                    }
                     None => String::new(),
                 };
                 crate::sessions::split_line(
@@ -177,7 +181,7 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         s.ui.focus = Focus::Composer;
         s.ui.composer.clear();
         s.ui.composer.insert_str(text);
-        s.notice("在对话里说清楚就行；阶段 3 由引擎侧的作业工具执行", false);
+        s.notice(i18n::t!("jobs.notice_tool"), false);
     };
     Some(match (a, job) {
         (Action::ToggleEnabled, Some(j)) => vec![s.call(
@@ -188,7 +192,7 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             },
         )],
         (Action::RunNow, Some(j)) => {
-            s.notice(format!("「{}」立即运行一次", j.name), false);
+            s.notice(i18n::t!("jobs.run_now", name = j.name), false);
             vec![s.call(Pending::Ignore, Command::RunJobNow { job: j.id })]
         }
         (Action::New, _) => {
@@ -201,15 +205,15 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
                 },
                 Command::OpenJobSession { job: None },
             )];
-            prefill(s, "新建一个作业：");
+            prefill(s, &i18n::t!("jobs.prefill_new"));
             e
         }
         (Action::Edit, Some(_)) => {
-            prefill(s, "把这个作业改成：");
+            prefill(s, &i18n::t!("jobs.prefill_edit"));
             vec![]
         }
         (Action::Delete, Some(_)) => {
-            prefill(s, "删除这个作业");
+            prefill(s, &i18n::t!("jobs.prefill_delete"));
             vec![]
         }
         (Action::Open, _) if s.ui.focus == Focus::SideLower && selected_flow_link(s).is_some() => {
@@ -251,6 +255,6 @@ fn jump_to_flow(s: &mut State, name: &str) {
         .position(|r| r == &crate::flows::FlowRow::Flow(name.to_string()))
     {
         Some(i) => s.ui.upper_mut().selected = i,
-        None => s.notice(format!("这个项目里没有流程 {name}"), true),
+        None => s.notice(i18n::t!("jobs.no_flow", name = name), true),
     }
 }

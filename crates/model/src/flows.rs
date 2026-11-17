@@ -110,39 +110,44 @@ impl State {
 pub(crate) fn progress(r: &RunSummary) -> String {
     match (&r.status, &r.current) {
         (RunStatus::Finished | RunStatus::Cancelled, _) | (_, None) => {
-            format!(
-                "{}/{} 站",
-                r.stations_done.min(r.stations_total),
-                r.stations_total
+            i18n::t!(
+                "flows.progress_done",
+                done = r.stations_done.min(r.stations_total),
+                total = r.stations_total
             )
         }
-        (_, Some(c)) => format!("站 {}/{} {c}", r.stations_done + 1, r.stations_total),
+        (_, Some(c)) => i18n::t!(
+            "flows.progress",
+            done = r.stations_done + 1,
+            total = r.stations_total,
+            current = c
+        ),
     }
 }
 
 /// 运行的状态：符号、文字、符号的颜色。
 pub(crate) fn run_status(s: &RunStatus) -> (&'static str, String, Tone) {
     let text = match s {
-        RunStatus::Running => "运行中".into(),
-        RunStatus::Waiting { reason } => format!("等待：{reason}"),
-        RunStatus::Pausing => "暂停中".into(),
-        RunStatus::Paused => "已暂停".into(),
-        RunStatus::Finished => "已完成".into(),
-        RunStatus::Cancelled => "已取消".into(),
+        RunStatus::Running => i18n::t!("flows.run.running"),
+        RunStatus::Waiting { reason } => i18n::t!("flows.run.waiting", reason = reason),
+        RunStatus::Pausing => i18n::t!("flows.run.pausing"),
+        RunStatus::Paused => i18n::t!("flows.run.paused"),
+        RunStatus::Finished => i18n::t!("flows.run.finished"),
+        RunStatus::Cancelled => i18n::t!("flows.run.cancelled"),
     };
     let m = marks::run(s);
     (m.glyph(), text, m.tone())
 }
 
-pub(crate) fn station_text(s: StationStatus) -> &'static str {
+pub(crate) fn station_text(s: StationStatus) -> String {
     match s {
-        StationStatus::Pending => "待进入",
-        StationStatus::Held => "搁置 · a 放行",
-        StationStatus::Working => "进行中",
-        StationStatus::Unmet => "未达标",
-        StationStatus::Passed => "已通过",
-        StationStatus::Skipped => "已跳过",
-        StationStatus::Stale => "待重做",
+        StationStatus::Pending => i18n::t!("flows.station.pending"),
+        StationStatus::Held => i18n::t!("flows.station.held"),
+        StationStatus::Working => i18n::t!("flows.station.working"),
+        StationStatus::Unmet => i18n::t!("flows.station.unmet"),
+        StationStatus::Passed => i18n::t!("flows.station.passed"),
+        StationStatus::Skipped => i18n::t!("flows.station.skipped"),
+        StationStatus::Stale => i18n::t!("flows.station.stale"),
     }
 }
 
@@ -164,7 +169,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 // 全局流程在名字前标 ◎（各项目共用）；项目级的不标，只留出对齐的位置。
                 let scope = if f.origin.is_global() { "◎ " } else { "  " };
                 let running = if f.active_runs > 0 {
-                    format!("{} 个在跑", f.active_runs)
+                    i18n::t!("flows.running", n = f.active_runs)
                 } else {
                     String::new()
                 };
@@ -237,7 +242,8 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     .unwrap_or(("○", Tone::Dim));
                 let end = v.summary.ended_ms.unwrap_or(s.ui.now_ms);
                 crate::sessions::split_line(
-                    Line::toned(format!("  {g} "), tone).push("主 Agent", Tone::Strong),
+                    Line::toned(format!("  {g} "), tone)
+                        .push(i18n::t!("flows.main_agent"), Tone::Strong),
                     Line::toned(
                         crate::marks::cost(
                             end.saturating_sub(v.summary.started_ms),
@@ -265,7 +271,7 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     .push(st.title.clone(), m.name_tone())
                     .push(format!("  {}", st.work), Tone::Dim);
                 if st.session.is_some() {
-                    left = left.push("  独立会话", Tone::Dim);
+                    left = left.push(i18n::t!("flows.own_session"), Tone::Dim);
                 }
                 let note = join_note(&v.stations, st);
                 if !note.is_empty() {
@@ -332,7 +338,10 @@ fn join_note(all: &[port::StationView], st: &port::StationView) -> String {
         .iter()
         .filter_map(|n| all.iter().find(|x| &x.id == n).map(|x| x.title.as_str()))
         .collect();
-    format!("← 等 {}", names.join("、"))
+    i18n::t!(
+        "flows.waits_for",
+        names = names.join(&i18n::t!("flows.sep"))
+    )
 }
 
 pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
@@ -346,7 +355,7 @@ pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
                 .flows
                 .iter()
                 .find(|f| f.name == name)
-                .map(|f| format!("{} 的各站", f.title)),
+                .map(|f| i18n::t!("flows.stations_of", title = f.title)),
             None,
         ),
         None => (None, None),
@@ -391,12 +400,12 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             s.ui.focus = Focus::Composer;
             s.ui.composer.clear();
             let text = if matches!(s.selected_flow_row(), Some(FlowRow::Flow(_))) {
-                "启动一次运行"
+                i18n::t!("flows.prefill_run")
             } else {
-                "新建一个流程："
+                i18n::t!("flows.prefill_new")
             };
-            s.ui.composer.insert_str(text);
-            s.notice("在对话里说清楚就行；阶段 3 由引擎侧的流程工具执行", false);
+            s.ui.composer.insert_str(&text);
+            s.notice(i18n::t!("flows.notice_tool"), false);
             vec![]
         }
         (Action::View, Some(FlowRow::Flow(name))) => {
@@ -407,7 +416,7 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
                 .map(|d| d.yaml.clone())
                 .unwrap_or_default();
             s.ui.overlay = Some(crate::state::Overlay::Text {
-                title: format!("{name} 的定义"),
+                title: i18n::t!("flows.definition_of", name = name),
                 lines: yaml.lines().map(str::to_string).collect(),
                 scroll: 0,
             });
