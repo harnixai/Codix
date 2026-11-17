@@ -1056,11 +1056,12 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
             }
         }
         Event::JobFired { job, entry } => {
-            s.domain
-                .job_history
-                .entry(job.clone())
-                .or_default()
-                .insert(0, entry.clone());
+            // 一次触发推两回：开始时是 Running，结束时同一个 fired_ms 带着结局再来一次。
+            let h = s.domain.job_history.entry(job.clone()).or_default();
+            match h.iter_mut().find(|e| e.fired_ms == entry.fired_ms) {
+                Some(e) => *e = entry.clone(),
+                None => h.insert(0, entry.clone()),
+            }
             if let Some(j) = s.domain.jobs.iter_mut().find(|j| &j.id == job) {
                 j.last = Some(entry.outcome.clone());
             }
