@@ -83,26 +83,8 @@ async fn a_stopped_instance_is_started_again_from_its_meta() {
 async fn a_killed_instance_is_listed_as_stale_cleaned_and_can_be_started() {
     let lv = Live::new();
     let c = lv.start().await;
-    let pid = lv.read("instance.json")["pid"].as_u64().unwrap();
     drop(c);
-    let killed = std::process::Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .status()
-        .unwrap();
-    assert!(killed.success());
-    // 等进程真没了：`kill` 返回时它可能还没被回收。
-    for _ in 0..100 {
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .output()
-            .unwrap()
-            .status
-            .success();
-        if !alive {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    lv.kill_host().await;
 
     let list = lv.instances.list(false).await.unwrap();
     assert_eq!(list.len(), 1, "残留的不论 all 都列出来");

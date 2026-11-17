@@ -170,3 +170,47 @@ mock 那一套不动，真实后端按层另加用例，全部离线、不调模
 | `engine` | 真实嵌入的 Agix + `Hub`：建会话、跑一轮、这一轮有结局 | 没有凭据时那一轮以 `no_credentials` 结束，所以离线也能跑 |
 
 调真实模型的用例标 `#[ignore]`，带上凭据手动跑：`source .env && cargo test -p engine -- --ignored`。
+把实例进程、接入与模型整条接起来的用例见 §8。
+
+## 8. LIVE：真实实例 + 真实模型
+
+§7 的各层都是离线的，各自替掉了相邻的一层。LIVE 把整条路接起来：真实的 `codix host` 进程、嵌在里面
+的 Agix、真实的模型，从 TUI 走的那条路接入——`SocketInstances` 拉起与接入，`SocketBackend` 收发
+`port` 的命令与事件。断言只落在端口上（回复、事件）和实例目录里的文件上，不看画面。
+
+**只测 Codix 自己做的事。** Agix 的特性（工具怎么跑、权限怎么判、goal 怎么推进、压缩……）由 Agix
+自己的 LIVE 测，这里不重复。这里测的是 Codix 加在它外面的那一层：实例的锁、发现文件与 `meta.json`、
+单一接入与心跳、帧到领域事件的翻译与路由、会话归属与名字（`sessions.json`）、作业的调度与触发记录、
+宿主工具。用例要靠模型做某件事时，话说得短而确定（"只回复 OK"），并且点名引擎真有的工具（Agix 的 Bash
+只在前台跑，后台命令要点名 Monitor），断言只看 Codix 的翻译：任务作为没有会话的任务出现、输出取得到、
+停得掉，这一轮怎么收尾是模型的事。
+
+| 文件 | 覆盖 |
+|---|---|
+| `live_instance.rs` | 新建、列出、发现文件与 `meta.json`、目录 0700 与 socket 0600、同名第二个实例拿不到锁、停掉再照 `meta.json` 拉起、被杀后列为残留并清理 |
+| `live_attach.rs` | `Hello` 与能力位、被占用、强制接入踢人、脱离放开接入、空闲脱离、心跳超时断开后重连、实例被停与 `StopInstance` |
+| `live_sessions.rs` | 只列本项目的会话、第一句话做名字、改名与关闭跨重启保留、换模型、命令表、Watch 快照的历史与 todo、拒绝逐轮权限模式与流程命令 |
+| `live_turns.rs` | 文字与用量、忙时退回、插话送达、排队、中断、权限与模型提问的作答、侧问分叉、goal 的事件与快照、后台任务的输出与停止、子 Agent 的侧链会话与给它发消息 |
+| `live_jobs.rs` | 增删改与启停、立即运行触发的会话与结局、触发记录落盘、重启后没跑完的那次记为中断、错过的触发只补一次、作业编辑会话的宿主工具 |
+
+**怎么跑**：`scripts/live.sh`（全部）、`scripts/live.sh live_jobs`（一个文件）、`scripts/live.sh live_jobs
+catch_up`（再按名字过滤）。凭据取仓库根的 `.env`（worktree 里往上找；`CODIX_LIVE_ENV` 可指定），要有
+`ANTHROPIC_AUTH_TOKEN`（或 `ANTHROPIC_API_KEY`）与 `ANTHROPIC_MODEL`，读不到就失败并说明。凭据只交给
+实例进程的环境（`SocketInstances::with_env`），不进测试进程、不打印。同时起的实例数用 `LIVE_THREADS`
+控制（缺省 4）。用例全标 `#[ignore = "live"]`，`./scripts/check.sh` 只编译不跑。
+
+**harness**（`crates/codix/tests/live/mod.rs`）：
+
+- `Live`：一个用例的世界——/tmp 下短路径的 `CODIX_HOME`（socket 路径有 104 字节的上限）、一个 git
+  示例项目、写好模型名的 Agix `settings.json`、可选的 `codix.yaml` 与只给实例的环境变量。`start`、
+  `attach`、`stop`、`restart`、`start_again`；`read("sessions.json")` 这类读实例目录的文件；`Drop` 时
+  不论成败停掉它起的所有实例。
+- `Client`：一个接入，相当于一个 TUI。`ok(cmd)`（失败就让用例失败并说是哪条命令）、`call(cmd)`；
+  `wait_event(说明, 超时, |e| …)` 从游标往后等，等不到时附上最近 30 条事件；`new_session`、`watch`、
+  `turn(会话, 话) -> TurnOutcome`（文字、工具、结果、提问、用量、结局）、`wait_prompt`、`wait_upsert`。
+  心跳缺省像开着的 TUI 那样每 10 秒报一次，`heartbeat(Beat::None)` 停掉；提问缺省留给用例自己答，
+  `answering(Answering::Auto)` 改成权限一律允许、问题选第一项（Watch 快照里悬着的也答）。
+
+**加用例**：功能归哪个文件就加在哪个文件，或新开一个 `live_<功能>.rs`（`mod live;` 引入 harness，
+`scripts/live.sh` 自动带上）。等事件，不比时长；跑不稳先找原因，不放宽断言。为可测性给实例加的
+开关只走环境变量，名字以 `CODIX_TEST_` 开头（现有 `CODIX_TEST_HEARTBEAT_TIMEOUT_MS`），不进 `codix.yaml`。

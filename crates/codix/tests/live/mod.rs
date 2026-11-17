@@ -223,6 +223,31 @@ impl Live {
         by.into_values().collect()
     }
 
+    /// `kill -9` 实例进程（模拟崩溃：不走任何收尾），等它真没了才返回。
+    pub async fn kill_host(&self) {
+        let pid = self.read("instance.json")["pid"]
+            .as_u64()
+            .unwrap()
+            .to_string();
+        let kill = |sig: &str| {
+            std::process::Command::new("kill")
+                .args([sig, &pid])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        assert!(kill("-9"), "kill -9 {pid}");
+        // `kill` 返回时进程可能还没被回收。
+        for _ in 0..100 {
+            if !kill("-0") {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("实例进程 {pid} 杀不掉");
+    }
+
     pub fn host_log(&self) -> String {
         std::fs::read_to_string(self.layout().log(NAME)).unwrap_or_default()
     }
@@ -422,6 +447,12 @@ impl Client {
         self.shared.events.lock().unwrap().len()
     }
 
+    /// 把游标挪回 `mark`：先后不定的两件事（任务帧可能比这一轮的结束晚到，也可能早到）
+    /// 分别从同一处等。
+    pub fn rewind_to(&mut self, mark: usize) {
+        self.cursor = mark;
+    }
+
     /// 把游标挪到现在：之后的 `wait_event` 只看从这一刻起到的事件。
     pub fn skip_past(&mut self) {
         self.cursor = self.mark();
@@ -468,16 +499,50 @@ impl Client {
         }
     }
 
+    /// 最近 `n` 条事件，给失败信息用。连续的文字 / 思考增量并成一行，免得几十个字的碎片
+    /// 把真正有用的事件挤出去。
     pub fn recent(&self, n: usize) -> String {
         let evs = self.shared.events.lock().unwrap();
         let t0 = evs.first().map(|(t, _)| *t);
-        evs.iter()
-            .skip(evs.len().saturating_sub(n))
-            .map(|(t, e)| {
-                let at = t0.map(|t0| t.duration_since(t0).as_millis()).unwrap_or(0);
-                let mut s = format!("{e:?}");
-                if s.len() > 300 {
-                    let cut = (0..=300).rev().find(|i| s.is_char_boundary(*i)).unwrap();
+        let mut lines: Vec<(u128, String)> = vec![];
+        let mut run: Option<(u128, &'static str, SessionId, String)> = None;
+        let flush = |run: &mut Option<(u128, &'static str, SessionId, String)>,
+                     lines: &mut Vec<(u128, String)>| {
+            if let Some((at, kind, s, text)) = run.take() {
+                lines.push((
+                    at,
+                    format!("{kind}×{{{}}} {s}: {text:?}", text.chars().count()),
+                ));
+            }
+        };
+        for (t, e) in evs.iter() {
+            let at = t0.map(|t0| t.duration_since(t0).as_millis()).unwrap_or(0);
+            let delta = match e {
+                Event::TextDelta { session, text } => Some(("TextDelta", session, text)),
+                Event::ThinkingDelta { session, text } => Some(("ThinkingDelta", session, text)),
+                _ => None,
+            };
+            match (delta, &mut run) {
+                (Some((k, s, text)), Some((_, rk, rs, acc))) if *rk == k && rs == s => {
+                    acc.push_str(text)
+                }
+                (Some((k, s, text)), _) => {
+                    flush(&mut run, &mut lines);
+                    run = Some((at, k, s.clone(), text.clone()));
+                }
+                (None, _) => {
+                    flush(&mut run, &mut lines);
+                    lines.push((at, format!("{e:?}")));
+                }
+            }
+        }
+        flush(&mut run, &mut lines);
+        lines[lines.len().saturating_sub(n)..]
+            .iter()
+            .map(|(at, s)| {
+                let mut s = s.clone();
+                if s.len() > 400 {
+                    let cut = (0..=400).rev().find(|i| s.is_char_boundary(*i)).unwrap();
                     s.truncate(cut);
                     s.push('…');
                 }
@@ -504,8 +569,9 @@ impl Client {
         s.id
     }
 
+    /// Watch 一个会话。自动作答时，快照里已经悬着的提问也一并答掉（它们不会再作为事件来）。
     pub async fn watch(&self, id: &SessionId) -> Watched {
-        match self
+        let w = match self
             .ok(Command::Watch {
                 session: id.clone(),
             })
@@ -513,7 +579,19 @@ impl Client {
         {
             Reply::Watched(w) => *w,
             r => panic!("watch 回的是 {r:?}"),
+        };
+        if *self.shared.answering.lock().unwrap() == Answering::Auto {
+            for p in &w.prompts {
+                let _ = self
+                    .call(Command::Answer {
+                        session: id.clone(),
+                        prompt: p.id.clone(),
+                        answer: auto_answer(p),
+                    })
+                    .await;
+            }
         }
+        w
     }
 
     pub async fn sessions(&self) -> Vec<SessionSummary> {
