@@ -1,0 +1,2 @@
+composer:
+  paste_token: "[Pasted {lines} lines #{n}]"

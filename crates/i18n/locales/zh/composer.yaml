@@ -1,0 +1,2 @@
+composer:
+  paste_token: "[粘贴了 {lines} 行 #{n}]"

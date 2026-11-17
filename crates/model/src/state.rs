@@ -25,11 +25,11 @@ pub enum Tab {
 impl Tab {
     pub const ALL: [Tab; 3] = [Tab::Sessions, Tab::Flows, Tab::Jobs];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Tab::Sessions => "会话",
-            Tab::Flows => "流程",
-            Tab::Jobs => "作业",
+            Tab::Sessions => i18n::t!("state.tab.sessions"),
+            Tab::Flows => i18n::t!("state.tab.flows"),
+            Tab::Jobs => i18n::t!("state.tab.jobs"),
         }
     }
 

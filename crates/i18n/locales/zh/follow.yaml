@@ -1,0 +1,3 @@
+follow:
+  none_waiting: "没有等你处理的"
+  position: "待处理 {n}/{total}"

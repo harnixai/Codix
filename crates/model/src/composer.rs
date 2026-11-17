@@ -63,7 +63,7 @@ impl ComposerState {
         let lines = s.lines().count();
         if lines > PASTE_FOLD_LINES {
             self.pastes.push(s);
-            let token = format!("[粘贴了 {lines} 行 #{}]", self.pastes.len());
+            let token = i18n::t!("composer.paste_token", lines = lines, n = self.pastes.len());
             self.insert_str(&token);
         } else {
             self.insert_str(&s);
@@ -215,7 +215,10 @@ impl ComposerState {
         let mut text = self.text.clone();
         for (i, p) in self.pastes.iter().enumerate() {
             let lines = p.lines().count();
-            text = text.replace(&format!("[粘贴了 {lines} 行 #{}]", i + 1), p);
+            text = text.replace(
+                &i18n::t!("composer.paste_token", lines = lines, n = i + 1),
+                p,
+            );
         }
         let bash = self.bash;
         if !self.text.trim().is_empty() && self.history.last() != Some(&self.text) {

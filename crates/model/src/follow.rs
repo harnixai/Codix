@@ -326,7 +326,7 @@ impl State {
 pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
     let items = s.attention();
     if items.is_empty() {
-        s.notice("没有等你处理的", false);
+        s.notice(i18n::t!("follow.none_waiting"), false);
         return vec![];
     }
     let i = s.ui.attention_cursor % items.len();
@@ -364,6 +364,9 @@ pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
             }
         }
     }
-    s.notice(format!("待处理 {}/{}", i + 1, items.len()), false);
+    s.notice(
+        i18n::t!("follow.position", n = i + 1, total = items.len()),
+        false,
+    );
     vec![]
 }

@@ -1,0 +1,6 @@
+welcome:
+  none: "none"
+  instance: "Instance {name}@{host} · project {project}"
+  scene_model: "Scene {scene} · model {model}"
+  keys_help: "/help help · / commands · @ mention files · ! shell"
+  keys_tabs: "F2 sessions · F3 flows · F4 jobs · Ctrl+B switch pane"

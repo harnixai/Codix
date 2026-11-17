@@ -1,0 +1,5 @@
+state:
+  tab:
+    sessions: "会话"
+    flows: "流程"
+    jobs: "作业"

@@ -10,11 +10,14 @@ const BOX_MAX: usize = 60;
 /// 还没打开会话时：只有实例信息。
 pub(crate) fn idle(instance: Option<&port::InstanceInfo>, width: usize) -> Vec<Line> {
     let info = instance.map(|i| {
-        vec![format!(
-            "实例 {}@{} · 项目 {}",
-            i.name,
-            i.host,
-            i.project.as_deref().unwrap_or("无")
+        vec![i18n::t!(
+            "welcome.instance",
+            name = i.name,
+            host = i.host,
+            project = i
+                .project
+                .clone()
+                .unwrap_or_else(|| i18n::t!("welcome.none"))
         )]
     });
     boxed(width, info.unwrap_or_default())
@@ -26,13 +29,16 @@ pub(crate) fn block(s: &SessionSummary, width: usize) -> Vec<Line> {
     boxed(
         width,
         vec![
-            format!(
-                "实例 {}@{} · 项目 {}",
-                p.instance,
-                p.host,
-                p.project.as_deref().unwrap_or("无")
+            i18n::t!(
+                "welcome.instance",
+                name = p.instance,
+                host = p.host,
+                project = p
+                    .project
+                    .clone()
+                    .unwrap_or_else(|| i18n::t!("welcome.none"))
             ),
-            format!("场景 {} · 模型 {}", p.scene, p.model),
+            i18n::t!("welcome.scene_model", scene = p.scene, model = p.model),
         ],
     )
 }
@@ -51,8 +57,8 @@ fn boxed(width: usize, info: Vec<String>) -> Vec<Line> {
     body.extend(info.into_iter().map(|t| Line::toned(t, Tone::Dim)));
     body.extend([
         Line::default(),
-        Line::toned("/help 帮助 · / 命令 · @ 提及文件 · ! 执行命令", Tone::Dim),
-        Line::toned("F2 会话 · F3 流程 · F4 作业 · Ctrl+B 切栏", Tone::Dim),
+        Line::toned(i18n::t!("welcome.keys_help"), Tone::Dim),
+        Line::toned(i18n::t!("welcome.keys_tabs"), Tone::Dim),
     ]);
     let mut out = vec![Line::toned(
         format!("╭{}╮", "─".repeat(w - 2)),

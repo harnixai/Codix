@@ -1,0 +1,6 @@
+welcome:
+  none: "无"
+  instance: "实例 {name}@{host} · 项目 {project}"
+  scene_model: "场景 {scene} · 模型 {model}"
+  keys_help: "/help 帮助 · / 命令 · @ 提及文件 · ! 执行命令"
+  keys_tabs: "F2 会话 · F3 流程 · F4 作业 · Ctrl+B 切栏"

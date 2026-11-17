@@ -25,7 +25,7 @@ fn theme(name: &str) -> &'static Theme {
     ts.themes
         .get(name)
         .or_else(|| ts.themes.get(DEFAULT_THEME))
-        .expect("syntect 自带 base16-ocean.dark")
+        .expect("syntect 自带 base16-ocean.dark") // i18n-allow: 内部不变量的 panic 信息，不是界面文字
 }
 
 /// 可用的高亮主题名（给配置说明与 /doctor 用）。

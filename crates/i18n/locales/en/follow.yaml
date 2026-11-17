@@ -1,0 +1,3 @@
+follow:
+  none_waiting: "Nothing is waiting for you"
+  position: "Pending {n}/{total}"

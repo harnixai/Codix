@@ -9,7 +9,6 @@ use crate::state::{Confirm, DetachReason, Focus, Overlay, Picker, Screen, State,
 
 /// 提问框里第一个选项所在的行（鼠标点选项用，交互 §4.6）。
 pub(crate) const ASK_OPTIONS_OFFSET: usize = 4;
-const PLACEHOLDER: &str = "输入消息 · / 命令 · @ 文件 · ! 执行命令";
 const SPINNER: [&str; 4] = ["✻", "✽", "✶", "✳"];
 
 pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
@@ -36,7 +35,12 @@ pub(crate) fn chat_layout(s: &State) -> (LayoutSpec, Vec<String>) {
         spec.panel_rows = s.panel_rows(chat.transcript.w as usize);
         spec.composer_rows = match ask_lines(s, w.saturating_sub(2)) {
             Some((lines, _)) => lines.len() as u16,
-            None => s.ui.composer.layout(w, PLACEHOLDER).0.len() as u16,
+            None => {
+                s.ui.composer
+                    .layout(w, &i18n::t!("view.placeholder"))
+                    .0
+                    .len() as u16
+            }
         };
     }
     (spec, labels)
@@ -46,7 +50,7 @@ fn tabs(s: &State) -> Vec<TabLabel> {
     Tab::ALL
         .iter()
         .map(|t| TabLabel {
-            label: t.label().to_string(),
+            label: t.label(),
             badge: badge(s, *t),
             active: *t == s.ui.tab,
         })
@@ -137,12 +141,15 @@ fn header(s: &State) -> Header {
         left = left.push(format!("  {}  {}", p.scene, p.model), Tone::Dim);
     }
     let right = match s.domain.conn {
-        Some(ConnState::Connected) | Some(ConnState::Resynced) => Line::toned("● 已连接", Tone::Ok),
-        Some(ConnState::Reconnecting { attempt }) => {
-            Line::toned(format!("⚠ 重连中 (第 {attempt} 次)"), Tone::Warn)
+        Some(ConnState::Connected) | Some(ConnState::Resynced) => {
+            Line::toned(i18n::t!("view.conn.connected"), Tone::Ok)
         }
-        Some(ConnState::Lost) => Line::toned("⚠ 已断开", Tone::Error),
-        None => Line::toned("○ 连接中…", Tone::Dim),
+        Some(ConnState::Reconnecting { attempt }) => Line::toned(
+            i18n::t!("view.conn.reconnecting", attempt = attempt),
+            Tone::Warn,
+        ),
+        Some(ConnState::Lost) => Line::toned(i18n::t!("view.conn.lost"), Tone::Error),
+        None => Line::toned(i18n::t!("view.conn.connecting"), Tone::Dim),
     };
     Header { left, right }
 }
@@ -174,7 +181,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
             },
             badge_text(&c.summary),
         ),
-        None => ("会话 › 新会话（输入即开始）".to_string(), String::new()),
+        None => (i18n::t!("view.crumb.new_session"), String::new()),
     };
     let h = r.transcript.h as usize;
     let mut below = None;
@@ -195,7 +202,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
                 })
                 .collect();
             if lines.is_empty() {
-                lines.push(Line::toned("  （还没有输出）", Tone::Dim));
+                lines.push(Line::toned(i18n::t!("view.task.empty"), Tone::Dim));
             }
             let skip = lines.len().saturating_sub(h);
             lines.into_iter().skip(skip).collect()
@@ -207,7 +214,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
                 .flatten()
                 .and_then(|id| c.first_line_of(id));
             if c.unseen && !c.follow {
-                below = Some(Line::toned("↓ 有新内容 (End)", Tone::Attention));
+                below = Some(Line::toned(i18n::t!("view.new_below"), Tone::Attention));
             }
             c.blocks
                 .iter()
@@ -224,23 +231,25 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
                 })
                 .collect()
         }
-        (None, Some(_)) => vec![Line::toned("加载中 …", Tone::Dim)],
+        (None, Some(_)) => vec![Line::toned(i18n::t!("view.loading"), Tone::Dim)],
         (None, None) => crate::welcome::idle(s.domain.instance.as_ref(), width),
     };
     let composer_w = r.composer_inner.w as usize;
     let placeholder = match (&s.ui.answering, conv) {
-        _ if s.ui.task_view.is_some() => "只读：任务输出，实时跟随 · Esc 返回".to_string(),
-        _ if s.ui.rename.is_some() => "新的名字".to_string(),
-        _ if s.ui.via_task.is_some() => "给这个子 Agent 发消息".to_string(),
+        _ if s.ui.task_view.is_some() => i18n::t!("view.ph.task"),
+        _ if s.ui.rename.is_some() => i18n::t!("view.ph.rename"),
+        _ if s.ui.via_task.is_some() => i18n::t!("view.ph.via_task"),
         (Some(_), Some(c)) => c
             .prompts
             .first()
             .map(|p| match &p.kind {
-                port::PromptKind::Question { question, .. } => format!("回答：{question}"),
-                _ => "写下回答".into(),
+                port::PromptKind::Question { question, .. } => {
+                    i18n::t!("view.ph.answer", question = question)
+                }
+                _ => i18n::t!("view.ph.write_answer"),
             })
             .unwrap_or_default(),
-        _ => PLACEHOLDER.to_string(),
+        _ => i18n::t!("view.placeholder"),
     };
     let (mut lines, cursor) = s.ui.composer.layout(composer_w, &placeholder);
     // 输入框最多占对话区 1/3：再多就开窗，缺省跟着光标走，Shift+↑↓ / PageUp / PageDown 可以翻。
@@ -257,20 +266,20 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     let ask = ask_lines(s, composer_w.saturating_sub(2));
     let running = conv.is_some_and(|c| c.running);
     let hint_left = if s.ui.esc_armed_ms.is_some() && !s.ui.composer.is_empty() {
-        Line::toned("再按一次 Esc 清空", Tone::Warn)
+        Line::toned(i18n::t!("view.hint.esc_clear"), Tone::Warn)
     } else if running {
-        Line::toned("esc 中断", Tone::Dim)
+        Line::toned(i18n::t!("view.hint.interrupt"), Tone::Dim)
     } else {
-        Line::toned("? 快捷键", Tone::Dim)
+        Line::toned(i18n::t!("view.hint.shortcuts"), Tone::Dim)
     };
     let hint_right = match s.ui.permission {
         port::PermissionMode::Default => Line::default(),
         port::PermissionMode::AcceptEdits => {
-            Line::toned("⏵⏵ 自动接受编辑 (shift+tab 切换)", Tone::Accent)
+            Line::toned(i18n::t!("view.mode.accept_edits"), Tone::Accent)
         }
-        port::PermissionMode::Plan => Line::toned("⏸ 计划模式 (shift+tab 切换)", Tone::Accent),
+        port::PermissionMode::Plan => Line::toned(i18n::t!("view.mode.plan"), Tone::Accent),
         port::PermissionMode::BypassPermissions => {
-            Line::toned("⏵⏵ 绕过权限 (shift+tab 切换)", Tone::Error)
+            Line::toned(i18n::t!("view.mode.bypass"), Tone::Error)
         }
     };
     ChatPane {
@@ -310,7 +319,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
 }
 
 /// 面包屑从哪个标签起：流程、作业开出来的会话（包括它们的编辑会话）不属于"会话"。
-fn crumb_root(s: &State, c: &crate::chat::Conversation) -> &'static str {
+fn crumb_root(s: &State, c: &crate::chat::Conversation) -> String {
     let root =
         s.ui.ctx_parents
             .first()
@@ -321,13 +330,13 @@ fn crumb_root(s: &State, c: &crate::chat::Conversation) -> &'static str {
         | port::Origin::Editor {
             of: port::EditorOf::Flow,
             ..
-        } => "流程",
+        } => i18n::t!("view.root.flow"),
         port::Origin::Job { .. }
         | port::Origin::Editor {
             of: port::EditorOf::Job,
             ..
-        } => "作业",
-        _ => "会话",
+        } => i18n::t!("view.root.job"),
+        _ => i18n::t!("view.root.session"),
     }
 }
 
@@ -336,32 +345,45 @@ fn crumb_root(s: &State, c: &crate::chat::Conversation) -> &'static str {
 fn badge_text(sum: &port::SessionSummary) -> String {
     let origin = match &sum.provenance.origin {
         port::Origin::User => None,
-        port::Origin::Job { name, .. } => Some(format!("作业「{name}」")),
+        port::Origin::Job { name, .. } => Some(i18n::t!("view.badge.job", name = name)),
         port::Origin::FlowStation {
             flow_title,
             subject,
             station_title,
             ..
-        } => Some(format!("流程「{flow_title}」› {subject} › {station_title}")),
-        port::Origin::SubAgent { parent_title, .. } => Some(format!("子 Agent ← {parent_title}")),
-        port::Origin::Fork { from_title, .. } => Some(format!("⑂ 分叉自 {from_title}")),
+        } => Some(i18n::t!(
+            "view.badge.flow_station",
+            flow_title = flow_title,
+            subject = subject,
+            station_title = station_title
+        )),
+        port::Origin::SubAgent { parent_title, .. } => Some(i18n::t!(
+            "view.badge.sub_agent",
+            parent_title = parent_title
+        )),
+        port::Origin::Fork { from_title, .. } => {
+            Some(i18n::t!("view.badge.fork", from_title = from_title))
+        }
         port::Origin::Editor { of, name } => Some(match (of, name.is_empty()) {
-            (port::EditorOf::Flow, false) => format!("流程「{name}」的编写会话"),
-            (port::EditorOf::Flow, true) => "新流程的编写会话".into(),
-            (port::EditorOf::Job, false) => format!("作业「{name}」的编辑会话"),
-            (port::EditorOf::Job, true) => "新作业的编辑会话".into(),
+            (port::EditorOf::Flow, false) => i18n::t!("view.badge.editor_flow", name = name),
+            (port::EditorOf::Flow, true) => i18n::t!("view.badge.editor_flow_new"),
+            (port::EditorOf::Job, false) => i18n::t!("view.badge.editor_job", name = name),
+            (port::EditorOf::Job, true) => i18n::t!("view.badge.editor_job_new"),
         }),
     };
-    let held = sum.held_by.as_ref().map(|h| format!("⚠ 被实例 {h} 占用"));
+    let held = sum
+        .held_by
+        .as_ref()
+        .map(|h| i18n::t!("view.badge.held", holder = h));
     let state = match sum.state {
-        port::SessionState::Running => "● 运行中",
-        port::SessionState::Waiting => "◐ 等你",
-        port::SessionState::Idle => "○ 空闲",
+        port::SessionState::Running => i18n::t!("view.badge.running"),
+        port::SessionState::Waiting => i18n::t!("view.badge.waiting"),
+        port::SessionState::Idle => i18n::t!("view.badge.idle"),
     };
     origin
         .into_iter()
         .chain(held)
-        .chain(std::iter::once(state.to_string()))
+        .chain(std::iter::once(state))
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -370,9 +392,11 @@ fn status_line(s: &State, c: &crate::chat::Conversation, width: usize) -> Option
     if let Some(p) = c.prompts.first() {
         let what = match &p.kind {
             port::PromptKind::Permission { tool, summary, .. } => {
-                format!("◐ 等你批准：{tool}({summary})")
+                i18n::t!("view.status.need_approval", tool = tool, summary = summary)
             }
-            port::PromptKind::Question { question, .. } => format!("◐ 等你回答：{question}"),
+            port::PromptKind::Question { question, .. } => {
+                i18n::t!("view.status.need_answer", question = question)
+            }
         };
         return Some(Line::toned(
             truncate_to_width(&what, width),
@@ -384,10 +408,10 @@ fn status_line(s: &State, c: &crate::chat::Conversation, width: usize) -> Option
     }
     let frame = SPINNER[(s.ui.now_ms / crate::update::SPINNER_MS) as usize % SPINNER.len()];
     let verb = match &c.phase {
-        crate::chat::Phase::Thinking => "思考中…".to_string(),
-        crate::chat::Phase::Answering => "回答中…".to_string(),
-        crate::chat::Phase::Tool(name) => format!("执行 {name}…"),
-        crate::chat::Phase::Compacting => "压缩上下文…".to_string(),
+        crate::chat::Phase::Thinking => i18n::t!("view.phase.thinking"),
+        crate::chat::Phase::Answering => i18n::t!("view.phase.answering"),
+        crate::chat::Phase::Tool(name) => i18n::t!("view.phase.tool", name = name),
+        crate::chat::Phase::Compacting => i18n::t!("view.phase.compacting"),
     };
     let secs = s.ui.now_ms.saturating_sub(c.turn_started_ms) / 1000;
     let mut tail = format!("{secs}s");
@@ -420,14 +444,16 @@ fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
     };
     let (title, summary, question) = match &p.kind {
         port::PromptKind::Permission { tool, summary, .. } => (
-            format!("{tool} 命令"),
+            i18n::t!("view.ask.command", tool = tool),
             summary.clone(),
-            "要执行吗？".to_string(),
+            i18n::t!("view.ask.proceed"),
         ),
         port::PromptKind::Question {
             question, header, ..
         } => (
-            header.clone().unwrap_or_else(|| "模型提问".into()),
+            header
+                .clone()
+                .unwrap_or_else(|| i18n::t!("view.ask.model_question")),
             String::new(),
             question.clone(),
         ),
@@ -439,7 +465,7 @@ fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
             .push(format!("{}{count}", " ".repeat(pad)), Tone::Dim),
         Line::toned(fit(format!("  {summary}")), Tone::Normal),
         match &p.from {
-            Some(f) => Line::toned(fit(format!("  来自 {}", f.label)), Tone::Dim),
+            Some(f) => Line::toned(fit(i18n::t!("view.ask.from", label = f.label)), Tone::Dim),
             None => Line::default(),
         },
         Line::toned(fit(question), Tone::Normal),
@@ -455,11 +481,11 @@ fn ask_lines(s: &State, width: usize) -> Option<(Vec<Line>, Option<usize>)> {
         lines.push(Line::plain(fit(format!("{mark}{}. {o}", i + 1))));
     }
     let keys = if s.ui.ask_active {
-        "Esc 拒绝 · ↑↓ / 数字选择 · Enter 确认"
+        i18n::t!("view.ask.keys_active")
     } else {
-        "Ctrl+G 或点这里作答"
+        i18n::t!("view.ask.keys_idle")
     };
-    lines.push(Line::toned(fit(keys.into()), Tone::Dim));
+    lines.push(Line::toned(fit(keys), Tone::Dim));
     let selected = s.ui.ask_active.then_some(ASK_OPTIONS_OFFSET + sel);
     Some((lines, selected))
 }
@@ -501,7 +527,7 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
             title_right: None,
             rows: match (&s.domain.load_errors[s.ui.tab.index()], all.is_empty()) {
                 (Some(e), _) => vec![Line::toned(
-                    truncate_to_width(&format!("✗ 加载失败：{e} · r 重试"), w),
+                    truncate_to_width(&i18n::t!("view.load_failed", error = e), w),
                     Tone::Error,
                 )],
                 (None, true) => vec![Line::toned(empty_hint(s), Tone::Dim)],
@@ -526,12 +552,12 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
 fn empty_hint(s: &State) -> String {
     let f = &s.ui.filter[s.ui.tab.index()];
     if !f.is_empty() {
-        return format!("没有匹配「{f}」的 · Esc 清除过滤");
+        return i18n::t!("view.empty.filter", filter = f);
     }
     match s.ui.tab {
-        Tab::Sessions => "还没有会话 · 选上面一行新建，或者直接在左边输入".into(),
-        Tab::Flows => "还没有流程 · n 在左边对话里描述一个流程来创建".into(),
-        Tab::Jobs => "还没有作业 · n 在左边对话里说清楚何时做什么".into(),
+        Tab::Sessions => i18n::t!("view.empty.sessions"),
+        Tab::Flows => i18n::t!("view.empty.flows"),
+        Tab::Jobs => i18n::t!("view.empty.jobs"),
     }
 }
 
@@ -597,7 +623,7 @@ fn upper_title(s: &State) -> Option<String> {
         Tab::Jobs => s
             .selected_job()
             .and_then(|id| s.domain.jobs.iter().find(|j| j.id == id))
-            .map(|j| format!("{} 的详情", j.name)),
+            .map(|j| i18n::t!("view.job_detail", name = j.name)),
     }
 }
 
@@ -622,19 +648,19 @@ fn footer(s: &State) -> tui::Footer {
     });
     let confirm = s.ui.confirm.as_ref().map(|c| {
         let text = match c {
-            Confirm::ForceAttach(n) => format!("强制接入 {n}？对方会被踢掉 · y 确认 / 其他键放弃"),
+            Confirm::ForceAttach(n) => i18n::t!("view.confirm.force_attach", name = n),
             Confirm::StopInstance(n) => {
-                format!("停止实例 {n}？里面的会话、流程、作业都会停下 · y 确认 / 其他键放弃")
+                i18n::t!("view.confirm.stop_instance", name = n)
             }
-            Confirm::CloseSession(_, t) => format!("关闭会话「{t}」？ · y 确认 / 其他键放弃"),
-            Confirm::StopTask(_, t) => format!("停止「{t}」？ · y 确认 / 其他键放弃"),
-            Confirm::ClearGoal(_) => "清除这个 goal？ · y 确认 / 其他键放弃".to_string(),
-            Confirm::CancelRun(_, t) => format!("取消运行「{t}」？ · y 确认 / 其他键放弃"),
+            Confirm::CloseSession(_, t) => i18n::t!("view.confirm.close_session", title = t),
+            Confirm::StopTask(_, t) => i18n::t!("view.confirm.stop_task", title = t),
+            Confirm::ClearGoal(_) => i18n::t!("view.confirm.clear_goal"),
+            Confirm::CancelRun(_, t) => i18n::t!("view.confirm.cancel_run", title = t),
             Confirm::ForceStation(_, _, t) => {
-                format!("强制放行「{t}」？出口条件不再检查 · y 确认 / 其他键放弃")
+                i18n::t!("view.confirm.force_station", title = t)
             }
             Confirm::Rework(_, _, t) => {
-                format!("退回到「{t}」重做？它之后的站都要重来 · y 确认 / 其他键放弃")
+                i18n::t!("view.confirm.rework", title = t)
             }
         };
         Line::toned(text, Tone::Attention)
@@ -681,24 +707,27 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
         Overlay::EventLog { scroll } => {
             let mut lines: Vec<String> = s.ui.event_log.iter().rev().cloned().collect();
             if lines.is_empty() {
-                lines.push("还没有事件".into());
+                lines.push(i18n::t!("view.event_log.empty"));
             }
-            text("事件日志（新的在上）· Esc 关闭", lines, *scroll)
+            text(&i18n::t!("view.event_log.title"), lines, *scroll)
         }
         Overlay::Exit { selected } => {
-            let name = s.ui.attached.clone().unwrap_or_else(|| "当前实例".into());
+            let name =
+                s.ui.attached
+                    .clone()
+                    .unwrap_or_else(|| i18n::t!("view.exit.current_instance"));
             let options = [
                 (
-                    "后台运行".to_string(),
-                    format!("实例 {name} 继续运行，之后用 codix attach {name} 接回"),
+                    i18n::t!("view.exit.background"),
+                    i18n::t!("view.exit.background_desc", name = name),
                 ),
                 (
-                    "直接退出".to_string(),
-                    format!("停止实例 {name}，里面的会话、流程、作业都会停下"),
+                    i18n::t!("view.exit.quit"),
+                    i18n::t!("view.exit.quit_desc", name = name),
                 ),
-                ("返回".to_string(), String::new()),
+                (i18n::t!("view.exit.back"), String::new()),
             ];
-            let mut lines = vec![Line::plain("要怎么退出？"), Line::default()];
+            let mut lines = vec![Line::plain(i18n::t!("view.exit.ask")), Line::default()];
             for (i, (label, desc)) in options.iter().enumerate() {
                 let mark = if i == *selected { "❯ " } else { "  " };
                 let mut l = Line::plain(format!("{mark}{}. ", i + 1))
@@ -710,12 +739,9 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
                 lines.push(l);
             }
             lines.push(Line::default());
-            lines.push(Line::toned(
-                "↑↓ / 数字选择 · Enter 确认 · Esc 返回",
-                Tone::Dim,
-            ));
+            lines.push(Line::toned(i18n::t!("view.exit.keys"), Tone::Dim));
             tui::Overlay {
-                title: "退出".into(),
+                title: i18n::t!("view.exit.title"),
                 height: lines.len() as u16 + 2,
                 lines,
                 width: 72,
@@ -742,15 +768,12 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
                 }
                 lines.push(Line::default());
             }
-            lines.push(Line::toned(
-                "鼠标：单击选中 · 双击打开 · 拖动分隔线调比例 · 滚轮滚动所在区域 · F8 交还终端",
-                Tone::Dim,
-            ));
+            lines.push(Line::toned(i18n::t!("view.help.mouse"), Tone::Dim));
             let height = (lines.len() as u16 + 2).min(s.ui.size.rows.saturating_sub(4));
             let body = height.saturating_sub(2) as usize;
             let max_scroll = lines.len().saturating_sub(body);
             tui::Overlay {
-                title: "帮助".into(),
+                title: i18n::t!("view.help.title"),
                 lines: lines.into_iter().skip((*scroll).min(max_scroll)).collect(),
                 width: 72,
                 height,
@@ -788,9 +811,10 @@ fn pad(text: &str, width: usize) -> String {
 }
 
 fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
-    let host = p.list.first().map(|i| i.host.as_str()).unwrap_or("本机");
+    let local = i18n::t!("view.picker.local");
+    let host = p.list.first().map(|i| i.host.as_str()).unwrap_or(&local);
     let now = s.ui.now_ms;
-    let mut all: Vec<Line> = vec![Line::toned("＋ 新建实例", Tone::Accent)];
+    let mut all: Vec<Line> = vec![Line::toned(i18n::t!("view.picker.new"), Tone::Accent)];
     all.extend(p.list.iter().map(|i| {
         let (glyph, tone) = match (i.state, i.holder.is_some()) {
             (port::InstanceState::Running, true) => ("🔒", Tone::Warn),
@@ -807,27 +831,38 @@ fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
                 let up = i.started_ms.map(|t| fmt_duration(now.saturating_sub(t)));
                 line = line
                     .push(
-                        pad(&format!("运行 {}", up.unwrap_or_default()), 11),
+                        pad(
+                            &i18n::t!("view.picker.uptime", up = up.unwrap_or_default()),
+                            11,
+                        ),
                         Tone::Normal,
                     )
-                    .push(pad(&format!("会话 {}", i.sessions), 9), Tone::Normal);
+                    .push(
+                        pad(&i18n::t!("view.picker.sessions", count = i.sessions), 9),
+                        Tone::Normal,
+                    );
                 if i.waiting > 0 {
-                    line = line.push(pad(&format!("◐ 等你 {}", i.waiting), 10), Tone::Attention);
+                    line = line.push(
+                        pad(&i18n::t!("view.picker.waiting", count = i.waiting), 10),
+                        Tone::Attention,
+                    );
                 }
                 if let Some(h) = &i.holder {
                     line = line.push(
-                        format!(
-                            "被 {} 接入，空闲 {}",
-                            h.label(),
-                            fmt_duration(now.saturating_sub(h.last_input_ms))
+                        i18n::t!(
+                            "view.picker.holder",
+                            who = h.label(),
+                            idle = fmt_duration(now.saturating_sub(h.last_input_ms))
                         ),
                         Tone::Warn,
                     );
                 }
             }
-            port::InstanceState::Stopped => line = line.push("已停止 · Enter 启动", Tone::Dim),
+            port::InstanceState::Stopped => {
+                line = line.push(i18n::t!("view.picker.stopped"), Tone::Dim)
+            }
             port::InstanceState::Stale => {
-                line = line.push("残留（进程已不在）· Enter 重新启动", Tone::Error)
+                line = line.push(i18n::t!("view.picker.stale"), Tone::Error)
             }
         }
         line
@@ -835,14 +870,14 @@ fn picker(s: &State, p: &Picker) -> tui::InstancesScreen {
     let n = crate::state::PICKER_ROWS;
     let scroll = p.scroll.min(all.len().saturating_sub(n));
     let message = if p.loading && p.list.is_empty() {
-        Some(Line::toned("正在列出本机的实例 …", Tone::Dim))
+        Some(Line::toned(i18n::t!("view.picker.listing"), Tone::Dim))
     } else {
         p.message
             .as_ref()
             .map(|m| Line::toned(m.clone(), Tone::Warn))
     };
     tui::InstancesScreen {
-        title: Line::plain(format!("Codix · 选择实例 · 主机 {host}")),
+        title: Line::plain(i18n::t!("view.picker.title", host = host)),
         more_above: scroll > 0,
         more_below: scroll + n < all.len(),
         selected: p.selected.checked_sub(scroll).filter(|i| *i < n),
@@ -855,36 +890,36 @@ fn detached(s: &State, r: &DetachReason) -> Vec<Line> {
     let name = s.ui.attached.clone().unwrap_or_default();
     match r {
         DetachReason::Kicked { by, at_ms } => vec![
-            Line::toned(format!("已脱离实例 {name}"), Tone::Strong),
+            Line::toned(i18n::t!("view.detached.title", name = name), Tone::Strong),
             Line::default(),
             Line::toned(
-                format!(
-                    "被 {} 强制接入（{} 之前）",
-                    by.label(),
-                    fmt_duration(s.ui.now_ms.saturating_sub(*at_ms))
+                i18n::t!(
+                    "view.detached.kicked",
+                    by = by.label(),
+                    ago = fmt_duration(s.ui.now_ms.saturating_sub(*at_ms))
                 ),
                 Tone::Warn,
             ),
-            Line::toned("实例仍在运行", Tone::Dim),
+            Line::toned(i18n::t!("view.detached.still_running"), Tone::Dim),
             Line::default(),
-            Line::toned("Enter 回到实例选择 · q 退出", Tone::Dim),
+            Line::toned(i18n::t!("view.detached.kicked_keys"), Tone::Dim),
         ],
         DetachReason::Idle { after_ms } => vec![
-            Line::toned(format!("已脱离实例 {name}"), Tone::Strong),
+            Line::toned(i18n::t!("view.detached.title", name = name), Tone::Strong),
             Line::default(),
             Line::toned(
-                format!("空闲 {}，已自动脱离，实例仍在运行", fmt_duration(*after_ms)),
+                i18n::t!("view.detached.idle", idle = fmt_duration(*after_ms)),
                 Tone::Warn,
             ),
             Line::default(),
-            Line::toned("按任意键重新接入 · q 退出", Tone::Dim),
+            Line::toned(i18n::t!("view.detached.idle_keys"), Tone::Dim),
         ],
         DetachReason::Stopped { reason } => vec![
-            Line::toned(format!("实例 {name} 已停止"), Tone::Strong),
+            Line::toned(i18n::t!("view.detached.stopped", name = name), Tone::Strong),
             Line::default(),
             Line::toned(reason.clone(), Tone::Warn),
             Line::default(),
-            Line::toned("Enter 回到实例选择 · q 退出", Tone::Dim),
+            Line::toned(i18n::t!("view.detached.kicked_keys"), Tone::Dim),
         ],
     }
 }
@@ -897,7 +932,7 @@ impl State {
         let n = self
             .ui
             .composer
-            .layout(c.composer_inner.w as usize, PLACEHOLDER)
+            .layout(c.composer_inner.w as usize, &i18n::t!("view.placeholder"))
             .0
             .len();
         (rows > 0 && n > rows).then_some((n, rows))
@@ -919,7 +954,12 @@ impl State {
             .chat_regions()
             .chat
             .map_or(80, |c| c.composer_inner.w as usize);
-        let row = self.ui.composer.layout(w, PLACEHOLDER).1.1 as usize;
+        let row = self
+            .ui
+            .composer
+            .layout(w, &i18n::t!("view.placeholder"))
+            .1
+            .1 as usize;
         (row + 1).saturating_sub(rows).min(max)
     }
 
