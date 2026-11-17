@@ -7,7 +7,7 @@ panel:
   job_new: "新建作业"
   run_title: "运行：{subject}"
   run: "运行"
-  goal_todo: "goal 与 todo"
+  goal_todo: "Goal & Todo"
   phase:
     paused: "已暂停"
     complete: "已完成"
