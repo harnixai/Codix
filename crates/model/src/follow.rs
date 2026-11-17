@@ -39,8 +39,13 @@ pub(crate) fn go_draft(s: &mut State) {
 }
 
 /// 左边回到一个用户会话：已经在某个用户会话里（或它的子 Agent、任务输出里）就回到那个会话，
-/// 否则是最近活跃的那个，一个都没有就是草稿。流程、作业标签的 `n` `e` `d` 从这里开口。
+/// 否则是最近活跃的那个，一个都没有就是草稿。左边本来是草稿就留在草稿：话头发出去就是一个
+/// 新会话，不往不相干的旧会话里塞。流程、作业标签的 `n` `e` `d` 从这里开口。
 pub(crate) fn back_to_user_session(s: &mut State) -> Vec<Effect> {
+    if s.ui.chat.is_none() {
+        go_draft(s);
+        return vec![];
+    }
     let root =
         s.ui.ctx_parents
             .first()
