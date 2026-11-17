@@ -125,7 +125,7 @@ Codix 不和 Claude Code、Codex、opencode 拼"聊天写代码"的打磨程度�
 | C-17 | **对话区照 Claude Code**：凡 Claude Code 也有的部分（转录的块样式、状态行、输入框、提问框、快捷键），外观与按键都与它一致；Codix 独有的部分在此基础上加（交互 §4、§7） | P0 |
 | C-18 | 开场欢迎块：Codix logo、版本、实例、项目、场景、模型、常用键 | P0 |
 | C-19 | Ctrl+O 转录精简 / 详细；Ctrl+T 收放对话区顶部面板；空输入框按 `?` 打开快捷键 | P0 |
-| C-20 | Shift+Tab 轮换权限模式，输入框下方显示当前模式。真实后端经 `run_turn` 的 `options.permission_mode` 逐轮生效 | P0（界面）/ P1（真实） |
+| C-20 | Shift+Tab 轮换权限模式，输入框下方显示当前模式。模式是会话的：切了立即生效、跨重启保留（Agix `session.setPermissionMode`）；比设置宽的被夹回时说明实际模式 | P0 |
 | C-21 | `@` 文件提及补全；`!` 命令模式；Ctrl+R 搜历史；空闲时连按两次 Esc 回到上一条消息重新编辑 | P1 |
 
 ### 4.5 会话标签（S）

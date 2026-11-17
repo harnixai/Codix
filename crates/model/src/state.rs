@@ -211,6 +211,9 @@ pub struct Ui {
     pub composer_scroll: Option<((usize, usize), usize)>,
     /// 草稿里 Shift+Tab 选的权限模式（建会话时带上）；打开了会话时显示与切换的是会话自己的。
     pub permission: PermissionMode,
+    /// 上一次 Shift+Tab 请求的模式被设置夹窄了：下一次从请求的那个往后轮，不然缺省设置下
+    /// default → acceptEdits（夹回 default）→ acceptEdits……永远轮不到 plan。
+    pub permission_asked: Option<(SessionId, PermissionMode)>,
     /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
     pub ask_active: bool,
     pub ask_selected: usize,
@@ -341,6 +344,7 @@ impl State {
                 panel_scroll: Default::default(),
                 composer_scroll: None,
                 permission: PermissionMode::Default,
+                permission_asked: None,
                 ask_active: false,
                 ask_selected: 0,
                 answering: None,

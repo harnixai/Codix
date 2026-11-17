@@ -353,6 +353,7 @@ codix（一个二进制）
 | `Submit{mode}` | `session.run_turn{on_busy}`：`run_turn` 是长调用，`Hub` 另起任务等它，命令立刻回 `Submitted` |
 | `Watch` | `session.subscribe{resume: true}` → `session.history`（最后 500 条）→ `session.goal` / `session.tasks`，拼成 `Watched` |
 | `Interrupt` / `Answer` / `SetModel` / `Rename` / `Close` | `session.interrupt` / `session.respondToPrompt` / `session.setModel` / `session.rename` / `session.close` |
+| `SetPermissionMode` / `permission_mode_changed` 帧 | `session.setPermissionMode`（回实际生效的模式与是否被夹）；帧（宿主切的、模型 `EnterPlanMode` / `ExitPlanMode` 切的）改会话摘要的 `permission`。订阅之后用 `session.resume` 读一次 `permission.mode`：重建、恢复、设置夹紧都不推帧。`CreateSession` 带的模式进 `options.permission_mode` |
 | `SetGoal` / `UpdateGoal` | `session.setGoal` / `session.updateGoal` |
 | `SideQuestion` | `session.fork`，再在分叉出的会话上 `run_turn`（归属记为 `Fork`） |
 | `StopTask` / `MessageTask` / `TaskOutput` | `session.stopTask` / `session.messageTask` / `session.taskOutput`（任务所属的会话由 `Hub` 记着） |

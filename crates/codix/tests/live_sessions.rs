@@ -221,35 +221,36 @@ async fn the_permission_mode_is_the_sessions_and_takes_effect_at_once() {
         "计划模式里文件没写出来：{:?}",
         t.results
     );
-    // 切回缺省；重启实例后会话仍记得（Agix 记在会话日志里）。
+    // 重启实例后会话仍在计划模式里（Agix 记在会话日志里），快照照实报。
+    drop(c);
+    let mut c = lv.restart().await;
+    let watched = c.watch(&s).await;
+    assert_eq!(
+        watched.session.permission,
+        PermissionMode::Plan,
+        "重启后还是 plan"
+    );
+
+    // 缺省设置下客户端只能把会话收紧：比设置宽的 acceptEdits 被夹回 default，回复照实说
+    // （界面据此在底栏提示实际是什么；要放开得在 Agix 的设置里开 allow_client_permission_override）。
     let r = c
         .ok(Command::SetPermissionMode {
             session: s.clone(),
             mode: PermissionMode::AcceptEdits,
         })
         .await;
-    assert!(matches!(
+    assert_eq!(
         r,
         Reply::PermissionMode {
-            mode: PermissionMode::AcceptEdits,
-            ..
+            mode: PermissionMode::Default,
+            clamped: true
         }
-    ));
-    drop(c);
-    let c = lv.restart().await;
-    let sum = c
-        .sessions()
-        .await
-        .into_iter()
-        .find(|x| x.id == s)
-        .expect("会话还在");
-    let watched = c.watch(&s).await;
-    assert_eq!(
-        watched.session.permission,
-        PermissionMode::AcceptEdits,
-        "重启后快照里是会话记下的模式（列表里是 {:?}）",
-        sum.permission
     );
+    let me = s.clone();
+    c.wait_upsert("会话回到 default", |x| {
+        x.id == me && x.permission == PermissionMode::Default
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

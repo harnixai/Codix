@@ -274,7 +274,11 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             crate::update::scroll_focused(s, if a == Action::PageUp { -h } else { h });
         }
         Action::CycleMode => {
-            let next = match s.permission_shown() {
+            let from = match (&s.ui.permission_asked, s.permission_session()) {
+                (Some((asked_for, m)), Some(id)) if *asked_for == id => *m,
+                _ => s.permission_shown(),
+            };
+            let next = match from {
                 PermissionMode::Default => PermissionMode::AcceptEdits,
                 PermissionMode::AcceptEdits => PermissionMode::Plan,
                 PermissionMode::Plan
@@ -285,7 +289,7 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             match s.permission_session() {
                 Some(session) => {
                     return Some(vec![s.call(
-                        Pending::PermissionSet(session.clone()),
+                        Pending::PermissionSet(session.clone(), next),
                         Command::SetPermissionMode {
                             session,
                             mode: next,
@@ -702,7 +706,8 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
 
 pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effect> {
     match (what, reply) {
-        (Pending::PermissionSet(id), Reply::PermissionMode { mode, clamped }) => {
+        (Pending::PermissionSet(id, asked), Reply::PermissionMode { mode, clamped }) => {
+            s.ui.permission_asked = clamped.then(|| (id.clone(), asked));
             // 以实例回的为准：设置可能把请求夹窄了。SessionUpserted 随后也会到，这里先改上。
             if let Some(x) = s.domain.sessions.iter_mut().find(|x| x.id == id) {
                 x.permission = mode;
@@ -824,7 +829,7 @@ mod tests {
         let id = SessionId("s1".into());
         chat_reply(
             &mut s,
-            Pending::PermissionSet(id),
+            Pending::PermissionSet(id, PermissionMode::AcceptEdits),
             Reply::PermissionMode {
                 mode: PermissionMode::Default,
                 clamped: true,
@@ -832,5 +837,39 @@ mod tests {
         );
         let n = s.ui.notice.as_ref().expect("底栏说了");
         assert!(n.error && n.text.contains("缺省模式"), "{}", n.text);
+    }
+
+    /// 缺省设置下 acceptEdits 被夹回 default：再按一次接着往后轮到 plan，而不是又要 acceptEdits。
+    #[test]
+    fn after_a_clamp_shift_tab_moves_on_from_the_mode_asked_for() {
+        let mut s = State::new(
+            std::sync::Arc::new(keys::Keymap::default()),
+            tui::Size::new(160, 45),
+            0,
+        );
+        let id = SessionId("s1".into());
+        s.ui.chat = Some(id.clone());
+        let asked = |e: &[Effect]| match e {
+            [Effect::Call(req, cmd)] => match &**cmd {
+                Command::SetPermissionMode { mode, .. } => (*req, *mode),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        };
+        let e = crate::update(&mut s, crate::Msg::Action(Action::CycleMode));
+        let (req, mode) = asked(&e);
+        assert_eq!(mode, PermissionMode::AcceptEdits);
+        crate::update(
+            &mut s,
+            crate::Msg::Reply(
+                req,
+                Box::new(Ok(Reply::PermissionMode {
+                    mode: PermissionMode::Default,
+                    clamped: true,
+                })),
+            ),
+        );
+        let e = crate::update(&mut s, crate::Msg::Action(Action::CycleMode));
+        assert_eq!(asked(&e).1, PermissionMode::Plan);
     }
 }
