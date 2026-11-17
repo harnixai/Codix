@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use app::core::{ShellEffect, Start};
 use app::term::{self, CrosstermTerm, Term};
 use app::{Core, config};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use crossterm::event::{
     Event as CtEvent, EventStream, KeyEventKind, MouseButton as CtButton, MouseEventKind,
 };
@@ -13,8 +13,9 @@ use futures::StreamExt;
 use model::{InstOp, Mouse, MouseButton, MouseKind, Msg};
 use port::Instances;
 
+/// 跑在终端里的 agent 工作台
 #[derive(Parser)]
-#[command(name = "codix", version, about = "跑在终端里的 agent 工作台")]
+#[command(name = "codix", version)]
 struct Cli {
     /// 用 mock 后端：内置场景名或场景文件路径。阶段 2 不带它也是 mock，打开演示 `demo`。
     #[arg(long, global = true)]
@@ -56,6 +57,26 @@ enum Cmd {
     Stop { name: String },
 }
 
+/// 帮助文字按当前语言重写：clap 的 derive 只认字面量，`///` 里的中文只作源码里的说明，
+/// 运行时用 `Command` 的构建接口覆盖，所以必须在语言初始化之后、解析参数之前调用。
+fn localized_command() -> clap::Command {
+    Cli::command()
+        .about(i18n::t!("app.cli.about"))
+        .mut_arg("mock", |a| a.help(i18n::t!("app.cli.mock")))
+        .mut_arg("speed", |a| a.help(i18n::t!("app.cli.speed")))
+        .mut_subcommand("new", |c| c.about(i18n::t!("app.cli.new")))
+        .mut_subcommand("list", |c| c.about(i18n::t!("app.cli.list")))
+        .mut_subcommand("attach", |c| {
+            c.about(i18n::t!("app.cli.attach"))
+                .mut_arg("force", |a| a.help(i18n::t!("app.cli.attach_force")))
+                .mut_arg("idle_timeout", |a| {
+                    a.help(i18n::t!("app.cli.attach_idle_timeout"))
+                })
+        })
+        .mut_subcommand("start", |c| c.about(i18n::t!("app.cli.start")))
+        .mut_subcommand("stop", |c| c.about(i18n::t!("app.cli.stop")))
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -65,12 +86,18 @@ fn now_ms() -> u64 {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // 先读配置、定语言：`codix list` 的输出、启动错误、`--help` 都要按语言显示。
+    let (cfg, mut problems) = config::load();
+    problems.extend(i18n::init(
+        &config::language(&cfg),
+        Some(&config::home().join("locales")),
+    ));
+    let cli = Cli::from_arg_matches(&localized_command().get_matches())?;
     // 真实实例在阶段 3 接入；在那之前直接打开 mock 的演示。
     let scenario = cli.mock.as_deref().unwrap_or("demo");
     let scenario = mock::load_scenario(scenario)
         .or_else(|_| mock::load_seed(scenario).map(|_| mock::Scenario::seed_only(scenario)))
-        .with_context(|| format!("没有场景或种子 {scenario}"))?;
+        .with_context(|| i18n::t!("app.no_scenario", name = scenario))?;
     let instances = mock::MockInstances::new(
         scenario,
         mock::MockOptions {
@@ -82,21 +109,29 @@ async fn main() -> Result<()> {
         Some(Cmd::Attach {
             idle_timeout: Some(t),
             ..
-        }) => Some(config::parse_duration_ms(t).with_context(|| format!("看不懂的时长 {t}"))?),
+        }) => Some(
+            config::parse_duration_ms(t)
+                .with_context(|| i18n::t!("app.bad_duration", value = t))?,
+        ),
         _ => None,
     };
     if let Some(Cmd::List { all }) = cli.command {
         for i in instances.list(all).await? {
+            // 列宽在这里补，文字里只留占位：换语言时词序可以变，列还是对齐的。
             println!(
-                "{:<10} {:<8?} {:<16} 会话 {:<4} 等你 {:<3} {}",
-                i.name,
-                i.state,
-                i.project.unwrap_or_default(),
-                i.sessions,
-                i.waiting,
-                i.holder
-                    .map(|h| format!("已被 {} 接入", h.label()))
-                    .unwrap_or_default()
+                "{}",
+                i18n::t!(
+                    "app.list_row",
+                    name = format!("{:<10}", i.name),
+                    state = format!("{:<8?}", i.state),
+                    project = format!("{:<16}", i.project.unwrap_or_default()),
+                    sessions = format!("{:<4}", i.sessions),
+                    waiting = format!("{:<3}", i.waiting),
+                    holder = i
+                        .holder
+                        .map(|h| i18n::t!("app.held_by", holder = h.label()))
+                        .unwrap_or_default()
+                )
             );
         }
         return Ok(());
@@ -107,7 +142,7 @@ async fn main() -> Result<()> {
         Some(Cmd::Start { name }) => Start::Op(InstOp::Start { name }),
         Some(Cmd::Stop { name }) => {
             instances.stop(&name).await?;
-            println!("已停止 {name}");
+            println!("{}", i18n::t!("app.stopped", name = name));
             return Ok(());
         }
         Some(Cmd::List { .. }) => unreachable!(),
@@ -123,17 +158,12 @@ async fn main() -> Result<()> {
             }
         }
     };
-    let (cfg, mut problems) = config::load();
-    problems.extend(i18n::init(
-        &config::language(&cfg),
-        Some(&config::home().join("locales")),
-    ));
     let (mut settings, more) = cfg.settings();
     problems.extend(more);
     if let Some(idle) = idle_override {
         settings.idle_timeout_ms = idle;
     }
-    let cfg_err = (!problems.is_empty()).then(|| problems.join("；"));
+    let cfg_err = (!problems.is_empty()).then(|| problems.join(&i18n::t!("app.config.joiner")));
     run(Arc::new(instances), start, cfg, cfg_err, settings).await
 }
 

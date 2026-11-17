@@ -36,19 +36,19 @@ impl Context {
         Context::Overlay,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Context::Global => "全局",
-            Context::Composer => "输入框",
-            Context::Transcript => "转录",
-            Context::Panel => "顶部面板",
-            Context::Sessions => "会话",
-            Context::Flows => "流程",
-            Context::Jobs => "作业",
-            Context::Dialog => "对话框",
-            Context::Picker => "补全列表",
-            Context::Instances => "实例选择",
-            Context::Overlay => "浮层",
+            Context::Global => i18n::t!("keys.context.global"),
+            Context::Composer => i18n::t!("keys.context.composer"),
+            Context::Transcript => i18n::t!("keys.context.transcript"),
+            Context::Panel => i18n::t!("keys.context.panel"),
+            Context::Sessions => i18n::t!("keys.context.sessions"),
+            Context::Flows => i18n::t!("keys.context.flows"),
+            Context::Jobs => i18n::t!("keys.context.jobs"),
+            Context::Dialog => i18n::t!("keys.context.dialog"),
+            Context::Picker => i18n::t!("keys.context.picker"),
+            Context::Instances => i18n::t!("keys.context.instances"),
+            Context::Overlay => i18n::t!("keys.context.overlay"),
         }
     }
 }
@@ -60,20 +60,48 @@ pub struct Binding {
     pub action: Action,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeymapError {
-    #[error("{context:?} 上下文里 {keys} 同时绑定了 {first:?} 和 {second:?}")]
     Conflict {
         context: Context,
         keys: String,
         first: Action,
         second: Action,
     },
-    #[error("{context:?} 上下文里 {keys} 既是一个绑定、又是另一个和弦的前缀")]
-    PrefixClash { context: Context, keys: String },
-    #[error("看不懂的按键：{0}")]
+    PrefixClash {
+        context: Context,
+        keys: String,
+    },
     BadKey(String),
 }
+
+// 不用 thiserror 的 `#[error("…")]`：它要字面量，而这里的文字得按当前语言取。
+impl std::fmt::Display for KeymapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeymapError::Conflict {
+                context,
+                keys,
+                first,
+                second,
+            } => f.write_str(&i18n::t!(
+                "keys.error.conflict",
+                context = format!("{context:?}"),
+                keys = keys,
+                first = format!("{first:?}"),
+                second = format!("{second:?}")
+            )),
+            KeymapError::PrefixClash { context, keys } => f.write_str(&i18n::t!(
+                "keys.error.prefix_clash",
+                context = format!("{context:?}"),
+                keys = keys
+            )),
+            KeymapError::BadKey(key) => f.write_str(&i18n::t!("keys.error.bad_key", key = key)),
+        }
+    }
+}
+
+impl std::error::Error for KeymapError {}
 
 pub(crate) enum Lookup {
     Exact(Action),
@@ -89,7 +117,7 @@ pub struct Keymap {
 
 impl Default for Keymap {
     fn default() -> Self {
-        Keymap::new(crate::defaults::bindings()).expect("内置键位表没有冲突")
+        Keymap::new(crate::defaults::bindings()).expect("builtin keymap has a conflict")
     }
 }
 
@@ -150,7 +178,7 @@ impl Keymap {
     }
 
     /// 底栏左侧的提示：当前上下文里值得提示的动作，按 `defaults::footer` 的顺序。
-    pub fn hints(&self, ctx: Context) -> Vec<(String, &'static str)> {
+    pub fn hints(&self, ctx: Context) -> Vec<(String, String)> {
         crate::defaults::footer(ctx)
             .iter()
             .filter_map(|a| self.key_for(ctx, *a).map(|k| (k, a.help())))
@@ -158,7 +186,7 @@ impl Keymap {
     }
 
     /// 底栏最右边永远在的三项：切栏、退出、帮助（需求 L-07）。取实际绑定，用户改了键也跟着变。
-    pub fn essential(&self) -> [(String, &'static str); 3] {
+    pub fn essential(&self) -> [(String, String); 3] {
         let k = |a: Action| {
             self.key_for(Context::Global, a)
                 .unwrap_or_else(|| "?".into())
@@ -171,7 +199,7 @@ impl Keymap {
     }
 
     /// 帮助浮层：某上下文与全局的全部绑定。
-    pub fn listing(&self, ctx: Context) -> Vec<(Context, String, &'static str)> {
+    pub fn listing(&self, ctx: Context) -> Vec<(Context, String, String)> {
         let mut out: Vec<_> = self
             .bindings
             .iter()

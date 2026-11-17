@@ -41,11 +41,11 @@ pub fn assert_snapshot(name: &str, actual: &str) {
     }
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
-            "没有快照 {}；确认画面无误后用 CODIX_UPDATE_SNAPSHOTS=1 生成\n{actual}",
+            "no snapshot at {}; check the screen, then generate it with CODIX_UPDATE_SNAPSHOTS=1\n{actual}",
             path.display()
         )
     });
     if expected != actual {
-        panic!("快照 {name} 不一致\n--- 期望\n{expected}\n--- 实际\n{actual}");
+        panic!("snapshot {name} differs\n--- expected\n{expected}\n--- actual\n{actual}");
     }
 }

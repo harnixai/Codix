@@ -7,7 +7,7 @@ fn b(context: Context, keys: &str, action: Action) -> Binding {
         context,
         keys: keys
             .split(' ')
-            .map(|k| Key::parse(k).unwrap_or_else(|| panic!("内置键位写错了：{k}")))
+            .map(|k| Key::parse(k).unwrap_or_else(|| panic!("builtin key binding is wrong: {k}")))
             .collect(),
         action,
     }

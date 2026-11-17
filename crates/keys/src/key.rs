@@ -174,7 +174,7 @@ impl fmt::Display for Key {
             f.write_str("Shift+")?;
         }
         match self.code {
-            KeyCode::Char(' ') => f.write_str("空格"),
+            KeyCode::Char(' ') => f.write_str(&i18n::t!("keys.space")),
             KeyCode::Char(c) if self.mods.ctrl || self.mods.alt => {
                 write!(f, "{}", c.to_ascii_uppercase())
             }

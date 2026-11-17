@@ -10,36 +10,18 @@ use tui::Size;
 pub const FILE: &str = "codix.yaml";
 
 /// 首次启动写到 `~/.codix/codix.yaml` 的内容：每一项都写出来并注释，用户照着改。
-pub const DEFAULT_YAML: &str = r##"# Codix 的配置。删掉这个文件，下次启动会按缺省重新生成。
-# 模型、provider、权限这些沿用 Agix 的 settings.json（同一目录），这里只放 Codix 自己的。
+/// 模板放在单独的文件里，中英文各一份，不挤进代码。
+pub const DEFAULT_YAML_ZH: &str = include_str!("codix.zh.yaml");
+pub const DEFAULT_YAML_EN: &str = include_str!("codix.en.yaml");
 
-ui:
-  # 界面语言：zh、en，或 auto（照 LANG 环境变量）。也可以用 CODIX_LANG 临时指定。
-  # 自己的语言资源放在 ~/.codix/locales/<语言>/*.yaml，格式照 zh 的写（见 crates/i18n/locales）。
-  language: zh
-  # 启动时请求终端调整到这个尺寸（列x行）；终端不响应就按实际尺寸。写 off 不请求。
-  initial_size: 160x45
-  # 宽屏时左栏（对话区）占的百分比，40–75。
-  ratio: 60
-  # 精简模式下工具结果显示几行，其余折起来（Ctrl+O 看全部）。
-  compact_tool_lines: 3
-  # 代码块的语法高亮主题。可选：base16-ocean.dark、base16-eighties.dark、base16-mocha.dark、
-  # base16-ocean.light、InspiredGitHub、Solarized (dark)、Solarized (light)
-  syntax_theme: base16-ocean.dark
-  theme:
-    # 预设：claude（橙）或 aqua（水蓝）。
-    preset: claude
-    # 在预设基础上改个别颜色：#RRGGBB、颜色名（red、gray……）或 0–255 的终端色号。
-    # 可改的有：accent accent_fg bar_bg bar_fg border border_focus dim selected_bg
-    # selected_fg ok warn error add del code link user_bg
-    colors: {}
-    #   accent: "#D97757"
-    #   border: "238"
-
-instance:
-  # 空闲多久自动脱离，让出实例：30m、2h、0（不超时）。
-  idle_timeout: 30m
-"##;
+/// 缺省配置按语言选模板；没有对应语言的模板用英文。
+pub fn default_yaml(lang: &str) -> &'static str {
+    if lang == "zh" {
+        DEFAULT_YAML_ZH
+    } else {
+        DEFAULT_YAML_EN
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -104,7 +86,7 @@ impl Default for InstanceConfig {
 
 impl UiConfig {
     pub fn initial_size(&self) -> Option<Size> {
-        let (c, r) = self.initial_size.split_once(['x', 'X', '×'])?;
+        let (c, r) = self.initial_size.split_once(['x', 'X', '×'])?; // i18n-allow: 解析用户写的尺寸，× 是输入而非界面文字
         Some(Size::new(c.trim().parse().ok()?, r.trim().parse().ok()?))
     }
 }
@@ -114,27 +96,30 @@ impl Config {
     pub fn settings(&self) -> (model::Settings, Vec<String>) {
         let mut problems = vec![];
         let mut theme = tui::Theme::preset(&self.ui.theme.preset).unwrap_or_else(|| {
-            problems.push(format!(
-                "ui.theme.preset 只能是 claude 或 aqua，不是 {:?}",
-                self.ui.theme.preset
+            problems.push(i18n::t!(
+                "app.config.bad_preset",
+                value = format!("{:?}", self.ui.theme.preset)
             ));
             tui::Theme::default()
         });
         for (k, v) in &self.ui.theme.colors {
             if let Err(e) = theme.set(k, v) {
-                problems.push(format!("ui.theme.colors.{k}：{e}"));
+                problems.push(i18n::t!("app.config.bad_color", key = k, error = e));
             }
         }
         let syntax_theme = if model::theme_names().contains(&self.ui.syntax_theme) {
             self.ui.syntax_theme.clone()
         } else {
-            problems.push(format!("ui.syntax_theme 没有 {:?}", self.ui.syntax_theme));
+            problems.push(i18n::t!(
+                "app.config.bad_syntax_theme",
+                value = format!("{:?}", self.ui.syntax_theme)
+            ));
             model::Settings::default().syntax_theme
         };
         let idle_timeout_ms = parse_duration_ms(&self.instance.idle_timeout).unwrap_or_else(|| {
-            problems.push(format!(
-                "instance.idle_timeout 看不懂：{:?}",
-                self.instance.idle_timeout
+            problems.push(i18n::t!(
+                "app.config.bad_idle_timeout",
+                value = format!("{:?}", self.instance.idle_timeout)
             ));
             model::DEFAULT_IDLE_TIMEOUT_MS
         });
@@ -207,15 +192,27 @@ pub fn load_from(dir: &std::path::Path) -> (Config, Vec<String>) {
         Ok(t) => t,
         Err(_) => {
             let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(&path, DEFAULT_YAML);
-            DEFAULT_YAML.to_string()
+            // 此时语言还没初始化：模板按环境（CODIX_LANG、LANG）选，写出后用户可以再改。
+            let template = default_yaml(&language(&Config {
+                ui: UiConfig {
+                    language: "auto".into(),
+                    ..UiConfig::default()
+                },
+                ..Config::default()
+            }));
+            let _ = std::fs::write(&path, template);
+            template.to_string()
         }
     };
     match serde_yaml::from_str::<Config>(&text) {
         Ok(c) => (c, vec![]),
         Err(e) => (
             Config::default(),
-            vec![format!("{} 有误，已用缺省值：{e}", path.display())],
+            vec![i18n::t!(
+                "app.config.bad_file",
+                path = path.display(),
+                error = e
+            )],
         ),
     }
 }

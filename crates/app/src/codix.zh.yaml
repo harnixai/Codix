@@ -1,0 +1,29 @@
+# Codix 的配置。删掉这个文件，下次启动会按缺省重新生成。
+# 模型、provider、权限这些沿用 Agix 的 settings.json（同一目录），这里只放 Codix 自己的。
+
+ui:
+  # 界面语言：zh、en，或 auto（照 LANG 环境变量）。也可以用 CODIX_LANG 临时指定。
+  # 自己的语言资源放在 ~/.codix/locales/<语言>/*.yaml，格式照 zh 的写（见 crates/i18n/locales）。
+  language: zh
+  # 启动时请求终端调整到这个尺寸（列x行）；终端不响应就按实际尺寸。写 off 不请求。
+  initial_size: 160x45
+  # 宽屏时左栏（对话区）占的百分比，40–75。
+  ratio: 60
+  # 精简模式下工具结果显示几行，其余折起来（Ctrl+O 看全部）。
+  compact_tool_lines: 3
+  # 代码块的语法高亮主题。可选：base16-ocean.dark、base16-eighties.dark、base16-mocha.dark、
+  # base16-ocean.light、InspiredGitHub、Solarized (dark)、Solarized (light)
+  syntax_theme: base16-ocean.dark
+  theme:
+    # 预设：claude（橙）或 aqua（水蓝）。
+    preset: claude
+    # 在预设基础上改个别颜色：#RRGGBB、颜色名（red、gray……）或 0–255 的终端色号。
+    # 可改的有：accent accent_fg bar_bg bar_fg border border_focus dim selected_bg
+    # selected_fg ok warn error add del code link user_bg
+    colors: {}
+    #   accent: "#D97757"
+    #   border: "238"
+
+instance:
+  # 空闲多久自动脱离，让出实例：30m、2h、0（不超时）。
+  idle_timeout: 30m

@@ -1,0 +1,5 @@
+tui:
+  too_small: "Terminal too small (need at least {cols} columns)"
+  theme:
+    bad_color: "Unrecognized color {value} (use #RRGGBB, a color name, or 0-255)"
+    no_slot: "No such color slot: {key}"

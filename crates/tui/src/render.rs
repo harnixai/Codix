@@ -20,7 +20,7 @@ pub fn render(f: &mut Frame, state: &FrameState) {
             f,
             size,
             &[Line::toned(
-                format!("终端太小（需要至少 {need_cols} 列）"),
+                i18n::t!("tui.too_small", cols = need_cols),
                 Tone::Warn,
             )],
         ),

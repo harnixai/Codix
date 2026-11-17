@@ -1,0 +1,25 @@
+# app 二进制的文字：配置问题、命令行输出、命令行帮助。
+app:
+  config:
+    bad_preset: "ui.theme.preset 只能是 claude 或 aqua，不是 {value}"
+    bad_color: "ui.theme.colors.{key}：{error}"
+    bad_syntax_theme: "ui.syntax_theme 没有 {value}"
+    bad_idle_timeout: "instance.idle_timeout 看不懂：{value}"
+    bad_file: "{path} 有误，已用缺省值：{error}"
+    joiner: "；"
+  no_scenario: "没有场景或种子 {name}"
+  bad_duration: "看不懂的时长 {value}"
+  list_row: "{name} {state} {project} 会话 {sessions} 等你 {waiting} {holder}"
+  held_by: "已被 {holder} 接入"
+  stopped: "已停止 {name}"
+  cli:
+    about: "跑在终端里的 agent 工作台"
+    mock: "用 mock 后端：内置场景名或场景文件路径。阶段 2 不带它也是 mock，打开演示 `demo`。"
+    speed: "mock 时间线的加速倍数。"
+    new: "新建实例并接入。"
+    list: "列出本机的实例。"
+    attach: "接入指定实例。"
+    attach_force: "踢掉当前接入者。"
+    attach_idle_timeout: "空闲多久自动脱离，如 30m、2h、0（不超时）。"
+    start: "启动一个已停止的实例。"
+    stop: "停止实例。"

@@ -1,0 +1,6 @@
+# 终端渲染层的文字。
+tui:
+  too_small: "终端太小（需要至少 {cols} 列）"
+  theme:
+    bad_color: "看不懂的颜色 {value}（可写 #RRGGBB、颜色名或 0–255）"
+    no_slot: "没有这种颜色：{key}"

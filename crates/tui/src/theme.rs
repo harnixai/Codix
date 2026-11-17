@@ -70,7 +70,7 @@ impl Theme {
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         let c: Color = value
             .parse()
-            .map_err(|_| format!("看不懂的颜色 {value:?}（可写 #RRGGBB、颜色名或 0–255）"))?;
+            .map_err(|_| i18n::t!("tui.theme.bad_color", value = format!("{value:?}")))?;
         let slot = match key {
             "accent" => &mut self.accent,
             "accent_fg" => &mut self.accent_fg,
@@ -89,7 +89,7 @@ impl Theme {
             "code" => &mut self.code,
             "link" => &mut self.link,
             "user_bg" => &mut self.user_bg,
-            _ => return Err(format!("没有这种颜色：{key}")),
+            _ => return Err(i18n::t!("tui.theme.no_slot", key = key)),
         };
         *slot = c;
         Ok(())

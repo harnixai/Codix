@@ -1,0 +1,29 @@
+# Codix configuration. Delete this file and it is regenerated with defaults on next start.
+# Models, providers and permissions are Agix's (settings.json in the same directory); only Codix's own settings live here.
+
+ui:
+  # UI language: zh, en, or auto (follow the LANG environment variable). CODIX_LANG overrides it temporarily.
+  # Your own language files go in ~/.codix/locales/<lang>/*.yaml, written like the zh ones (see crates/i18n/locales).
+  language: en
+  # Size (columns x rows) to ask the terminal for at startup; if it does not respond the actual size is used. Write off to not ask.
+  initial_size: 160x45
+  # Percentage of the width the left pane (chat) takes on wide screens, 40-75.
+  ratio: 60
+  # How many lines of a tool result to show in brief mode; the rest is folded (Ctrl+O shows all).
+  compact_tool_lines: 3
+  # Syntax highlighting theme for code blocks. Options: base16-ocean.dark, base16-eighties.dark, base16-mocha.dark,
+  # base16-ocean.light, InspiredGitHub, Solarized (dark), Solarized (light)
+  syntax_theme: base16-ocean.dark
+  theme:
+    # Preset: claude (orange) or aqua.
+    preset: claude
+    # Override single colors on top of the preset: #RRGGBB, a color name (red, gray, ...) or a 0-255 terminal color number.
+    # Available: accent accent_fg bar_bg bar_fg border border_focus dim selected_bg
+    # selected_fg ok warn error add del code link user_bg
+    colors: {}
+    #   accent: "#D97757"
+    #   border: "238"
+
+instance:
+  # How long idle before auto-detaching and releasing the instance: 30m, 2h, 0 (never).
+  idle_timeout: 30m
