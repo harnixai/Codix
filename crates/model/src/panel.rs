@@ -236,10 +236,10 @@ impl State {
         let open = self.panel_open();
         let title = self.panel_title(&kind);
         let focused = self.ui.focus == crate::state::Focus::Panel;
-        // 标题靠右；收放的快捷键在下沿右边，收起时只剩一条线，就放在这条线的左边。
+        // 标题靠右；收放的快捷键在下沿右边。收起时只剩一条线，快捷键（灰）就跟在标题右边。
         if !open || height < 3 {
-            let hint = Line::toned(i18n::t!("panel.expand").trim().to_string(), Tone::Dim);
-            return vec![rule(Some(hint), Some(title), width, focused)];
+            let right = title.push(format!("  {}", i18n::t!("panel.expand").trim()), Tone::Dim);
+            return vec![rule(None, Some(right), width, focused)];
         }
         let mut out = vec![rule(None, Some(title), width, focused)];
         let room = height - 2;

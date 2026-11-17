@@ -69,7 +69,7 @@ async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
     assert!(h.panel().is_empty(), "Ctrl+T 收起");
     let text = h.text();
     assert!(
-        text.contains("─ Ctrl+T 展开 ─") && text.contains("─ 流程设计：需求到上线 ─ │"),
+        text.contains("─ 流程设计：需求到上线  Ctrl+T 展开 ─ │"),
         "收起后标题线还在\n{text}"
     );
     h.keys("Ctrl+T").await;
