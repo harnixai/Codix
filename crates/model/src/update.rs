@@ -245,7 +245,7 @@ fn update_confirm(s: &mut State, msg: Msg) -> Vec<Effect> {
         return match msg {
             Msg::Action(Action::Yes | Action::Confirm) => confirmed(s, c),
             Msg::Action(_) | Msg::Text(_) => {
-                s.notice("已放弃", false);
+                s.notice(i18n::t!("update.discarded"), false);
                 vec![]
             }
             other => {
@@ -351,7 +351,7 @@ fn idle_and_heartbeat(s: &mut State) -> Vec<Effect> {
             s.ui.idle_warned = true;
             let left = (timeout - idle).div_ceil(60_000);
             s.ui.notice = Some(Notice {
-                text: format!("{left} 分钟后因空闲脱离（有任何输入就不会）"),
+                text: i18n::t!("update.idle_warning", left = left),
                 error: false,
                 until_ms: s.ui.last_input_ms + timeout,
             });
@@ -377,7 +377,7 @@ fn exit_choice(s: &mut State, c: usize) -> Vec<Effect> {
         (0, _) | (1, None) => vec![Effect::Quit { detach: true }],
         (1, Some(name)) => {
             s.ui.quitting = true;
-            s.notice(format!("正在停止实例 {name} …"), false);
+            s.notice(i18n::t!("update.stopping_instance", name = name), false);
             vec![Effect::Instances(InstOp::Stop { name })]
         }
         _ => vec![],
@@ -387,11 +387,11 @@ fn exit_choice(s: &mut State, c: usize) -> Vec<Effect> {
 fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
     match c {
         Confirm::ForceAttach(name) => {
-            set_picker_message(s, format!("正在强制接入 {name} …"));
+            set_picker_message(s, i18n::t!("update.forcing", name = name));
             vec![Effect::Instances(InstOp::Attach { name, force: true })]
         }
         Confirm::StopInstance(name) => {
-            set_picker_message(s, format!("正在停止 {name} …"));
+            set_picker_message(s, i18n::t!("update.stopping", name = name));
             if s.ui.screen == Screen::Workbench {
                 s.ui.quitting = true;
             }
@@ -414,7 +414,7 @@ fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
                 run,
                 op: port::RunOp::Force {
                     station,
-                    reason: "在 Codix 里手动强制放行".into(),
+                    reason: i18n::t!("update.force_reason"),
                 },
             },
         )],
@@ -475,14 +475,14 @@ fn picker_action(s: &mut State, a: Action) -> Vec<Effect> {
                     s.ui.confirm = Some(Confirm::ForceAttach(i.name.0));
                 }
                 port::InstanceState::Running => {
-                    p.message = Some(format!("正在接入 {} …", i.name));
+                    p.message = Some(i18n::t!("update.attaching", name = i.name));
                     return vec![Effect::Instances(InstOp::Attach {
                         name: i.name.0,
                         force: false,
                     })];
                 }
                 _ => {
-                    p.message = Some(format!("正在启动 {} …", i.name));
+                    p.message = Some(i18n::t!("update.starting", name = i.name));
                     return vec![Effect::Instances(InstOp::Start { name: i.name.0 })];
                 }
             },
@@ -534,7 +534,7 @@ fn picker_mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
 }
 
 fn create(s: &mut State) -> Vec<Effect> {
-    set_picker_message(s, "正在新建实例 …".into());
+    set_picker_message(s, i18n::t!("update.creating"));
     vec![Effect::Instances(InstOp::Create {
         name: None,
         project: None,
@@ -589,7 +589,7 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
         Ok(InstOk::Stopped) if s.ui.quitting => vec![Effect::Quit { detach: false }],
         Ok(InstOk::Stopped) => {
             if matches!(s.ui.screen, Screen::Instances(_)) {
-                set_picker_message(s, "已停止".into());
+                set_picker_message(s, i18n::t!("update.stopped"));
                 vec![Effect::Instances(InstOp::List)]
             } else {
                 vec![]
@@ -597,10 +597,11 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
         }
         Err(e) => {
             let text = match (&op, &e) {
-                (InstOp::Attach { name, .. }, PortError::Occupied { holder, idle_ms }) => format!(
-                    "{name} 已被 {} 接入（空闲 {}）· f 强制接入",
-                    holder.label(),
-                    crate::view::fmt_duration(*idle_ms)
+                (InstOp::Attach { name, .. }, PortError::Occupied { holder, idle_ms }) => i18n::t!(
+                    "update.occupied",
+                    name = name,
+                    holder = holder.label(),
+                    idle = crate::view::fmt_duration(*idle_ms)
                 ),
                 _ => e.to_string(),
             };
@@ -718,7 +719,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             if s.panel_open() {
                 s.ui.focus = Focus::Panel;
             } else {
-                s.notice("这里没有打开的面板 · Ctrl+T 打开", false);
+                s.notice(i18n::t!("update.no_panel"), false);
             }
         }
         Action::TabSessions => switch_tab(s, Tab::Sessions),
@@ -783,9 +784,9 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
         Action::MouseToggle => {
             s.ui.mouse_captured = !s.ui.mouse_captured;
             let text = if s.ui.mouse_captured {
-                "鼠标：Codix"
+                i18n::t!("update.mouse_codix")
             } else {
-                "鼠标：终端（可以用终端自己的方式选择、复制）"
+                i18n::t!("update.mouse_terminal")
             };
             s.notice(text, false);
             return vec![Effect::SetMouseCapture(s.ui.mouse_captured)];
@@ -806,7 +807,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 .keymap
                 .key_for(keys::Context::Global, Action::Interrupt)
                 .unwrap_or_default();
-            s.notice(format!("再按一次 {key} 退出"), false);
+            s.notice(i18n::t!("update.press_again", key = key), false);
         }
         Action::Detach | Action::Exit => s.ui.overlay = Some(Overlay::Exit { selected: 0 }),
         Action::Redraw => return vec![Effect::Redraw],
@@ -1073,7 +1074,7 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
             s.ui.loading.clear();
             out.extend(crate::chat_update::chat_event(s, &e));
             s.domain.conn = Some(port::ConnState::Resynced);
-            s.notice("已重新连上，正在刷新", false);
+            s.notice(i18n::t!("update.reconnected"), false);
             return out;
         }
         _ => {}
@@ -1118,7 +1119,7 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
         Event::Connection(c) => {
             d.conn = Some(c);
             if c == ConnState::Lost {
-                s.notice("与实例断开", true);
+                s.notice(i18n::t!("update.disconnected"), true);
             }
         }
         Event::SessionUpserted(sum) => match d.sessions.iter_mut().find(|x| x.id == sum.id) {

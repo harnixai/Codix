@@ -244,7 +244,7 @@ impl Conversation {
                 attempt, reason, ..
             } => {
                 self.push(BlockKind::Notice {
-                    text: format!("模型调用失败，正在重试（第 {attempt} 次）：{reason}"),
+                    text: i18n::t!("chat.model_retry", attempt = attempt, reason = reason),
                     tone: Tone::Warn,
                 });
             }
@@ -349,7 +349,7 @@ impl Conversation {
                 self.running = false;
                 if stop == StopReason::Cancelled {
                     self.push(BlockKind::Notice {
-                        text: "已中断 · 你想让它怎么做？".into(),
+                        text: i18n::t!("chat.interrupted"),
                         tone: Tone::Warn,
                     });
                 }
@@ -380,12 +380,12 @@ impl Conversation {
                 self.prompts.retain(|p| p.id != id);
                 if let (true, Resolution::Withdrawn { reason }) = (had, resolution) {
                     let why = match reason.as_str() {
-                        "timed_out" => "超时",
-                        "cancelled" => "这一轮已结束",
-                        "policy" => "流程按策略代答",
-                        other => other,
+                        "timed_out" => i18n::t!("chat.withdrawn_timed_out"),
+                        "cancelled" => i18n::t!("chat.withdrawn_cancelled"),
+                        "policy" => i18n::t!("chat.withdrawn_policy"),
+                        other => other.to_string(),
                     };
-                    return Some(format!("提问已撤回：{why}"));
+                    return Some(i18n::t!("chat.withdrawn", why = why));
                 }
             }
             Event::GoalChanged { goal, .. } => self.goal = goal,
@@ -410,10 +410,10 @@ impl Conversation {
             } => {
                 self.phase = Phase::Thinking;
                 self.push(BlockKind::Notice {
-                    text: format!(
-                        "上下文已压缩：{} → {} tokens",
-                        fmt_k(tokens_before),
-                        fmt_k(tokens_after)
+                    text: i18n::t!(
+                        "chat.compacted",
+                        before = fmt_k(tokens_before),
+                        after = fmt_k(tokens_after)
                     ),
                     tone: Tone::Dim,
                 });
@@ -552,7 +552,7 @@ pub struct RenderOpts {
 }
 
 fn more(n: usize) -> Line {
-    Line::toned(format!("     … +{n} 行 (ctrl+o 展开)"), Tone::Dim)
+    Line::toned(i18n::t!("chat.more_lines", n = n), Tone::Dim)
 }
 
 /// 一个块在某宽度下的全部行（交互 §4.2 的画法，照 Claude Code）。
@@ -580,10 +580,10 @@ fn render(
             );
             if pending.is_some() {
                 let last = ls.pop().unwrap_or_default();
-                ls.push(last.push(" ⧗ 待送达", Tone::Dim));
+                ls.push(last.push(i18n::t!("chat.pending"), Tone::Dim));
             } else if *steer {
                 let last = ls.pop().unwrap_or_default();
-                ls.push(last.push(" ↳ 已插话", Tone::Dim));
+                ls.push(last.push(i18n::t!("chat.steered"), Tone::Dim));
             }
             ls.into_iter().map(|l| l.with_tone(Tone::UserMsg)).collect()
         }
@@ -596,9 +596,9 @@ fn render(
         ),
         BlockKind::Thinking { text, secs, .. } => {
             let head = match secs {
-                None => "✻ 思考中…".to_string(),
-                Some(s) if full => format!("✻ 思考了 {s}s"),
-                Some(s) => format!("✻ 思考了 {s}s (ctrl+o 展开)"),
+                None => i18n::t!("chat.thinking"),
+                Some(s) if full => i18n::t!("chat.thought_for", s = s),
+                Some(s) => i18n::t!("chat.thought_for_expand", s = s),
             };
             let mut ls = vec![Line::toned(head, Tone::Dim)];
             if full {
@@ -654,7 +654,7 @@ fn render(
                 return ls;
             }
             let Some(content) = content else {
-                let p = progress.clone().unwrap_or_else(|| "运行中…".into());
+                let p = progress.clone().unwrap_or_else(|| i18n::t!("chat.running"));
                 ls.extend(wrap_text(&p, Tone::Dim, w, &lead(), &cont()));
                 return ls;
             };
@@ -669,14 +669,14 @@ fn render(
                         .lines()
                         .filter(|l| l.starts_with('-') && !l.starts_with("---"))
                         .count();
-                    let verb = match ch.kind {
-                        port::FileChangeKind::Created => "新建了",
-                        port::FileChangeKind::Modified => "更新了",
-                        port::FileChangeKind::Deleted => "删除了",
+                    let key = match ch.kind {
+                        port::FileChangeKind::Created => "chat.file_created",
+                        port::FileChangeKind::Modified => "chat.file_modified",
+                        port::FileChangeKind::Deleted => "chat.file_deleted",
                     };
                     let first = if i == 0 { lead() } else { cont() };
                     ls.extend(wrap_text(
-                        &format!("{verb} {}，+{add} −{del}", ch.path),
+                        &i18n::tr_args(key, &[("path", &ch.path), ("add", &add), ("del", &del)]),
                         Tone::Normal,
                         w,
                         &first,
@@ -715,7 +715,7 @@ fn render(
             let lines: Vec<&str> = content.trim_end().lines().collect();
             if name == "Read" && !full {
                 ls.extend(wrap_text(
-                    &format!("读取了 {} 行", lines.len()),
+                    &i18n::t!("chat.read_lines", n = lines.len()),
                     Tone::Dim,
                     w,
                     &lead(),
@@ -724,7 +724,7 @@ fn render(
                 return ls;
             }
             if lines.is_empty() {
-                ls.push(lead().push("（无输出）", Tone::Dim));
+                ls.push(lead().push(i18n::t!("chat.no_output"), Tone::Dim));
                 return ls;
             }
             let shown = if full {

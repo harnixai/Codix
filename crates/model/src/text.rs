@@ -131,7 +131,11 @@ pub(crate) fn markdown_with(
         let trimmed = line.trim_start();
         if let Some(lang) = trimmed.strip_prefix("```") {
             let lang = lang.trim();
-            let label = if lang.is_empty() { "代码" } else { lang };
+            let label = if lang.is_empty() {
+                i18n::t!("text.code")
+            } else {
+                lang.to_string()
+            };
             out.push(lead(&out).push(format!("┌─ {label}"), Tone::Dim));
             let mut body = vec![];
             i += 1;

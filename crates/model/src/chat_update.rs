@@ -15,17 +15,8 @@ const ESC_ARM_MS: u64 = 800;
 const DETACH_ARM_MS: u64 = 800;
 
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
-const LOCAL: &[(&str, &str)] = &[
-    ("help", "帮助"),
-    ("new", "新建会话"),
-    ("sessions", "会话列表"),
-    ("model", "切换模型"),
-    ("goal", "设定 goal"),
-    ("btw", "侧问"),
-    ("doctor", "诊断"),
-    ("quit", "脱离（实例继续运行）"),
-    ("exit", "脱离（实例继续运行）"),
-    ("stop", "停止实例"),
+const LOCAL: &[&str] = &[
+    "help", "new", "sessions", "model", "goal", "btw", "doctor", "quit", "exit", "stop",
 ];
 
 impl State {
@@ -38,9 +29,9 @@ impl State {
         let prefix = &c.text[1..];
         let mut out: Vec<SlashCommand> = LOCAL
             .iter()
-            .map(|(n, d)| SlashCommand {
+            .map(|n| SlashCommand {
                 name: n.to_string(),
-                description: d.to_string(),
+                description: i18n::tr(&format!("chat_update.cmd_{n}")),
                 source: "codix".into(),
             })
             .collect();
@@ -311,7 +302,7 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             } else if s.ui.esc_armed_ms.is_some_and(|t| now - t <= ESC_ARM_MS) {
                 s.ui.esc_armed_ms = None;
                 if s.ui.composer.is_empty() {
-                    s.notice("回滚到上一条消息：阶段 3 接入 session.rewind 后可用", false);
+                    s.notice(i18n::t!("chat_update.rewind_todo"), false);
                 } else {
                     let text = s.ui.composer.text.clone();
                     s.ui.composer.history.push(text);
@@ -344,7 +335,7 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
                 s.ui.overlay = Some(Overlay::Exit { selected: 0 });
             } else {
                 s.ui.detach_armed_ms = Some(now);
-                s.notice("再按一次 Ctrl+D 退出", false);
+                s.notice(i18n::t!("chat_update.ctrl_d_again"), false);
             }
         }
         Action::NextAttention if s.ask_visible() => {
@@ -367,13 +358,13 @@ fn interrupt(s: &mut State) -> Vec<Effect> {
 pub(crate) fn ask_options(kind: &PromptKind) -> Vec<String> {
     match kind {
         PromptKind::Permission { summary, .. } => vec![
-            "是".into(),
-            format!("是，且不再询问：{summary}"),
-            "否".into(),
+            i18n::t!("chat_update.ask_yes"),
+            i18n::t!("chat_update.ask_yes_always", summary = summary),
+            i18n::t!("chat_update.ask_no"),
         ],
         PromptKind::Question { options, .. } => {
             let mut v = options.clone();
-            v.push("自己写…".into());
+            v.push(i18n::t!("chat_update.ask_other"));
             v
         }
     }
@@ -570,7 +561,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             vec![]
         }
         "model" | "goal" | "btw" if session.is_none() => {
-            s.notice("先打开或新建一个会话", true);
+            s.notice(i18n::t!("chat_update.need_session"), true);
             vec![]
         }
         "model" if arg.is_empty() => {
@@ -578,7 +569,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
                 .conv()
                 .map(|c| c.summary.provenance.model.clone())
                 .unwrap_or_default();
-            s.notice(format!("当前模型：{m}（/model <名字> 切换）"), false);
+            s.notice(i18n::t!("chat_update.current_model", m = m), false);
             vec![]
         }
         "model" => vec![s.call(
@@ -609,7 +600,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             },
         )],
         "doctor" => {
-            s.notice("诊断：阶段 3 接入 daemon.doctor 后可用", false);
+            s.notice(i18n::t!("chat_update.doctor_todo"), false);
             vec![]
         }
         _ => return None,
@@ -631,7 +622,7 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
             }
             s.ui.composer.clear();
             s.ui.composer.insert_str(&joined);
-            s.notice("插话没赶上这一轮，已放回输入框", false);
+            s.notice(i18n::t!("chat_update.steer_missed"), false);
         }
         return vec![];
     }
