@@ -23,4 +23,9 @@ codix stop <名字>
 codix --mock                        # mock 演示 demo：不起实例、不调模型
 ```
 
+想直接看到各个部件有数据的样子：`scripts/demo.sh` 生成 `demo/`（不入库）——独立的
+`CODIX_HOME`、一个示例项目，凭据取 `../Agix/.env`，再用真实模型跑几段对话、设一个 goal、
+建两个作业。之后 `demo/live.sh` 打开真实实例，`demo/mock.sh` 打开 mock 演示，`demo/stop.sh` 停掉，
+`scripts/demo.sh reset` 从头再来。
+
 流程还没接入（等 Harnix 拆出流程内核），流程标签会说明这一点。

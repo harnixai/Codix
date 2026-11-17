@@ -25,3 +25,6 @@ archive/
 
 *.log
 .claude/worktrees/
+
+# 演示环境：scripts/demo.sh 生成，带凭据
+/demo/

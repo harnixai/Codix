@@ -1107,6 +1107,9 @@ impl Hub {
                 objective,
                 max_rounds,
             } => {
+                // goal 的每一轮都是引擎自己开的，没有"第一句话"：还没名字就用目标当名字。
+                let first: String = objective.chars().take(40).collect();
+                self.retitle(&session.0, first.trim(), Titler::FirstText);
                 let mut p = json!({"session_id": session.0, "objective": objective});
                 if let Some(m) = max_rounds {
                     p["max_rounds"] = json!(m);

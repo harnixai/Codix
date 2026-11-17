@@ -616,9 +616,19 @@ fn pad(k: &str, w: usize) -> String {
     format!("{}{k}{sep}", " ".repeat(w.saturating_sub(display_width(k))))
 }
 
-/// `11-16 09:00`（UTC）。
+/// 时刻显示用的本地时区偏移（秒）。和语言一样是进程级的：启动时设一次（`codix` 取本机时区），
+/// 不设是 UTC，所以测试与快照照旧确定。
+static UTC_OFFSET_S: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+pub fn set_utc_offset(seconds: i32) {
+    UTC_OFFSET_S.store(seconds, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `11-16 09:00`，按 [`set_utc_offset`] 设的本地时区。
 pub(crate) fn fmt_clock(ms: u64) -> String {
-    let secs = ms / 1000;
+    let off = UTC_OFFSET_S.load(std::sync::atomic::Ordering::Relaxed) as i64;
+    let secs = (ms / 1000) as i64 + off;
+    let secs = secs.max(0) as u64;
     let days = (secs / 86_400) as i64;
     let (h, m) = (secs % 86_400 / 3600, secs % 3600 / 60);
     // Howard Hinnant 的 civil_from_days。

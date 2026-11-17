@@ -28,6 +28,7 @@ pub use follow::Attention;
 pub use highlight::theme_names;
 pub use jobs::JobLower;
 pub use mouse::{Mouse, MouseButton, MouseKind};
+pub use panel::set_utc_offset;
 pub use sessions::{SessRow, TreeRow};
 pub use settings::Settings;
 pub use state::{

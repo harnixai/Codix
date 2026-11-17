@@ -103,6 +103,8 @@ async fn main() -> Result<()> {
         Some(&config::home().join("locales")),
     ));
     let cli = Cli::from_arg_matches(&localized_command().get_matches())?;
+    // 作业的"下次触发"、触发记录的时刻按本地时间显示；调度器本身就按本地时区算。
+    model::set_utc_offset(chrono::Local::now().offset().local_minus_utc());
     if let Some(Cmd::Host { name, project }) = cli.command {
         return host_main::run(name, project).await;
     }
