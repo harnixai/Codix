@@ -206,7 +206,12 @@ async fn a_run_goes_from_start_to_finish() {
     else {
         panic!("list_runs")
     };
-    assert!(runs.iter().any(|r| r.id == id));
+    let listed = runs.iter().find(|r| r.id == id).expect("运行在列表里");
+    assert_eq!(
+        (listed.stations_done, listed.stations_total),
+        (1, 1),
+        "列表里的站数从运行记录算"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

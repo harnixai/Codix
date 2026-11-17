@@ -320,14 +320,17 @@ impl FlowPort for Flows {
         match cmd {
             Command::ListFlows => Ok(Reply::Flows(self.summaries().await)),
             Command::GetFlow { name } => Ok(Reply::Flow(Box::new(self.detail(&name).await?))),
-            Command::ListRuns { flow } => Ok(Reply::Runs(
-                self.runs(Some(&flow), None)
-                    .await
-                    .map_err(flow_err)?
-                    .iter()
-                    .map(map::run_summary)
-                    .collect(),
-            )),
+            Command::ListRuns { flow } => {
+                // 库的列表摘要不带各站，站数要从运行记录算；读不到记录的退回列表摘要。
+                let mut out = vec![];
+                for s in self.runs(Some(&flow), None).await.map_err(flow_err)? {
+                    out.push(match self.view(&s.id).await {
+                        Ok(v) => v.summary,
+                        Err(_) => map::run_summary(&s),
+                    });
+                }
+                Ok(Reply::Runs(out))
+            }
             Command::GetRun { run } => Ok(Reply::Run(Box::new(self.view(&run.0).await?))),
             Command::StartRun {
                 flow,

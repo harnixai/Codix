@@ -159,7 +159,7 @@ fn summary_of(rec: &RunRecord, phase: &Phase, now: u64) -> port::RunSummary {
     }
 }
 
-/// 列表里的一行：只有库的摘要时（没有各站），站数取 0。
+/// 读不到运行记录时的退路：库的列表摘要没有各站，站数取 0。
 pub(crate) fn run_summary(s: &harnix_flow::RunSummary) -> port::RunSummary {
     port::RunSummary {
         id: RunId(s.id.clone()),
