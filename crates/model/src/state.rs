@@ -54,6 +54,8 @@ impl Tab {
 pub enum Focus {
     Composer,
     Transcript,
+    /// 对话区顶部面板（只为滚动它）。
+    Panel,
     SideUpper,
     SideLower,
 }
@@ -207,6 +209,8 @@ pub struct Ui {
     pub panel: std::collections::HashMap<SessionId, bool>,
     /// 面板滚到第几行，连同当时的上下文；上下文一换就回到顶上。
     pub panel_scroll: (String, usize),
+    /// 输入框手动滚到的位置，连同当时的（光标、文字长度）：一编辑就回到跟着光标走。
+    pub composer_scroll: Option<((usize, usize), usize)>,
     /// Shift+Tab 轮换的权限模式。
     pub permission: PermissionMode,
     /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
@@ -330,6 +334,7 @@ impl State {
                 detail: false,
                 panel: Default::default(),
                 panel_scroll: Default::default(),
+                composer_scroll: None,
                 permission: PermissionMode::Default,
                 ask_active: false,
                 ask_selected: 0,
@@ -389,6 +394,7 @@ impl State {
             }
             Focus::Composer => vec![Context::Composer],
             Focus::Transcript => vec![Context::Transcript],
+            Focus::Panel => vec![Context::Panel],
             Focus::SideUpper | Focus::SideLower => vec![self.ui.tab.context()],
         }
     }

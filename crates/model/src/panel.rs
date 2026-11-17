@@ -288,6 +288,7 @@ impl State {
         }
         let open = self.panel_open();
         let title = self.panel_title(&kind, self.domain.convs.get(&id));
+        let focused = self.ui.focus == crate::state::Focus::Panel;
         let mut out = vec![rule(
             Some(title),
             if open {
@@ -296,6 +297,7 @@ impl State {
                 " Ctrl+T 展开 "
             },
             width,
+            focused,
         )];
         if !open || height < 3 {
             return out;
@@ -316,7 +318,7 @@ impl State {
         } else {
             String::new()
         };
-        out.push(rule(None, &more, width));
+        out.push(rule(None, &more, width, focused));
         out
     }
 }
@@ -324,13 +326,14 @@ impl State {
 /// 面板内容最多几行；再多就滚动。
 const PANEL_MAX: usize = 10;
 
-/// `─ 标题 ─────── 右边 ─`：标题太长先截标题，右边的快捷键总在。
-fn rule(title: Option<Line>, right: &str, width: usize) -> Line {
+/// `─ 标题 ─────── 右边 ─`：标题太长先截标题，右边的快捷键总在。面板有焦点时线是亮的。
+fn rule(title: Option<Line>, right: &str, width: usize, focused: bool) -> Line {
+    let line_tone = if focused { Tone::Strong } else { Tone::Dim };
     let rw = display_width(right);
     let mut l = Line::default();
     let mut used = 0;
     if let Some(t) = title {
-        l = l.push("─ ", Tone::Dim);
+        l = l.push("─ ", line_tone);
         used = 2;
         let room = width.saturating_sub(used + rw + 4);
         let t = if t.width() > room {
@@ -342,11 +345,11 @@ fn rule(title: Option<Line>, right: &str, width: usize) -> Line {
         for sp in t.spans {
             l = l.push(sp.text, sp.tone);
         }
-        l = l.push(" ", Tone::Dim);
+        l = l.push(" ", line_tone);
     }
-    l.push("─".repeat(width.saturating_sub(used + rw + 1)), Tone::Dim)
+    l.push("─".repeat(width.saturating_sub(used + rw + 1)), line_tone)
         .push(right, Tone::Dim)
-        .push("─", Tone::Dim)
+        .push("─", line_tone)
 }
 
 fn goal_mark(p: GoalPhase) -> marks::Mark {

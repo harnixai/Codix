@@ -30,8 +30,8 @@ pub use ids::{
 pub use instance::{Attach, ClientInfo, InstanceInfo, InstanceState, NewInstance};
 pub use job::{Job, JobEntry, JobKind, JobOutcome, JobTarget};
 pub use session::{
-    Answer, FileChange, FileChangeKind, Goal, GoalPhase, HistoryItem, Origin, Prompt, PromptKind,
-    PromptSource, Provenance, Resolution, SessionState, SessionSummary, StopReason, Todo,
-    TodoStatus,
+    Answer, EditorOf, FileChange, FileChangeKind, Goal, GoalPhase, HistoryItem, Origin, Prompt,
+    PromptKind, PromptSource, Provenance, Resolution, SessionState, SessionSummary, StopReason,
+    Todo, TodoStatus,
 };
 pub use task::{Task, TaskKind, TaskStatus};

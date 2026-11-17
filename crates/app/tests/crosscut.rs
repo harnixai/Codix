@@ -224,3 +224,76 @@ async fn the_one_demo_plays_through_every_tab() {
     h.advance(8_000).await;
     assert!(h.transcript().contains("看看效果"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn editor_sessions_never_leak_into_the_sessions_list() {
+    let mut h = Harness::new("default", SIZE).await;
+    h.keys("F3").await;
+    h.pick_upper(0).await;
+    h.keys("F4").await;
+    h.pick_upper(0).await;
+    h.keys("n").await;
+    h.settle().await;
+    h.keys("F2").await;
+    let rows = h.core.state.session_rows();
+    for r in &rows {
+        if let Some(id) = r.session() {
+            let x = h
+                .core
+                .state
+                .domain
+                .sessions
+                .iter()
+                .find(|x| &x.id == id)
+                .unwrap();
+            assert!(
+                matches!(
+                    x.provenance.origin,
+                    port::Origin::User | port::Origin::Fork { .. }
+                ),
+                "{} 不该在会话列表里",
+                x.title
+            );
+        }
+    }
+    assert!(
+        h.text().contains("╭─ 作业 › 新作业"),
+        "作业的编辑会话，面包屑从「作业」起"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn tabs_with_waiting_items_get_a_mark_not_the_selected_color() {
+    let mut h = Harness::new("default", SIZE).await;
+    h.keys("F3").await;
+    h.settle().await;
+    h.keys("F2").await;
+    let line = h.text().lines().nth(1).unwrap().to_string();
+    assert!(line.contains(" 流程 ◐ "), "有待处理的标签后面跟 ◐\n{line}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn scroll_keys_act_on_the_focused_area() {
+    let mut h = Harness::new("demo", Size::new(160, 30)).await;
+    h.open_session("Codix 展示").await;
+    for i in 0..20 {
+        h.type_str(&format!("第 {i} 行")).await;
+        h.keys("Shift+Enter").await;
+    }
+    let (len, rows) = h.core.state.composer_overflow().expect("输入超出了框");
+    assert!(len > rows);
+    assert!(h.text().contains("第 19 行"), "缺省跟着光标走");
+    h.keys("PageUp PageUp PageUp").await;
+    let text = h.text();
+    assert!(
+        text.contains("第 0 行") && !text.contains("第 19 行"),
+        "输入超出时滚输入区\n{text}"
+    );
+    h.type_str("x").await;
+    assert!(h.text().contains("第 19 行"), "一编辑就回到光标处");
+    h.keys("Ctrl+U").await;
+    assert!(h.core.state.composer_overflow().is_none());
+    assert!(h.core.state.conv().unwrap().follow);
+    h.keys("Shift+Up Shift+Up").await;
+    assert!(!h.core.state.conv().unwrap().follow, "输入没超出时滚转录");
+}

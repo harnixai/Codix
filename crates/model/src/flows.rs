@@ -235,9 +235,16 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 let (g, tone) = sum
                     .map(|x| crate::sessions::state_glyph(x.state))
                     .unwrap_or(("○", Tone::Dim));
+                let end = v.summary.ended_ms.unwrap_or(s.ui.now_ms);
                 crate::sessions::split_line(
                     Line::toned(format!("  {g} "), tone).push("主 Agent", Tone::Strong),
-                    Line::toned(fmt_k(sum.map_or(0, |x| x.usage.total())), Tone::Dim),
+                    Line::toned(
+                        cost(
+                            end.saturating_sub(v.summary.started_ms),
+                            sum.map(|x| &x.usage),
+                        ),
+                        Tone::Dim,
+                    ),
                     width,
                 )
             }
@@ -264,19 +271,13 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 if !note.is_empty() {
                     left = left.push(format!("  {note}"), Tone::Dim);
                 }
-                let mut right = Line::toned(station_text(st.status), m.text_tone());
+                // 状态不写字：左边的符号与颜色已经说了。未达标的原因例外，那是信息。
+                let mut right = Line::default();
                 if let Some(u) = &st.unmet {
-                    right = Line::toned(format!("未达标：{u}"), Tone::Error);
+                    right = Line::toned(format!("{u}  "), Tone::Error);
                 }
                 if st.elapsed_ms > 0 {
-                    right = right.push(
-                        format!(
-                            "  {}  {}",
-                            fmt_elapsed(st.elapsed_ms),
-                            fmt_k(st.usage.total())
-                        ),
-                        Tone::Dim,
-                    );
+                    right = right.push(cost(st.elapsed_ms, Some(&st.usage)), Tone::Dim);
                 }
                 crate::sessions::split_line(left, right, width)
             }
@@ -298,8 +299,17 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                         .push(format!("{icon} "), itone)
                         .push(t.label.clone(), Tone::Normal),
                     Line::toned(
-                        crate::sessions::status_text(t.status),
-                        crate::marks::task(t.status).text_tone(),
+                        cost(
+                            0,
+                            t.session.as_ref().and_then(|id| {
+                                s.domain
+                                    .sessions
+                                    .iter()
+                                    .find(|x| &x.id == id)
+                                    .map(|x| &x.usage)
+                            }),
+                        ),
+                        Tone::Dim,
                     ),
                     width,
                 )
@@ -307,6 +317,22 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
             FlowLower::DefStation(_) => Line::default(),
         })
         .collect()
+}
+
+/// 用时与 token：`9m40s  入 30.1k 出 7.6k`（缓存不单列）。没有的项不写。
+fn cost(elapsed_ms: u64, usage: Option<&port::Usage>) -> String {
+    let mut out = vec![];
+    if elapsed_ms > 0 {
+        out.push(fmt_elapsed(elapsed_ms));
+    }
+    if let Some(u) = usage {
+        if u.input + u.output > 0 {
+            out.push(format!("入 {} 出 {}", fmt_k(u.input), fmt_k(u.output)));
+        } else if u.total() > 0 {
+            out.push(fmt_k(u.total()));
+        }
+    }
+    out.join("  ")
 }
 
 /// 汇合的站标出它在等谁：`← 等 代码评审、文档评审`。

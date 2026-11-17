@@ -166,10 +166,15 @@ pub struct TabLabel {
 }
 
 impl TabLabel {
-    /// 标签头上显示的文字：` 会话 `。不带数字：有待处理时整个标签改成提醒色。
+    /// 标签头上显示的文字：` 会话 `，有待处理时后面跟一个 `◐`（不带数字）。
+    /// 只有当前标签上主色：提醒色和主色太近，整个标签改提醒色会被看成"选中了"。
     /// layout 用它算宽度做命中测试。
     pub fn display(&self) -> String {
-        format!(" {} ", self.label)
+        if self.badge > 0 {
+            format!(" {} ◐ ", self.label)
+        } else {
+            format!(" {} ", self.label)
+        }
     }
 }
 

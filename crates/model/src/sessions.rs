@@ -197,7 +197,7 @@ pub(crate) fn status_text(t: TaskStatus) -> &'static str {
 
 pub(crate) fn origin_icon(o: &Origin) -> &'static str {
     match o {
-        Origin::User | Origin::SubAgent { .. } => "",
+        Origin::User | Origin::SubAgent { .. } | Origin::Editor { .. } => "",
         Origin::Job { .. } => "⏰",
         Origin::FlowStation { .. } => "⇶",
         Origin::Fork { .. } => "⑂",

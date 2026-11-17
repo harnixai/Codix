@@ -491,11 +491,16 @@ impl ScriptedBackend {
                     None => "新流程".to_string(),
                 };
                 let key = format!("flow:{}", flow.clone().unwrap_or_default());
+                let origin = port::Origin::Editor {
+                    of: port::EditorOf::Flow,
+                    name: title.trim_start_matches("编写流程：").to_string(),
+                };
                 Ok(Reply::Session(self.authoring_session(
                     &key,
                     &title,
                     "flow-author",
                     flow.is_some(),
+                    origin,
                 )))
             }
             OpenJobSession { job } => {
@@ -511,11 +516,16 @@ impl ScriptedBackend {
                     None => "新作业".to_string(),
                 };
                 let key = format!("job:{}", job.as_ref().map(|j| j.as_str()).unwrap_or(""));
+                let origin = port::Origin::Editor {
+                    of: port::EditorOf::Job,
+                    name: title.trim_start_matches("作业：").to_string(),
+                };
                 Ok(Reply::Session(self.authoring_session(
                     &key,
                     &title,
                     "jobs",
                     job.is_some(),
+                    origin,
                 )))
             }
             ListJobs => Ok(Reply::Jobs(
@@ -607,11 +617,12 @@ impl ScriptedBackend {
         title: &str,
         scene: &str,
         reuse: bool,
+        origin: port::Origin,
     ) -> SessionSummary {
         if reuse && let Some(s) = self.authoring.lock().unwrap().get(key) {
             return s.clone();
         }
-        let s = self.new_session(title, None, Some(scene.into()), None, port::Origin::User);
+        let s = self.new_session(title, None, Some(scene.into()), None, origin);
         self.emit_now(Event::SessionUpserted(s.clone()));
         if reuse {
             self.authoring

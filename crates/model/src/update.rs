@@ -639,8 +639,8 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
     }
     if let Some(Overlay::Text { scroll, .. } | Overlay::EventLog { scroll }) = &mut s.ui.overlay {
         match a {
-            Action::Up => *scroll = scroll.saturating_sub(1),
-            Action::Down => *scroll += 1,
+            Action::Up | Action::LineUp => *scroll = scroll.saturating_sub(1),
+            Action::Down | Action::LineDown => *scroll += 1,
             Action::PageUp => *scroll = scroll.saturating_sub(10),
             Action::PageDown => *scroll += 10,
             Action::Back | Action::EventLog | Action::Confirm => s.ui.overlay = None,
@@ -666,8 +666,8 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
     }
     if let Some(Overlay::Help { scroll }) = &mut s.ui.overlay {
         match a {
-            Action::Up => *scroll = scroll.saturating_sub(1),
-            Action::Down => *scroll += 1,
+            Action::Up | Action::LineUp => *scroll = scroll.saturating_sub(1),
+            Action::Down | Action::LineDown => *scroll += 1,
             Action::PageUp => *scroll = scroll.saturating_sub(10),
             Action::PageDown => *scroll += 10,
             Action::Back | Action::Help => s.ui.overlay = None,
@@ -710,8 +710,17 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             s.ui.focus = Focus::SideUpper;
         }
         Action::TogglePanel => s.toggle_panel(),
-        Action::PanelUp => s.scroll_panel(-1),
-        Action::PanelDown => s.scroll_panel(1),
+        Action::LineUp | Action::LineDown => {
+            let d = if a == Action::LineUp { -1 } else { 1 };
+            scroll_focused(s, d);
+        }
+        Action::FocusPanel => {
+            if s.panel_open() {
+                s.ui.focus = Focus::Panel;
+            } else {
+                s.notice("这里没有打开的面板 · Ctrl+T 打开", false);
+            }
+        }
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
         Action::TabJobs => switch_tab(s, Tab::Jobs),
@@ -740,6 +749,14 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 Focus::SideUpper => Focus::SideLower,
                 _ => Focus::SideUpper,
             }
+        }
+        Action::PageUp | Action::PageDown if s.ui.focus == Focus::Panel => {
+            let room = s
+                .chat_regions()
+                .chat
+                .and_then(|c| c.panel)
+                .map_or(1, |p| p.h.saturating_sub(2).max(1)) as isize;
+            s.scroll_panel(if a == Action::PageUp { -room } else { room });
         }
         Action::Up | Action::Down | Action::PageUp | Action::PageDown if s.ui.focus.in_side() => {
             let delta: isize = match a {
@@ -825,6 +842,17 @@ fn fix_scroll(s: &mut State) {
     fit(s.ui.lower_mut(), side.lower.h as usize);
 }
 
+/// 滚动有焦点的那一块（交互 §7）：`lines` 是行数，正数向下。输入框里的字超出了框就滚它，
+/// 没超出就滚转录——边打字边往回翻对话最常见。
+pub(crate) fn scroll_focused(s: &mut State, lines: isize) {
+    match s.ui.focus {
+        Focus::Panel => s.scroll_panel(lines),
+        Focus::Composer if s.composer_overflow().is_some() => s.scroll_composer(lines),
+        Focus::Composer | Focus::Transcript => crate::chat_update::scroll(s, lines),
+        Focus::SideUpper | Focus::SideLower => move_selection(s, s.ui.focus, lines),
+    }
+}
+
 fn move_selection(s: &mut State, focus: Focus, delta: isize) {
     let len = match focus {
         Focus::SideUpper => s.upper_len(),
@@ -889,6 +917,10 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
                 }
             }
             if let Some(chat) = &r.chat {
+                if chat.panel.is_some_and(|p| p.contains(col, row)) && s.panel_open() {
+                    s.ui.focus = Focus::Panel;
+                    return vec![];
+                }
                 if chat.composer.contains(col, row) {
                     s.ui.focus = Focus::Composer;
                     if s.ask_visible() {

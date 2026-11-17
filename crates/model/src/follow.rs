@@ -46,6 +46,10 @@ pub(crate) fn after_update(s: &mut State) -> Vec<Effect> {
     if s.ui.screen != Screen::Workbench {
         return vec![];
     }
+    // 面板收起或换到没有面板的上下文，焦点回输入框。
+    if s.ui.focus == Focus::Panel && !s.panel_open() {
+        s.ui.focus = Focus::Composer;
+    }
     // 选中流程即展开它的运行；人收起过的同一个流程不再自动展开。先于取数据，好让运行列表
     // 在同一轮里就去取。
     if (s.ui.tab, s.ui.focus) == (Tab::Flows, Focus::SideUpper)

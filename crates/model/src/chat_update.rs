@@ -274,13 +274,12 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         Action::DeleteForward => c.delete(),
         Action::Up => c.up(),
         Action::Down => c.down(),
-        Action::PageUp => {
-            let h = s.transcript_height() as isize;
-            scroll(s, -h);
-        }
-        Action::PageDown => {
-            let h = s.transcript_height() as isize;
-            scroll(s, h);
+        Action::PageUp | Action::PageDown => {
+            let h = match s.composer_overflow() {
+                Some((_, rows)) => rows as isize,
+                None => s.transcript_height() as isize,
+            };
+            crate::update::scroll_focused(s, if a == Action::PageUp { -h } else { h });
         }
         Action::CycleMode => {
             s.ui.permission = match s.ui.permission {

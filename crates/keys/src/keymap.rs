@@ -10,6 +10,8 @@ pub enum Context {
     Global,
     Composer,
     Transcript,
+    /// 对话区顶部面板（有焦点时滚动它）。
+    Panel,
     Sessions,
     Flows,
     Jobs,
@@ -20,10 +22,11 @@ pub enum Context {
 }
 
 impl Context {
-    pub const ALL: [Context; 10] = [
+    pub const ALL: [Context; 11] = [
         Context::Global,
         Context::Composer,
         Context::Transcript,
+        Context::Panel,
         Context::Sessions,
         Context::Flows,
         Context::Jobs,
@@ -38,6 +41,7 @@ impl Context {
             Context::Global => "全局",
             Context::Composer => "输入框",
             Context::Transcript => "转录",
+            Context::Panel => "顶部面板",
             Context::Sessions => "会话",
             Context::Flows => "流程",
             Context::Jobs => "作业",

@@ -281,15 +281,14 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
         let st = if tab.active {
             let st = Style::default().add_modifier(Modifier::BOLD);
             if up || down { st.fg(th().accent) } else { st }
-        } else if tab.badge > 0 {
-            style(Tone::Attention)
         } else {
             style(Tone::Dim)
         };
-        f.render_widget(
-            Paragraph::new(RLine::from(RSpan::styled(tab.display(), st))),
-            rr(*hit),
-        );
+        let mut spans = vec![RSpan::styled(format!(" {} ", tab.label), st)];
+        if tab.badge > 0 {
+            spans.push(RSpan::styled("◐ ", style(Tone::Attention)));
+        }
+        f.render_widget(Paragraph::new(RLine::from(spans)), rr(*hit));
     }
     section(f, s.upper, &p.upper);
     // 下半的标题：有焦点时字也亮（带底色），否则是淡色的字。

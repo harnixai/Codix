@@ -109,7 +109,10 @@ async fn selecting_a_run_follows_its_main_agent_and_shows_stations() {
     h.pick_lower(backend).await;
     h.settle().await;
     assert_eq!(h.chat_title(), "后端", "站里的子 Agent 有会话：左边跟着切");
-    assert!(h.text().contains("会话 › 支付重试 › 后端"));
+    assert!(
+        h.text().contains("流程 › 支付重试 › 后端"),
+        "面包屑从「流程」起"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -372,11 +375,26 @@ async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
         assert!(p.contains(want), "缺 {want}\n{p}");
     }
     assert!(text.contains("Shift+↑↓"), "超过 10 行时下沿标出可以滚动");
+    let sel = h.core.state.ui.lower().selected;
+    h.keys("Shift+Down").await;
+    assert_eq!(
+        h.core.state.ui.lower().selected,
+        sel + 1,
+        "焦点在右下时 Shift+↓ 滚右下"
+    );
+    h.keys("Shift+Up").await;
+    h.keys("Esc Ctrl+Up Ctrl+Up").await;
+    assert_eq!(
+        h.core.state.ui.focus,
+        model::Focus::Panel,
+        "转录里 Ctrl+↑ 到面板"
+    );
     let before = h.text();
-    h.keys("Shift+Down Shift+Down").await;
-    assert_ne!(before, h.text(), "Shift+↓ 滚动面板");
+    h.keys("Shift+Down Down").await;
+    assert_ne!(before, h.text(), "面板有焦点时滚面板");
     assert!(h.text().contains("↑2 "));
     h.snapshot("flow-station-config");
+    h.keys("F3").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     assert!(
         h.text()
@@ -423,4 +441,27 @@ async fn global_flows_are_marked_and_flow_jobs_jump_to_their_flow() {
         "选中它用的流程"
     );
     assert!(h.chat_title().starts_with("编写流程："));
+}
+
+#[tokio::test(start_paused = true)]
+async fn run_lower_shows_time_and_tokens_but_no_status_words() {
+    let mut h = flows("default").await;
+    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
+    h.pick_upper(run_index(&h, "r1")).await;
+    let tui::Body::Workbench(w) = h.core.frame().body else {
+        panic!("不在工作台")
+    };
+    let lower: String = w
+        .side
+        .unwrap()
+        .lower
+        .rows
+        .iter()
+        .map(|l| l.text() + "\n")
+        .collect();
+    for word in ["已通过", "进行中", "待进入", "运行中", "完成"] {
+        assert!(!lower.contains(word), "右下不写状态字：{word}\n{lower}");
+    }
+    assert!(lower.contains("入 ") && lower.contains(" 出 "), "{lower}");
+    assert!(lower.contains("7m00s"), "{lower}");
 }

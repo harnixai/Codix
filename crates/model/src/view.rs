@@ -133,7 +133,10 @@ fn header(s: &State) -> Header {
 
 fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     let width = r.transcript.w as usize;
-    let focused = matches!(s.ui.focus, Focus::Composer | Focus::Transcript);
+    let focused = matches!(
+        s.ui.focus,
+        Focus::Composer | Focus::Transcript | Focus::Panel
+    );
     let conv = s.conv();
     let mut trail: Vec<String> = s.ui.ctx_parents.iter().map(|(_, t)| t.clone()).collect();
     let task_label =
@@ -151,7 +154,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
                     trail.push(t.clone());
                 }
                 trail.dedup();
-                format!("会话 › {}", trail.join(" › "))
+                format!("{} › {}", crumb_root(s, c), trail.join(" › "))
             },
             match c.summary.state {
                 port::SessionState::Running => "● 运行中",
@@ -243,7 +246,17 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
             .unwrap_or_default(),
         _ => PLACEHOLDER.to_string(),
     };
-    let (lines, cursor) = s.ui.composer.layout(composer_w, &placeholder);
+    let (mut lines, cursor) = s.ui.composer.layout(composer_w, &placeholder);
+    // 输入框最多占对话区 1/3：再多就开窗，缺省跟着光标走，Shift+↑↓ / PageUp / PageDown 可以翻。
+    let rows = r.composer_inner.h as usize;
+    let mut cursor = Some(cursor);
+    if rows > 0 && lines.len() > rows {
+        let off = s.composer_offset(lines.len(), rows);
+        lines = lines.into_iter().skip(off).take(rows).collect();
+        cursor = cursor
+            .filter(|(_, r)| (*r as usize) >= off && (*r as usize) < off + rows)
+            .map(|(c, r)| (c, r - off as u16));
+    }
     let picker = s.picker_candidates();
     let ask = ask_lines(s, composer_w.saturating_sub(2));
     let running = conv.is_some_and(|c| c.running);
@@ -280,7 +293,7 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         composer: Composer {
             focused: s.ui.focus == Focus::Composer && s.ui.overlay.is_none() && ask.is_none(),
             lines,
-            cursor: Some(cursor),
+            cursor,
         },
         picker: picker
             .iter()
@@ -301,6 +314,28 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     }
 }
 
+/// 面包屑从哪个标签起：流程、作业开出来的会话（包括它们的编辑会话）不属于"会话"。
+fn crumb_root(s: &State, c: &crate::chat::Conversation) -> &'static str {
+    let root =
+        s.ui.ctx_parents
+            .first()
+            .and_then(|(id, _)| s.domain.sessions.iter().find(|x| &x.id == id))
+            .unwrap_or(&c.summary);
+    match &root.provenance.origin {
+        port::Origin::FlowStation { .. }
+        | port::Origin::Editor {
+            of: port::EditorOf::Flow,
+            ..
+        } => "流程",
+        port::Origin::Job { .. }
+        | port::Origin::Editor {
+            of: port::EditorOf::Job,
+            ..
+        } => "作业",
+        _ => "会话",
+    }
+}
+
 fn owner_line(sum: &port::SessionSummary) -> String {
     let p = &sum.provenance;
     let origin = match &p.origin {
@@ -314,6 +349,12 @@ fn owner_line(sum: &port::SessionSummary) -> String {
         } => format!("流程「{flow_title}」› {subject} › {station_title}"),
         port::Origin::SubAgent { parent_title, .. } => format!("子 Agent ← {parent_title}"),
         port::Origin::Fork { from_title, .. } => format!("分叉自 {from_title}"),
+        port::Origin::Editor { of, name } => match (of, name.is_empty()) {
+            (port::EditorOf::Flow, false) => format!("流程「{name}」的编写会话"),
+            (port::EditorOf::Flow, true) => "新流程的编写会话".into(),
+            (port::EditorOf::Job, false) => format!("作业「{name}」的编辑会话"),
+            (port::EditorOf::Job, true) => "新作业的编辑会话".into(),
+        },
     };
     let mut s = format!(
         "{}@{} · {} · {} · {} · {}",
@@ -850,5 +891,49 @@ fn detached(s: &State, r: &DetachReason) -> Vec<Line> {
             Line::default(),
             Line::toned("Enter 回到实例选择 · q 退出", Tone::Dim),
         ],
+    }
+}
+
+impl State {
+    /// 输入框的字超出了框：（总行数，框里看得见的行数）。
+    pub fn composer_overflow(&self) -> Option<(usize, usize)> {
+        let c = self.chat_regions().chat?;
+        let rows = c.composer_inner.h as usize;
+        let n = self
+            .ui
+            .composer
+            .layout(c.composer_inner.w as usize, PLACEHOLDER)
+            .0
+            .len();
+        (rows > 0 && n > rows).then_some((n, rows))
+    }
+
+    fn composer_key(&self) -> (usize, usize) {
+        (self.ui.composer.cursor, self.ui.composer.text.len())
+    }
+
+    /// 输入框窗口的第一行：手动翻过、之后没再编辑就照手动的，否则让光标所在行看得见。
+    pub(crate) fn composer_offset(&self, len: usize, rows: usize) -> usize {
+        let max = len.saturating_sub(rows);
+        if let Some((key, off)) = self.ui.composer_scroll
+            && key == self.composer_key()
+        {
+            return off.min(max);
+        }
+        let w = self
+            .chat_regions()
+            .chat
+            .map_or(80, |c| c.composer_inner.w as usize);
+        let row = self.ui.composer.layout(w, PLACEHOLDER).1.1 as usize;
+        (row + 1).saturating_sub(rows).min(max)
+    }
+
+    pub(crate) fn scroll_composer(&mut self, lines: isize) {
+        let Some((len, rows)) = self.composer_overflow() else {
+            return;
+        };
+        let cur = self.composer_offset(len, rows) as isize;
+        let off = (cur + lines).clamp(0, len.saturating_sub(rows) as isize) as usize;
+        self.ui.composer_scroll = Some((self.composer_key(), off));
     }
 }
