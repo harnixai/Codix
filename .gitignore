@@ -24,3 +24,4 @@ archive/
 !3rds/INDEX.md
 
 *.log
+.claude/worktrees/
