@@ -50,6 +50,8 @@ pub enum BlockKind {
         text: String,
         tone: Tone,
     },
+    /// 钉在编写 / 作业会话最上面的卡片：流程设计、作业详情（交互 §5.3、§5.4）。
+    Card(crate::cards::Card),
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +162,41 @@ impl Conversation {
         }
         c.step_mark = c.blocks.len();
         c
+    }
+
+    /// 放上或更新卡片：卡片总在欢迎块后面。
+    pub fn set_card(&mut self, card: crate::cards::Card) {
+        if let Some(b) = self
+            .blocks
+            .iter_mut()
+            .find(|b| matches!(b.kind, BlockKind::Card(_)))
+        {
+            if !matches!(&b.kind, BlockKind::Card(c) if *c == card) {
+                b.kind = BlockKind::Card(card);
+                b.cache = None;
+            }
+            return;
+        }
+        // 有卡片的会话（编写流程、作业）不再显示欢迎块：卡片就是它的开场。
+        if matches!(
+            self.blocks.first().map(|b| &b.kind),
+            Some(BlockKind::Welcome)
+        ) {
+            self.blocks.remove(0);
+            self.step_mark = self.step_mark.saturating_sub(1);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let at = 0;
+        self.blocks.insert(
+            at,
+            Block {
+                id,
+                kind: BlockKind::Card(card),
+                cache: None,
+            },
+        );
+        self.step_mark += 1;
     }
 
     /// 用快照里的状态更新自己，保留本地的转录。
@@ -740,6 +777,7 @@ fn render(
             }
             ls
         }
+        BlockKind::Card(c) => crate::cards::render(c, w),
         BlockKind::Notice { text, tone } => wrap_text(
             text,
             *tone,

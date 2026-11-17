@@ -122,6 +122,10 @@ pub enum Command {
     },
 
     // 作业
+    /// 打开作业的编辑会话：在对话里看详情、修改、清理（阶段 3 由引擎侧工具执行）。
+    OpenJobSession {
+        job: Option<JobId>,
+    },
     ListJobs,
     SaveJob {
         job: Job,
@@ -173,6 +177,7 @@ impl Command {
             Command::StartRun { .. } => "start_run",
             Command::RunOp { .. } => "run_op",
             Command::OpenAuthoring { .. } => "open_authoring",
+            Command::OpenJobSession { .. } => "open_job_session",
             Command::ListJobs => "list_jobs",
             Command::SaveJob { .. } => "save_job",
             Command::DeleteJob { .. } => "delete_job",

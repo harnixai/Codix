@@ -392,9 +392,7 @@ fn footer(f: &mut Frame, size: Size, ft: &Footer) {
 }
 
 fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
-    let w = o.width.min(size.cols.saturating_sub(2)).max(10);
-    let h = o.height.min(size.rows.saturating_sub(2)).max(3);
-    let r = Rect::new((size.cols - w) / 2, (size.rows - h) / 2, w, h);
+    let r = layout::overlay_rect(size, o.width, o.height);
     f.render_widget(Clear, rr(r));
     let block = Block::default()
         .borders(Borders::ALL)
@@ -416,14 +414,8 @@ fn overlay(f: &mut Frame, size: Size, o: &Overlay) {
 
 /// 实例选择：屏幕中间的小框（交互 §2.2）。
 fn instances(f: &mut Frame, size: Size, s: &InstancesScreen) {
-    let w = size.cols.saturating_sub(4).min(88);
-    let h = (s.rows.len() as u16 + 6).min(size.rows.saturating_sub(1));
-    let frame = Rect::new(
-        (size.cols - w) / 2,
-        size.rows.saturating_sub(1).saturating_sub(h) / 2,
-        w,
-        h,
-    );
+    let frame = layout::instances_box(size, s.rows.len() as u16);
+    let w = frame.w;
     f.render_widget(Clear, rr(frame));
     f.render_widget(frame_block(true), rr(frame));
     titles(f, frame, &s.title, &Line::default(), true);

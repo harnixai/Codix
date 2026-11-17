@@ -41,7 +41,7 @@ impl Tab {
         }
     }
 
-    fn index(self) -> usize {
+    pub fn index(self) -> usize {
         match self {
             Tab::Sessions => 0,
             Tab::Flows => 1,
@@ -99,6 +99,9 @@ pub enum Confirm {
     CloseSession(SessionId, String),
     StopTask(port::TaskId, String),
     ClearGoal(SessionId),
+    CancelRun(port::RunId, String),
+    ForceStation(port::RunId, port::StationId, String),
+    Rework(port::RunId, port::StationId, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +112,16 @@ pub enum Overlay {
     /// 退出时的选择：后台运行 / 直接退出 / 返回（交互 §7）。
     Exit {
         selected: usize,
+    },
+    /// 只读的文字浮层：流程的原始 YAML。
+    Text {
+        title: String,
+        lines: Vec<String>,
+        scroll: usize,
+    },
+    /// F12：最近的事件与命令。
+    EventLog {
+        scroll: usize,
     },
 }
 
@@ -145,6 +158,15 @@ pub struct Domain {
     pub convs: Map<SessionId, Conversation>,
     /// 任务到目前为止的输出（看任务输出时取，之后 `TaskOutput` 事件追加）。
     pub task_output: Map<port::TaskId, String>,
+    /// 每个流程的运行（展开流程时取）。
+    pub runs: Map<String, Vec<port::RunSummary>>,
+    pub run_views: Map<port::RunId, port::RunView>,
+    pub flow_details: Map<String, port::FlowDetail>,
+    pub job_history: Map<port::JobId, Vec<port::JobEntry>>,
+    /// 流程 / 作业各自的编辑会话：`flow:<名字>`、`job:<id>` → 会话。
+    pub authoring: Map<String, SessionId>,
+    /// 列表加载失败的原因，按标签（会话 / 流程 / 作业）。
+    pub load_errors: [Option<String>; 3],
 }
 
 /// 界面状态：只由输入与 Tick 写入。
@@ -210,6 +232,18 @@ pub struct Ui {
     pub task_view: Option<port::TaskId>,
     /// 正在给这个会话改名：输入框里是新名字（交互 §5.2 `r`）。
     pub rename: Option<SessionId>,
+    pub flow_expanded: std::collections::HashSet<String>,
+    /// 上一次"选中即切换"的依据；选中没变就不再切。
+    pub last_follow: Option<String>,
+    /// 各标签的过滤字（`/`），以及是否正在输入过滤字。
+    pub filter: [String; 3],
+    pub filtering: bool,
+    /// 已发出、还没回来的加载（避免重复请求）。
+    pub loading: std::collections::HashSet<String>,
+    /// 最近的事件与命令（F12 事件日志）。
+    pub event_log: std::collections::VecDeque<String>,
+    /// Ctrl+G 上次跳到第几处。
+    pub attention_cursor: usize,
 }
 
 impl Ui {
@@ -304,6 +338,13 @@ impl State {
                 via_task: None,
                 task_view: None,
                 rename: None,
+                flow_expanded: Default::default(),
+                last_follow: None,
+                filter: Default::default(),
+                filtering: false,
+                loading: Default::default(),
+                event_log: Default::default(),
+                attention_cursor: 0,
             },
             keymap,
             pending: HashMap::new(),
@@ -321,6 +362,9 @@ impl State {
         }
         if !matches!(self.ui.screen, Screen::Workbench) {
             return vec![Context::Instances];
+        }
+        if self.ui.filtering {
+            return vec![Context::Picker];
         }
         match self.ui.focus {
             Focus::Composer
@@ -366,18 +410,23 @@ impl State {
     }
 
     /// 当前右栏上半的行数（2.5 起由各标签自己的模型给出）。
+    pub fn lower_len_pub(&self) -> usize {
+        self.lower_len()
+    }
+
     pub(crate) fn lower_len(&self) -> usize {
         match self.ui.tab {
             Tab::Sessions => self.tree_rows().len(),
-            _ => 0,
+            Tab::Flows => self.flow_lower_rows().len(),
+            Tab::Jobs => self.job_lower_rows().len(),
         }
     }
 
     pub(crate) fn upper_len(&self) -> usize {
         match self.ui.tab {
             Tab::Sessions => self.session_rows().len(),
-            Tab::Flows => self.domain.flows.len(),
-            Tab::Jobs => self.domain.jobs.len(),
+            Tab::Flows => self.flow_rows().len(),
+            Tab::Jobs => self.job_rows().len(),
         }
     }
 }

@@ -83,6 +83,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Picker, "Down", A::Down),
         b(C::Picker, "Tab", A::Complete),
         b(C::Picker, "Enter", A::Submit),
+        b(C::Picker, "Backspace", A::Backspace),
         // 对话框（提问框、二次确认）
         b(C::Dialog, "Up", A::Up),
         b(C::Dialog, "Down", A::Down),
@@ -166,6 +167,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Jobs, "Space", A::ToggleEnabled),
         b(C::Jobs, "R", A::RunNow),
         b(C::Jobs, "d", A::Delete),
+        b(C::Jobs, "r", A::Retry),
     ]);
     v
 }

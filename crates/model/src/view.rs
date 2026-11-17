@@ -1,4 +1,4 @@
-use port::{ConnState, JobOutcome, SessionState};
+use port::ConnState;
 use tui::layout::{self, LayoutSpec, MIN_COLS, MIN_ROWS};
 use tui::{
     Body, ChatPane, Composer, FrameState, Header, Hint, Line, Section, SidePane, TabLabel, Tone,
@@ -61,18 +61,9 @@ pub(crate) fn tab_labels(s: &State) -> Vec<String> {
     tabs(s).iter().map(TabLabel::display).collect()
 }
 
-/// "等你处理"的数量（需求 L-04）。2.8 起由全局待处理列表给出。
+/// "等你处理"的数量（需求 L-04）：标签据此改提醒色。
 fn badge(s: &State, t: Tab) -> u32 {
-    match t {
-        Tab::Sessions => s.main_sessions().map(|x| x.waiting).sum(),
-        Tab::Flows => 0,
-        Tab::Jobs => s
-            .domain
-            .jobs
-            .iter()
-            .filter(|j| matches!(j.last, Some(JobOutcome::Failed { .. })))
-            .count() as u32,
-    }
+    s.attention_count(t)
 }
 
 pub fn view(s: &State) -> FrameState {
@@ -463,7 +454,18 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
     // 第一列是选中标记，内容从第二列起。
     let all = match s.ui.tab {
         Tab::Sessions => crate::sessions::upper_lines(s, w.saturating_sub(1)),
-        _ => upper_rows(s, w),
+        Tab::Flows => crate::flows::upper_lines(s, w.saturating_sub(1)),
+        Tab::Jobs => crate::jobs::upper_lines(s, w.saturating_sub(1)),
+    };
+    let all: Vec<Line> = if matches!(
+        s.domain.conn,
+        Some(port::ConnState::Lost | port::ConnState::Reconnecting { .. })
+    ) {
+        all.into_iter()
+            .map(|l| Line::toned(l.text(), Tone::Dim))
+            .collect()
+    } else {
+        all
     };
     let up = s.ui.upper();
     let visible: Vec<Line> = all
@@ -482,10 +484,13 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
             focused: s.ui.focus == Focus::SideUpper && s.ui.overlay.is_none(),
             title: None,
             title_right: None,
-            rows: if all.is_empty() {
-                vec![Line::toned(empty_hint(s.ui.tab), Tone::Dim)]
-            } else {
-                visible
+            rows: match (&s.domain.load_errors[s.ui.tab.index()], all.is_empty()) {
+                (Some(e), _) => vec![Line::toned(
+                    truncate_to_width(&format!("✗ 加载失败：{e} · r 重试"), w),
+                    Tone::Error,
+                )],
+                (None, true) => vec![Line::toned(empty_hint(s), Tone::Dim)],
+                (None, false) => visible,
             },
             selected,
         },
@@ -493,11 +498,15 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
     }
 }
 
-fn empty_hint(t: Tab) -> &'static str {
-    match t {
-        Tab::Sessions => "还没有会话 · n 新建",
-        Tab::Flows => "还没有流程 · Enter 在对话里设计一个",
-        Tab::Jobs => "还没有作业 · n 新建",
+fn empty_hint(s: &State) -> String {
+    let f = &s.ui.filter[s.ui.tab.index()];
+    if !f.is_empty() {
+        return format!("没有匹配「{f}」的 · Esc 清除过滤");
+    }
+    match s.ui.tab {
+        Tab::Sessions => "还没有会话 · n 新建，或者直接在左边输入".into(),
+        Tab::Flows => "还没有流程 · n 在左边对话里描述一个流程来创建".into(),
+        Tab::Jobs => "还没有作业 · n 在左边对话里说清楚何时做什么".into(),
     }
 }
 
@@ -523,60 +532,47 @@ fn lower_section(s: &State, r: &tui::layout::SideRegions, title: Option<String>)
                     .collect(),
             }
         }
-        _ => Section {
-            focused,
-            title,
-            title_right: None,
-            rows: vec![Line::toned(
-                truncate_to_width("（下半在 2.6–2.7 实现）", w),
-                Tone::Dim,
-            )],
-            selected: None,
-        },
+        Tab::Flows | Tab::Jobs => {
+            let all = if s.ui.tab == Tab::Flows {
+                crate::flows::lower_lines(s, w.saturating_sub(1))
+            } else {
+                crate::jobs::lower_lines(s, w.saturating_sub(1))
+            };
+            let (title, right) = if s.ui.tab == Tab::Flows {
+                crate::flows::lower_title(s)
+            } else {
+                (title, None)
+            };
+            let lo = s.ui.lower();
+            Section {
+                focused,
+                title,
+                title_right: right,
+                selected: lo
+                    .selected
+                    .checked_sub(lo.scroll)
+                    .filter(|i| *i < r.lower.h as usize && !all.is_empty()),
+                rows: all
+                    .into_iter()
+                    .skip(lo.scroll)
+                    .take(r.lower.h as usize)
+                    .collect(),
+            }
+        }
     }
 }
 
 fn upper_title(s: &State) -> Option<String> {
-    let i = s.ui.upper().selected;
     match s.ui.tab {
         Tab::Sessions => s
             .selected_session()
             .and_then(|id| s.domain.sessions.iter().find(|x| x.id == id))
             .map(|x| x.title.clone()),
-        Tab::Flows => s.domain.flows.get(i).map(|x| x.title.clone()),
-        Tab::Jobs => s.domain.jobs.get(i).map(|x| x.name.clone()),
-    }
-}
-
-fn upper_rows(s: &State, w: usize) -> Vec<Line> {
-    let fit = |t: String| truncate_to_width(&t, w);
-    match s.ui.tab {
-        Tab::Sessions => s
-            .main_sessions()
-            .map(|x| {
-                let (g, tone) = match x.state {
-                    SessionState::Running => ("●", Tone::Ok),
-                    SessionState::Waiting => ("◐", Tone::Attention),
-                    SessionState::Idle => ("○", Tone::Dim),
-                };
-                Line::toned(format!("{g} "), tone).push(fit(x.title.clone()), Tone::Normal)
-            })
-            .collect(),
-        Tab::Flows => s
-            .domain
-            .flows
-            .iter()
-            .map(|f| Line::plain(fit(format!("▸ {}  {}", f.title, f.name))))
-            .collect(),
+        Tab::Flows => None,
         Tab::Jobs => s
-            .domain
-            .jobs
-            .iter()
-            .map(|j| {
-                let g = if j.enabled { "●" } else { "○" };
-                Line::plain(fit(format!("{g} {}  {}", j.name, j.cron)))
-            })
-            .collect(),
+            .selected_job()
+            .and_then(|id| s.domain.jobs.iter().find(|j| j.id == id))
+            .map(|j| format!("{} 的详情", j.name)),
     }
 }
 
@@ -587,8 +583,12 @@ fn footer(s: &State) -> tui::Footer {
         .hints(ctx)
         .into_iter()
         .map(|(key, label)| Hint {
+            label: if label == keys::Action::NextAttention.help() {
+                format!("{label}({})", s.attention().len())
+            } else {
+                label.to_string()
+            },
             key,
-            label: label.to_string(),
         })
         .collect();
     let essential = s.keymap.essential().map(|(key, label)| Hint {
@@ -604,6 +604,13 @@ fn footer(s: &State) -> tui::Footer {
             Confirm::CloseSession(_, t) => format!("关闭会话「{t}」？ · y 确认 / 其他键放弃"),
             Confirm::StopTask(_, t) => format!("停止「{t}」？ · y 确认 / 其他键放弃"),
             Confirm::ClearGoal(_) => "清除这个 goal？ · y 确认 / 其他键放弃".to_string(),
+            Confirm::CancelRun(_, t) => format!("取消运行「{t}」？ · y 确认 / 其他键放弃"),
+            Confirm::ForceStation(_, _, t) => {
+                format!("强制放行「{t}」？出口条件不再检查 · y 确认 / 其他键放弃")
+            }
+            Confirm::Rework(_, _, t) => {
+                format!("退回到「{t}」重做？它之后的站都要重来 · y 确认 / 其他键放弃")
+            }
         };
         Line::toned(text, Tone::Attention)
     });
@@ -623,7 +630,36 @@ fn footer(s: &State) -> tui::Footer {
 }
 
 fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
+    let text = |title: &str, lines: Vec<String>, scroll: usize| {
+        let height = (lines.len() as u16 + 2)
+            .min(s.ui.size.rows.saturating_sub(4))
+            .max(5);
+        let body = height.saturating_sub(2) as usize;
+        let max = lines.len().saturating_sub(body);
+        tui::Overlay {
+            title: title.to_string(),
+            lines: lines
+                .into_iter()
+                .skip(scroll.min(max))
+                .map(Line::plain)
+                .collect(),
+            width: (s.ui.size.cols.saturating_sub(10)).min(110),
+            height,
+        }
+    };
     match o {
+        Overlay::Text {
+            title,
+            lines,
+            scroll,
+        } => text(title, lines.clone(), *scroll),
+        Overlay::EventLog { scroll } => {
+            let mut lines: Vec<String> = s.ui.event_log.iter().rev().cloned().collect();
+            if lines.is_empty() {
+                lines.push("还没有事件".into());
+            }
+            text("事件日志（新的在上）· Esc 关闭", lines, *scroll)
+        }
         Overlay::Exit { selected } => {
             let name = s.ui.attached.clone().unwrap_or_else(|| "当前实例".into());
             let options = [

@@ -225,8 +225,42 @@ impl Harness {
         self.step_to(target, false).await;
     }
 
+    /// 右栏上半 / 下半选中第 `i` 行（用上下键走过去，和人操作一样）。
+    pub async fn pick_upper(&mut self, i: usize) {
+        if self.core.state.ui.focus != model::Focus::SideUpper {
+            self.keys("Tab").await;
+        }
+        self.step_to(i, true).await;
+        self.settle().await;
+    }
+
+    pub async fn pick_lower(&mut self, i: usize) {
+        if self.core.state.ui.focus != model::Focus::SideLower {
+            self.keys("Tab").await;
+        }
+        self.step_to(i, false).await;
+        self.settle().await;
+    }
+
+    /// 当前对话区显示的会话标题。
+    pub fn chat_title(&self) -> String {
+        self.core
+            .state
+            .conv()
+            .map(|c| c.summary.title.clone())
+            .unwrap_or_default()
+    }
+
     async fn step_to(&mut self, target: usize, upper: bool) {
-        loop {
+        for step in 0.. {
+            assert!(
+                step < 500,
+                "走不到第 {target} 行：上半 {:?} 下半 {:?} 焦点 {:?} 下半行数 {}",
+                self.core.state.ui.upper(),
+                self.core.state.ui.lower(),
+                self.core.state.ui.focus,
+                self.core.state.lower_len_pub()
+            );
             let cur = if upper {
                 self.core.state.ui.upper().selected
             } else {

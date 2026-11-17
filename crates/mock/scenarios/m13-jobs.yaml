@@ -1,0 +1,7 @@
+# 场景 m13：作业自己触发。3 秒 j1 跑完，6 秒 j4 失败（429），随后 j4 的下次触发与最近结果刷新。
+name: m13-jobs
+seed: default
+timeline:
+  - {at: 3000, job_fired: {"job": "j1", "entry": {"fired_ms": 1763280003000, "outcome": "done", "elapsed_ms": 95000, "usage": {"input": 9000, "output": 800}, "target": {"session": {"id": "s2", "title": "日志巡检"}}}}}
+  - {at: 6000, job_fired: {"job": "j4", "entry": {"fired_ms": 1763280006000, "outcome": {"failed": {"message": "provider 返回 429"}}, "elapsed_ms": 2000}}}
+  - {at: 6500, job_upserted: {"id": "j4", "name": "依赖巡检", "cron": "0 */6 * * *", "kind": {"simple": {"prompt": "检查依赖的安全公告", "skills": ["audit"]}}, "enabled": true, "catch_up": true, "next_fire_ms": 1763301600000, "last": {"failed": {"message": "provider 返回 429"}}}}

@@ -1,0 +1,15 @@
+# 场景 m18：各种失败。列流程第一次出错；对运行的操作一律报已结束；第一次提交以模型过载收场。
+name: m18-errors
+seed: default
+rules:
+  - on: list_flows
+    once: true
+    reply: {error: 流程服务暂时不可用}
+  - on: run_op
+    reply: {error: 运行已经结束，不能再操作}
+  - on: submit
+    once: true
+    then:
+      - {after: 0, turn_started: {"session": "$session"}}
+      - {after: 150, text_delta: {"session": "$session", "text": "我先看一下这个问题，"}}
+      - {after: 300, turn_failed: {"session": "$session", "message": "overloaded: 模型过载，请稍后再试"}}

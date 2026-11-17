@@ -242,6 +242,25 @@ fn side(area: Rect, tab_labels: &[String]) -> SideRegions {
     }
 }
 
+/// 实例选择的小框（交互 §2.2）：`rows` 是视口里的行数。框内第 2 行起是列表，左边距 2。
+pub fn instances_box(size: Size, rows: u16) -> Rect {
+    let w = size.cols.saturating_sub(4).min(88);
+    let h = (rows + 6).min(size.rows.saturating_sub(1));
+    Rect::new(
+        (size.cols - w) / 2,
+        size.rows.saturating_sub(1).saturating_sub(h) / 2,
+        w,
+        h,
+    )
+}
+
+/// 浮层的框；框内第 1 行起是内容，左边距 2。
+pub fn overlay_rect(size: Size, w: u16, h: u16) -> Rect {
+    let w = w.min(size.cols.saturating_sub(2)).max(10);
+    let h = h.min(size.rows.saturating_sub(2)).max(3);
+    Rect::new((size.cols - w) / 2, (size.rows - h) / 2, w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

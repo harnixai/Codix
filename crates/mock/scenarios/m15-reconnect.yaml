@@ -1,0 +1,9 @@
+# 场景 m15：断线重连。2 秒断开，3、5 秒两次重连，7 秒追平，7.1 秒恢复连接。
+name: m15-reconnect
+seed: default
+timeline:
+  - {at: 2000, connection: "lost"}
+  - {at: 3000, connection: {"reconnecting": {"attempt": 1}}}
+  - {at: 5000, connection: {"reconnecting": {"attempt": 2}}}
+  - {at: 7000, connection: "resynced"}
+  - {at: 7100, connection: "connected"}

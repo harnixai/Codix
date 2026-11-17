@@ -48,7 +48,11 @@ pub enum TreeRow {
 impl State {
     pub fn session_rows(&self) -> Vec<SessRow> {
         let mut out = vec![];
+        let filter = &self.ui.filter[0];
         for s in self.main_sessions() {
+            if !filter.is_empty() && !s.title.contains(filter.as_str()) {
+                continue;
+            }
             out.push(SessRow::Session(s.id.clone()));
             if !self.ui.sess_expanded.contains(&s.id) {
                 continue;
@@ -170,7 +174,7 @@ pub(crate) fn state_glyph(s: SessionState) -> (&'static str, Tone) {
     }
 }
 
-fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
+pub(crate) fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
     match t {
         TaskStatus::Running => ("●", Tone::Ok),
         TaskStatus::Waiting => ("◐", Tone::Attention),
@@ -180,7 +184,7 @@ fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
     }
 }
 
-fn status_text(t: TaskStatus) -> &'static str {
+pub(crate) fn status_text(t: TaskStatus) -> &'static str {
     match t {
         TaskStatus::Running => "运行中",
         TaskStatus::Waiting => "等你批准",
@@ -211,7 +215,7 @@ pub(crate) fn fmt_elapsed(ms: u64) -> String {
 }
 
 /// 左边是内容，右边是靠右对齐的摘要；放不下时先截左边。
-fn split_line(left: Line, right: Line, width: usize) -> Line {
+pub(crate) fn split_line(left: Line, right: Line, width: usize) -> Line {
     let rw = right.width();
     let room = width.saturating_sub(rw + 1);
     let mut l = Line::default();
@@ -457,6 +461,15 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
 }
 
 fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
+    if a == Action::Rename && s.domain.load_errors[0].is_some() {
+        s.domain.load_errors[0] = None;
+        return Some(vec![s.call(
+            Pending::Sessions,
+            Command::ListSessions {
+                filter: port::SessionFilter::default(),
+            },
+        )]);
+    }
     let rows = s.session_rows();
     let row = rows.get(s.ui.upper[0].selected).cloned();
     let id = row.as_ref().map(|r| r.session().clone());

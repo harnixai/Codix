@@ -207,6 +207,25 @@ impl MockState {
                     .push_str(text);
                 None
             }
+            FlowDetail(d) => {
+                match self
+                    .flows
+                    .iter_mut()
+                    .find(|x| x.summary.name == d.summary.name)
+                {
+                    Some(x) => {
+                        x.summary = d.summary.clone();
+                        x.stations = d.stations.clone();
+                        x.yaml = d.yaml.clone();
+                    }
+                    None => self.flows.push(FlowSeed {
+                        summary: d.summary.clone(),
+                        stations: d.stations.clone(),
+                        yaml: d.yaml.clone(),
+                    }),
+                }
+                None
+            }
             FlowUpserted(f) => {
                 match self.flows.iter_mut().find(|x| x.summary.name == f.name) {
                     Some(x) => x.summary = f.clone(),

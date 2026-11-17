@@ -79,6 +79,12 @@ pub struct StationView {
     /// `session`、`agent × 2`、`confirm`、`gate: ci` 这种给人看的执行方式。
     #[serde(default)]
     pub work: String,
+    /// 这一站照哪个 skill 做（流程设计卡里显示）。
+    #[serde(default)]
+    pub skill: Option<String>,
+    /// 出口条件，给人看的写法：`output`、`gate: ci`、`confirm`。
+    #[serde(default)]
+    pub exit: Vec<String>,
     pub status: StationStatus,
     #[serde(default)]
     pub tasks: Vec<StationTask>,

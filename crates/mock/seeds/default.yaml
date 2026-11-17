@@ -380,6 +380,41 @@ sessions:
       - user: {text: 进入「实现」站：后端与前端分别交给子 Agent 完成。}
       - assistant: {text: 已派出两个子 Agent：后端负责重试队列与退避策略，前端负责失败后的重试入口。}
 
+  - summary:
+      id: s4-backend
+      title: 后端
+      state: running
+      usage: {input: 9000, output: 3000, cache_read: 12000, cache_write: 900}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/pay
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {sub_agent: {parent: s4, parent_title: 支付重试（主会话）, task: t6}}
+      updated_ms: 1763279940000
+    running: true
+    history:
+      - user: {text: 实现重试队列与指数退避：最多 5 次，间隔 1s 起翻倍。}
+      - assistant: {text: 已在 src/pay/retry.rs 新增 RetryQueue，正在补退避策略的单元测试。}
+
+  - summary:
+      id: s4-frontend
+      title: 前端
+      state: idle
+      usage: {input: 5000, output: 2000, cache_read: 6000, cache_write: 400}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/pay
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {sub_agent: {parent: s4, parent_title: 支付重试（主会话）, task: t7}}
+      updated_ms: 1763279890000
+    history:
+      - user: {text: 在支付失败页加「重试」按钮，调用重试接口并展示进度。}
+      - assistant: {text: 已在 PayFailed.tsx 加入重试按钮与进度条，接口先对接 mock。}
+
   # ---------------------------------------------------------------- s5
   - summary:
       id: s5
@@ -393,16 +428,16 @@ sessions:
         project: ~/work/report
         scene: code
         model: claude-sonnet-5-5
-        origin: {flow_station: {run: r2, flow_title: 需求到上线, subject: 导出 CSV, station: review, station_title: 评审}}
+        origin: {flow_station: {run: r2, flow_title: 需求到上线, subject: 导出 CSV, station: sign, station_title: 评审汇总}}
       updated_ms: 1763278000000
     prompts:
       - id: p2
         kind: {question: {question: 评审通过后是否直接上线？, header: 评审, options: [直接上线, 先放预发观察一天]}}
-        from: {label: 流程「需求到上线」› 导出 CSV › 评审}
+        from: {label: 流程「需求到上线」› 导出 CSV › 评审汇总}
         asked_ms: 1763277900000
     history:
-      - user: {text: 进入「评审」站，请汇总前面三站的结论供人确认。}
-      - assistant: {text: 收集、设计、实现均已通过，评审站等待人工确认后放行。}
+      - user: {text: 进入「评审汇总」站，请汇总代码评审与文档评审的结论供人确认。}
+      - assistant: {text: 收集、设计、实现与代码评审已通过，文档评审缺少迁移说明，汇总站等待人工确认。}
 
   # ---------------------------------------------------------------- s6
   - summary:
@@ -548,6 +583,8 @@ tasks:
     kind: agent
     status: running
     label: 后端
+    agent_type: general
+    agent_session: s4-backend
     started_ms: 1763279700000
     usage: {input: 9000, output: 3000, cache_read: 12000, cache_write: 900}
   - id: t7
@@ -555,6 +592,8 @@ tasks:
     kind: agent
     status: done
     label: 前端
+    agent_type: general
+    agent_session: s4-frontend
     started_ms: 1763279700000
     ended_ms: 1763279890000
     usage: {input: 5000, output: 2000, cache_read: 6000, cache_write: 400}
@@ -661,11 +700,13 @@ task_output:
 flows:
   - summary: {name: feature-to-ship, title: 需求到上线, origin: builtin, active_runs: 2}
     stations:
-      - {id: collect, title: 收集需求, work: session, status: pending}
-      - {id: design, title: 设计, needs: [collect], work: session, status: pending}
-      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: pending}
-      - {id: review, title: 评审, needs: [impl], work: confirm, status: pending}
-      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+      - {"id": "collect", "title": "收集需求", "work": "session", "skill": "gather-requirements", "exit": ["output"], "status": "pending"}
+      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "pending"}
+      - {"id": "impl", "title": "实现", "needs": ["design"], "work": "agent × 2", "skill": "implement", "exit": ["output", "gate: ci"], "status": "pending"}
+      - {"id": "review-code", "title": "代码评审", "needs": ["impl"], "work": "agent", "skill": "review-code", "exit": ["output"], "status": "pending"}
+      - {"id": "review-docs", "title": "文档评审", "needs": ["impl"], "work": "agent", "skill": "review-docs", "exit": ["output"], "status": "pending"}
+      - {"id": "sign", "title": "评审汇总", "needs": ["review-code", "review-docs"], "work": "confirm", "exit": ["confirm"], "status": "pending"}
+      - {"id": "ship", "title": "上线", "needs": ["sign"], "work": "gate: ci", "exit": ["gate: ci"], "status": "pending"}
     yaml: |
       name: feature-to-ship
       title: 需求到上线
@@ -675,36 +716,52 @@ flows:
         - id: collect
           title: 收集需求
           executor: {kind: session}
-          skill: collect
+          skill: gather-requirements
           output: {type: object, required: [requirements]}
           exit: [{kind: output}]
         - id: design
           title: 设计
           needs: [collect]
           executor: {kind: session}
-          skill: design
+          skill: write-design
           output: {type: object, required: [plan]}
-          exit: [{kind: output}]
+          exit: [{kind: output}, {kind: confirm}]
         - id: impl
           title: 实现
           needs: [design]
           tasks:
-            - {id: backend, executor: {kind: agent}, skill: impl-backend}
-            - {id: frontend, executor: {kind: agent}, skill: impl-frontend}
-          exit: [{kind: output}]
-        - id: review
-          title: 评审
+            - {id: backend, executor: {kind: agent}, skill: implement}
+            - {id: frontend, executor: {kind: agent}, skill: implement}
+          output: {type: object}
+          exit: [{kind: output}, {kind: gate, gate: ci}]
+        - id: review-code
+          title: 代码评审
           needs: [impl]
+          executor: {kind: agent, agent_type: reviewer}
+          skill: review-code
+          output: {type: object}
+          exit: [{kind: output}]
+        - id: review-docs
+          title: 文档评审
+          needs: [impl]
+          executor: {kind: agent}
+          skill: review-docs
+          output: {type: object}
+          exit: [{kind: output}]
+        - id: sign
+          title: 评审汇总
+          needs: [review-code, review-docs]
           exit: [{kind: confirm}]
+          rework_to: [impl]
         - id: ship
           title: 上线
-          needs: [review]
+          needs: [sign]
           exit: [{kind: gate, gate: ci}]
   - summary: {name: weekly-report, title: 周报, origin: user, active_runs: 0}
     stations:
-      - {id: collect, title: 收集, work: session, status: pending}
-      - {id: summarize, title: 汇总, needs: [collect], work: session, status: pending}
-      - {id: confirm, title: 待确认, needs: [summarize], work: confirm, status: pending}
+      - {"id": "collect", "title": "收集", "work": "session", "skill": "collect-tickets", "exit": ["output"], "status": "pending"}
+      - {"id": "summarize", "title": "汇总", "needs": ["collect"], "work": "session", "skill": "summarize-week", "exit": ["output"], "status": "pending"}
+      - {"id": "confirm", "title": "待确认", "needs": ["summarize"], "work": "confirm", "exit": ["confirm"], "status": "pending"}
     yaml: |
       name: weekly-report
       title: 周报
@@ -726,69 +783,112 @@ flows:
           title: 待确认
           needs: [summarize]
           exit: [{kind: confirm}]
+  - summary: {name: release-check, title: 发布检查, origin: user, active_runs: 0}
+    stations:
+      - {"id": "lint", "title": "静态检查", "work": "program", "exit": ["gate: lint"], "status": "pending"}
+      - {"id": "smoke", "title": "冒烟测试", "needs": ["lint"], "work": "agent", "skill": "smoke-test", "exit": ["output"], "status": "pending"}
+      - {"id": "approve", "title": "放行确认", "needs": ["smoke"], "work": "confirm", "exit": ["confirm"], "status": "pending"}
+      - {"id": "notify", "title": "通知", "needs": ["approve"], "work": "program", "exit": ["output"], "status": "pending"}
+    yaml: |
+      name: release-check
+      title: 发布检查
+      stations:
+        - id: lint
+          title: 静态检查
+          executor: {kind: program, program: lint}
+          exit: [{kind: gate, gate: lint}]
+        - id: smoke
+          title: 冒烟测试
+          needs: [lint]
+          executor: {kind: agent}
+          skill: smoke-test
+          output: {type: object}
+          exit: [{kind: output}]
+        - id: approve
+          title: 放行确认
+          needs: [smoke]
+          exit: [{kind: confirm}]
+        - id: notify
+          title: 通知
+          needs: [approve]
+          executor: {kind: program, program: notify}
+          exit: [{kind: output}]
 
 runs:
   - summary:
-      id: r1
-      flow: feature-to-ship
-      subject: 支付重试
-      status: running
-      current: 实现
+      id: "r1"
+      flow: "feature-to-ship"
+      subject: "支付重试"
+      status: "running"
+      current: "实现"
       stations_done: 2
-      stations_total: 5
+      stations_total: 7
       started_ms: 1763275200000
-      usage: {input: 21000, output: 7800, cache_read: 30000, cache_write: 2200}
+      usage: {"input": 21000, "output": 7800, "cache_read": 30000, "cache_write": 2200}
     main_session: s4
     stations:
-      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 420000, usage: {input: 3000, output: 900, cache_read: 2000}}
-      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 900000, usage: {input: 6000, output: 2400, cache_read: 9000}}
-      - id: impl
-        title: 实现
-        needs: [design]
-        work: agent × 2
-        status: working
-        elapsed_ms: 580000
-        usage: {input: 12000, output: 4500, cache_read: 19000, cache_write: 2200}
-        tasks:
-          - {id: t6, label: 后端, status: running, session: s4}
-          - {id: t7, label: 前端, status: done, session: s4}
-      - {id: review, title: 评审, needs: [impl], work: confirm, status: pending}
-      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+      - {"id": "collect", "title": "收集需求", "work": "session", "skill": "gather-requirements", "exit": ["output"], "status": "passed", "elapsed_ms": 420000, "usage": {"input": 3000, "output": 900, "cache_read": 2000}}
+      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "passed", "elapsed_ms": 900000, "usage": {"input": 6000, "output": 2400, "cache_read": 9000}}
+      - {"id": "impl", "title": "实现", "needs": ["design"], "work": "agent × 2", "skill": "implement", "exit": ["output", "gate: ci"], "status": "working", "elapsed_ms": 580000, "usage": {"input": 12000, "output": 4500, "cache_read": 19000, "cache_write": 2200}, "tasks": [{"id": "t6", "label": "后端", "status": "running", "session": "s4-backend"}, {"id": "t7", "label": "前端", "status": "done", "session": "s4-frontend"}]}
+      - {"id": "review-code", "title": "代码评审", "needs": ["impl"], "work": "agent", "skill": "review-code", "exit": ["output"], "status": "pending"}
+      - {"id": "review-docs", "title": "文档评审", "needs": ["impl"], "work": "agent", "skill": "review-docs", "exit": ["output"], "status": "pending"}
+      - {"id": "sign", "title": "评审汇总", "needs": ["review-code", "review-docs"], "work": "confirm", "exit": ["confirm"], "status": "pending"}
+      - {"id": "ship", "title": "上线", "needs": ["sign"], "work": "gate: ci", "exit": ["gate: ci"], "status": "pending"}
   - summary:
-      id: r2
-      flow: feature-to-ship
-      subject: 导出 CSV
-      status: {waiting: {reason: 待确认：评审}}
-      current: 评审
-      stations_done: 3
-      stations_total: 5
+      id: "r2"
+      flow: "feature-to-ship"
+      subject: "导出 CSV"
+      status: {"waiting": {"reason": "待确认：评审汇总"}}
+      current: "评审汇总"
+      stations_done: 5
+      stations_total: 7
       started_ms: 1763190000000
-      usage: {input: 15000, output: 4000, cache_read: 9000, cache_write: 800}
+      usage: {"input": 15000, "output": 4000, "cache_read": 9000, "cache_write": 800}
     main_session: s5
     stations:
-      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 300000, usage: {input: 2500, output: 700}}
-      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 1200000, usage: {input: 4500, output: 1300, cache_read: 3000}}
-      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: passed, elapsed_ms: 3600000, usage: {input: 8000, output: 2000, cache_read: 6000, cache_write: 800}}
-      - {id: review, title: 评审, needs: [impl], work: confirm, status: held}
-      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: pending}
+      - {"id": "collect", "title": "收集需求", "work": "session", "skill": "gather-requirements", "exit": ["output"], "status": "passed", "elapsed_ms": 300000, "usage": {"input": 2500, "output": 700}}
+      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "passed", "elapsed_ms": 1200000, "usage": {"input": 4500, "output": 1300, "cache_read": 3000}}
+      - {"id": "impl", "title": "实现", "needs": ["design"], "work": "agent × 2", "skill": "implement", "exit": ["output", "gate: ci"], "status": "passed", "elapsed_ms": 3600000, "usage": {"input": 8000, "output": 2000, "cache_read": 6000, "cache_write": 800}}
+      - {"id": "review-code", "title": "代码评审", "needs": ["impl"], "work": "agent", "skill": "review-code", "exit": ["output"], "status": "passed", "elapsed_ms": 900000, "usage": {"input": 2600, "output": 700, "cache_read": 1500}}
+      - {"id": "review-docs", "title": "文档评审", "needs": ["impl"], "work": "agent", "skill": "review-docs", "exit": ["output"], "status": "unmet", "elapsed_ms": 700000, "usage": {"input": 1900, "output": 500, "cache_read": 1100}, "unmet": "缺少迁移说明"}
+      - {"id": "sign", "title": "评审汇总", "needs": ["review-code", "review-docs"], "work": "confirm", "exit": ["confirm"], "status": "held"}
+      - {"id": "ship", "title": "上线", "needs": ["sign"], "work": "gate: ci", "exit": ["gate: ci"], "status": "pending"}
   - summary:
-      id: r3
-      flow: feature-to-ship
-      subject: 登录限流
-      status: finished
-      current: 上线
-      stations_done: 5
-      stations_total: 5
+      id: "r3"
+      flow: "feature-to-ship"
+      subject: "登录限流"
+      status: "finished"
+      current: "上线"
+      stations_done: 7
+      stations_total: 7
       started_ms: 1763020000000
       ended_ms: 1763100000000
-      usage: {input: 32000, output: 11000, cache_read: 40000, cache_write: 3000}
-    main_session: s6
+      usage: {"input": 32000, "output": 11000, "cache_read": 40000, "cache_write": 3000}
+    main_session: s3
     stations:
-      - {id: collect, title: 收集需求, work: session, status: passed, elapsed_ms: 360000, usage: {input: 3000, output: 800}}
-      - {id: design, title: 设计, needs: [collect], work: session, status: passed, elapsed_ms: 1500000, usage: {input: 7000, output: 2500, cache_read: 8000}}
-      - {id: impl, title: 实现, needs: [design], work: agent × 2, status: passed, elapsed_ms: 5400000, usage: {input: 17000, output: 6500, cache_read: 25000, cache_write: 3000}}
-      - {id: review, title: 评审, needs: [impl], work: confirm, status: passed, elapsed_ms: 7200000}
-      - {id: ship, title: 上线, needs: [review], work: "gate: ci", status: passed, elapsed_ms: 600000, usage: {input: 5000, output: 1200, cache_read: 7000}}
+      - {"id": "collect", "title": "收集需求", "work": "session", "skill": "gather-requirements", "exit": ["output"], "status": "passed", "elapsed_ms": 360000, "usage": {"input": 3000, "output": 800}}
+      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "passed", "elapsed_ms": 1500000, "usage": {"input": 7000, "output": 2500, "cache_read": 8000}}
+      - {"id": "impl", "title": "实现", "needs": ["design"], "work": "agent × 2", "skill": "implement", "exit": ["output", "gate: ci"], "status": "passed", "elapsed_ms": 5400000, "usage": {"input": 14000, "output": 5200, "cache_read": 22000, "cache_write": 2600}}
+      - {"id": "review-code", "title": "代码评审", "needs": ["impl"], "work": "agent", "skill": "review-code", "exit": ["output"], "status": "passed", "elapsed_ms": 1200000, "usage": {"input": 2200, "output": 800, "cache_read": 1800}}
+      - {"id": "review-docs", "title": "文档评审", "needs": ["impl"], "work": "agent", "skill": "review-docs", "exit": ["output"], "status": "passed", "elapsed_ms": 900000, "usage": {"input": 1800, "output": 500, "cache_read": 1400}}
+      - {"id": "sign", "title": "评审汇总", "needs": ["review-code", "review-docs"], "work": "confirm", "exit": ["confirm"], "status": "passed", "elapsed_ms": 7200000}
+      - {"id": "ship", "title": "上线", "needs": ["sign"], "work": "gate: ci", "exit": ["gate: ci"], "status": "passed", "elapsed_ms": 600000, "usage": {"input": 5000, "output": 1200, "cache_read": 7000}}
+  - summary:
+      id: "r4"
+      flow: "weekly-report"
+      subject: "周报 第 46 周"
+      status: "finished"
+      current: "待确认"
+      stations_done: 3
+      stations_total: 3
+      started_ms: 1763193600000
+      ended_ms: 1763196000000
+      usage: {"input": 3100, "output": 1200, "cache_read": 800, "cache_write": 90}
+    main_session: s7
+    stations:
+      - {"id": "collect", "title": "收集", "work": "session", "skill": "collect-tickets", "exit": ["output"], "status": "passed", "elapsed_ms": 420000, "usage": {"input": 1200, "output": 400, "cache_read": 300}}
+      - {"id": "summarize", "title": "汇总", "needs": ["collect"], "work": "session", "skill": "summarize-week", "exit": ["output"], "status": "passed", "elapsed_ms": 900000, "usage": {"input": 1900, "output": 800, "cache_read": 500, "cache_write": 90}}
+      - {"id": "confirm", "title": "待确认", "needs": ["summarize"], "work": "confirm", "exit": ["confirm"], "status": "passed", "elapsed_ms": 1080000}
 
 jobs:
   - job:
@@ -815,7 +915,7 @@ jobs:
         outcome: done
         elapsed_ms: 87000
         usage: {input: 4800, output: 760, cache_read: 1800}
-        target: {session: {id: s2-prev, title: 日志巡检}}
+        target: {session: {id: s2, title: 日志巡检}}
       - fired_ms: 1763082000000
         outcome: {failed: {message: provider 返回 429}}
         elapsed_ms: 3000
@@ -829,18 +929,18 @@ jobs:
           subject: "第 {week} 周工单"
           inputs: {}
       enabled: true
+      catch_up: false
       next_fire_ms: 1763604000000
-      last: {failed: {message: 收集站任务超时}}
+      last: done
     history:
-      - fired_ms: 1762855200000
+      - fired_ms: 1763193600000
+        outcome: done
+        elapsed_ms: 2400000
+        usage: {input: 3100, output: 1200, cache_read: 800, cache_write: 90}
+        target: {run: {id: r4, subject: 周报 第 46 周}}
+      - fired_ms: 1762588800000
         outcome: {failed: {message: 收集站任务超时}}
         elapsed_ms: 1800000
-        target: {run: {id: r-wk45, subject: 第 45 周工单}}
-      - fired_ms: 1762250400000
-        outcome: done
-        elapsed_ms: 640000
-        usage: {input: 9000, output: 2800, cache_read: 5000}
-        target: {run: {id: r-wk44, subject: 第 44 周工单}}
   - job:
       id: j3
       name: 月度归档
@@ -851,4 +951,26 @@ jobs:
           subject: "{month} 月归档"
           inputs: {}
       enabled: false
+      catch_up: false
     history: []
+  - job:
+      id: j4
+      name: 依赖巡检
+      cron: "0 */6 * * *"
+      kind:
+        simple:
+          prompt: 检查依赖的安全公告
+          skills: [audit]
+      enabled: true
+      catch_up: true
+      next_fire_ms: 1763294400000
+      last: {failed: {message: provider 返回 429}}
+    history:
+      - fired_ms: 1763272800000
+        outcome: {failed: {message: provider 返回 429}}
+        elapsed_ms: 2000
+      - fired_ms: 1763251200000
+        outcome: done
+        elapsed_ms: 64000
+        usage: {input: 3800, output: 650, cache_read: 1200}
+        target: {session: {id: s6, title: 老项目会话}}

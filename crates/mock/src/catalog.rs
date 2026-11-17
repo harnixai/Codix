@@ -36,6 +36,28 @@ const SCENARIOS: &[(&str, &str)] = &[
         "m10-goal-todo",
         include_str!("../scenarios/m10-goal-todo.yaml"),
     ),
+    (
+        "m11-flow-run",
+        include_str!("../scenarios/m11-flow-run.yaml"),
+    ),
+    (
+        "m12-flow-author",
+        include_str!("../scenarios/m12-flow-author.yaml"),
+    ),
+    ("m13-jobs", include_str!("../scenarios/m13-jobs.yaml")),
+    (
+        "m14-attention",
+        include_str!("../scenarios/m14-attention.yaml"),
+    ),
+    (
+        "m15-reconnect",
+        include_str!("../scenarios/m15-reconnect.yaml"),
+    ),
+    ("m18-errors", include_str!("../scenarios/m18-errors.yaml")),
+    (
+        "m20-first-run",
+        include_str!("../scenarios/m20-first-run.yaml"),
+    ),
     ("m16-storm", include_str!("../scenarios/m16-storm.yaml")),
     ("showcase", include_str!("../scenarios/showcase.yaml")),
 ];

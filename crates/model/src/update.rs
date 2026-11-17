@@ -92,6 +92,18 @@ pub(crate) enum Pending {
     },
     CreateOnly,
     TaskOutput(port::TaskId),
+    Runs(String),
+    FlowDetail(String),
+    RunView {
+        id: port::RunId,
+        follow: bool,
+    },
+    JobHistory(port::JobId),
+    /// 流程 / 作业的编辑会话（`flow:<名字>`、`job:<id>`）。
+    Authoring {
+        key: String,
+        follow: bool,
+    },
 }
 
 const RATIO_MIN: u16 = 40;
@@ -171,10 +183,19 @@ impl State {
     }
 
     pub(crate) fn call(&mut self, what: Pending, cmd: Command) -> Effect {
+        self.log(format!("→ {}", cmd.name()));
         let id = ReqId(self.next_req);
         self.next_req += 1;
         self.pending.insert(id, what);
         Effect::Call(id, Box::new(cmd))
+    }
+
+    pub(crate) fn log(&mut self, line: String) {
+        let at = crate::cards::fmt_clock(self.ui.now_ms);
+        self.ui.event_log.push_back(format!("{at}  {line}"));
+        while self.ui.event_log.len() > 500 {
+            self.ui.event_log.pop_front();
+        }
     }
 
     pub(crate) fn notice(&mut self, text: impl Into<String>, error: bool) {
@@ -213,7 +234,7 @@ pub fn update(s: &mut State, msg: Msg) -> Vec<Effect> {
         s.ui.idle_warned = false;
     }
     let mut effects = update_confirm(s, msg);
-    effects.extend(crate::sessions::ensure_watch(s));
+    effects.extend(crate::follow::after_update(s));
     fix_scroll(s);
     crate::chat_update::relayout(s);
     effects
@@ -240,6 +261,7 @@ fn update_inner(s: &mut State, msg: Msg) -> Vec<Effect> {
     match (&s.ui.screen, msg) {
         (_, Msg::Instances(op, r)) => instances_done(s, op, r),
         (Screen::Instances(_), Msg::Action(a)) => picker_action(s, a),
+        (Screen::Instances(_), Msg::Mouse(m)) => picker_mouse(s, m),
         (Screen::Detached(reason), Msg::Action(a)) => {
             let reason = reason.clone();
             detached_action(s, &reason, Some(a))
@@ -265,6 +287,11 @@ fn workbench(s: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Instances(..) => vec![],
         Msg::Action(a) => action(s, a),
+        Msg::Text(c) if s.ui.filtering => {
+            s.ui.filter[s.ui.tab.index()].push(c);
+            s.ui.upper_mut().selected = 0;
+            vec![]
+        }
         Msg::Text(c) => {
             s.ui.quit_armed_ms = None;
             if s.ui.focus == Focus::Composer {
@@ -374,6 +401,30 @@ fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
             vec![s.call(Pending::Ignore, Command::Close { session: id })]
         }
         Confirm::StopTask(task, _) => vec![s.call(Pending::Ignore, Command::StopTask { task })],
+        Confirm::CancelRun(run, _) => vec![s.call(
+            Pending::Ignore,
+            Command::RunOp {
+                run,
+                op: port::RunOp::Cancel,
+            },
+        )],
+        Confirm::ForceStation(run, station, _) => vec![s.call(
+            Pending::Ignore,
+            Command::RunOp {
+                run,
+                op: port::RunOp::Force {
+                    station,
+                    reason: "在 Codix 里手动强制放行".into(),
+                },
+            },
+        )],
+        Confirm::Rework(run, to, _) => vec![s.call(
+            Pending::Ignore,
+            Command::RunOp {
+                run,
+                op: port::RunOp::Rework { to },
+            },
+        )],
         Confirm::ClearGoal(id) => vec![s.call(
             Pending::Ignore,
             Command::UpdateGoal {
@@ -449,6 +500,37 @@ fn picker_action(s: &mut State, a: Action) -> Vec<Effect> {
         _ => {}
     }
     vec![]
+}
+
+/// 实例选择里的鼠标：点一行选中，双击打开，滚轮上下（需求 M-02、M-03）。
+fn picker_mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
+    let now = s.ui.now_ms;
+    let Screen::Instances(p) = &s.ui.screen else {
+        return vec![];
+    };
+    let n = (p.list.len() + 1).min(crate::state::PICKER_ROWS) as u16;
+    let scroll = p.scroll;
+    let b = layout::instances_box(s.ui.size, n);
+    let list = layout::Rect::new(b.x + 2, b.y + 2, b.w.saturating_sub(4), n);
+    match m.kind {
+        MouseKind::ScrollUp => picker_action(s, Action::Up),
+        MouseKind::ScrollDown => picker_action(s, Action::Down),
+        MouseKind::Down(MouseButton::Left) if list.contains(m.col, m.row) => {
+            let double = s
+                .ui
+                .last_click
+                .is_some_and(|(c, r, t)| c == m.col && r == m.row && now - t <= DOUBLE_CLICK_MS);
+            s.ui.last_click = Some((m.col, m.row, now));
+            if let Screen::Instances(p) = &mut s.ui.screen {
+                p.selected = scroll + (m.row - list.y) as usize;
+            }
+            if double {
+                return picker_action(s, Action::Open);
+            }
+            vec![]
+        }
+        _ => vec![],
+    }
 }
 
 fn create(s: &mut State) -> Vec<Effect> {
@@ -555,6 +637,33 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             None => vec![],
         };
     }
+    if let Some(Overlay::Text { scroll, .. } | Overlay::EventLog { scroll }) = &mut s.ui.overlay {
+        match a {
+            Action::Up => *scroll = scroll.saturating_sub(1),
+            Action::Down => *scroll += 1,
+            Action::PageUp => *scroll = scroll.saturating_sub(10),
+            Action::PageDown => *scroll += 10,
+            Action::Back | Action::EventLog | Action::Confirm => s.ui.overlay = None,
+            _ => {}
+        }
+        return vec![];
+    }
+    if s.ui.filtering {
+        let f = &mut s.ui.filter[s.ui.tab.index()];
+        match a {
+            Action::Backspace => {
+                f.pop();
+            }
+            Action::Back => {
+                f.clear();
+                s.ui.filtering = false;
+            }
+            Action::Submit | Action::Confirm | Action::Down | Action::Up => s.ui.filtering = false,
+            _ => {}
+        }
+        s.ui.upper_mut().selected = 0;
+        return vec![];
+    }
     if let Some(Overlay::Help { scroll }) = &mut s.ui.overlay {
         match a {
             Action::Up => *scroll = scroll.saturating_sub(1),
@@ -581,15 +690,25 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
     if let Some(e) = routed {
         return e;
     }
-    if s.ui.tab == Tab::Sessions
-        && s.ui.focus.in_side()
-        && let Some(e) = crate::sessions::action(s, a)
-    {
-        return e;
+    if s.ui.focus.in_side() {
+        let routed = match s.ui.tab {
+            Tab::Sessions => crate::sessions::action(s, a),
+            Tab::Flows => crate::flows::action(s, a),
+            Tab::Jobs => crate::jobs::action(s, a),
+        };
+        if let Some(e) = routed {
+            return e;
+        }
     }
     match a {
         Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
         Action::ToggleDetail => s.ui.detail = !s.ui.detail,
+        Action::NextAttention => return crate::follow::next_attention(s),
+        Action::EventLog => s.ui.overlay = Some(Overlay::EventLog { scroll: 0 }),
+        Action::Filter if s.ui.focus.in_side() => {
+            s.ui.filtering = true;
+            s.ui.focus = Focus::SideUpper;
+        }
         Action::ToggleTodos => s.ui.show_todos = !s.ui.show_todos,
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
@@ -721,6 +840,9 @@ fn move_selection(s: &mut State, focus: Focus, delta: isize) {
 }
 
 fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
+    if let Some(o) = s.ui.overlay.clone() {
+        return overlay_mouse(s, &o, m);
+    }
     let spec = layout_spec(s);
     let labels = tab_labels(s);
     let r = layout::compute(s.ui.size, &spec, &labels);
@@ -812,7 +934,109 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
     vec![]
 }
 
+/// 浮层里的鼠标：滚轮滚动；退出框的选项可以点；点到框外关掉浮层。
+fn overlay_mouse(s: &mut State, o: &Overlay, m: Mouse) -> Vec<Effect> {
+    let f = crate::view::view(s);
+    let Some(ov) = f.overlay else {
+        return vec![];
+    };
+    let r = layout::overlay_rect(s.ui.size, ov.width, ov.height);
+    match m.kind {
+        MouseKind::ScrollUp => action(s, Action::Up),
+        MouseKind::ScrollDown => action(s, Action::Down),
+        MouseKind::Down(MouseButton::Left) if !r.contains(m.col, m.row) => {
+            s.ui.overlay = None;
+            vec![]
+        }
+        MouseKind::Down(MouseButton::Left) => {
+            if let Overlay::Exit { .. } = o {
+                // 选项在框内第 3 到 5 行（第 1 行问句、第 2 行空行）。
+                let line = m.row.saturating_sub(r.y + 1) as usize;
+                if (2..5).contains(&line) {
+                    return exit_choice(s, line - 2);
+                }
+            }
+            vec![]
+        }
+        _ => vec![],
+    }
+}
+
+fn event_name(e: &Event) -> String {
+    let v = serde_json::to_value(e).unwrap_or_default();
+    let name = match &v {
+        serde_json::Value::Object(m) => m.keys().next().cloned().unwrap_or_default(),
+        serde_json::Value::String(x) => x.clone(),
+        _ => String::new(),
+    };
+    match e.session() {
+        Some(id) => format!("← {name}  {id}"),
+        None => format!("← {name}"),
+    }
+}
+
+fn upsert_run(s: &mut State, r: &port::RunSummary) {
+    let list = s.domain.runs.entry(r.flow.clone()).or_default();
+    match list.iter_mut().find(|x| x.id == r.id) {
+        Some(x) => *x = r.clone(),
+        None => list.insert(0, r.clone()),
+    }
+}
+
 fn event(s: &mut State, e: Event) -> Vec<Effect> {
+    s.log(event_name(&e));
+    match &e {
+        Event::RunUpserted(r) => {
+            upsert_run(s, r);
+            if let Some(v) = s.domain.run_views.get_mut(&r.id) {
+                v.summary = r.clone();
+            }
+        }
+        Event::RunDetail(v) => {
+            upsert_run(s, &v.summary);
+            s.domain
+                .run_views
+                .insert(v.summary.id.clone(), (**v).clone());
+        }
+        Event::FlowDetail(d) => {
+            s.domain
+                .flow_details
+                .insert(d.summary.name.clone(), (**d).clone());
+            match s.domain.flows.iter_mut().find(|f| f.name == d.summary.name) {
+                Some(f) => *f = d.summary.clone(),
+                None => s.domain.flows.push(d.summary.clone()),
+            }
+        }
+        Event::JobFired { job, entry } => {
+            s.domain
+                .job_history
+                .entry(job.clone())
+                .or_default()
+                .insert(0, entry.clone());
+            if let Some(j) = s.domain.jobs.iter_mut().find(|j| &j.id == job) {
+                j.last = Some(entry.outcome.clone());
+            }
+        }
+        Event::Connection(port::ConnState::Resynced) => {
+            let mut out = vec![
+                s.call(
+                    Pending::Sessions,
+                    Command::ListSessions {
+                        filter: port::SessionFilter::default(),
+                    },
+                ),
+                s.call(Pending::Flows, Command::ListFlows),
+                s.call(Pending::Jobs, Command::ListJobs),
+            ];
+            s.domain.runs.clear();
+            s.ui.loading.clear();
+            out.extend(crate::chat_update::chat_event(s, &e));
+            s.domain.conn = Some(port::ConnState::Resynced);
+            s.notice("已重新连上，正在刷新", false);
+            return out;
+        }
+        _ => {}
+    }
     let mut out = crate::chat_update::chat_event(s, &e);
     match &e {
         Event::TaskUpserted(t) => {
@@ -880,10 +1104,30 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
     let Some(what) = s.pending.remove(&id) else {
         return vec![];
     };
+    let key = match &what {
+        Pending::Runs(f) => Some(format!("runs:{f}")),
+        Pending::FlowDetail(f) => Some(format!("flow:{f}")),
+        Pending::RunView { id, .. } => Some(format!("run:{id}")),
+        Pending::JobHistory(j) => Some(format!("history:{j}")),
+        Pending::Authoring { key, .. } => Some(format!("authoring:{key}")),
+        _ => None,
+    };
+    if let Some(k) = key {
+        s.ui.loading.remove(&k);
+    }
     let reply = match r {
         Ok(r) => r,
         Err(e) => {
-            s.notice(e.to_string(), true);
+            let tab = match what {
+                Pending::Sessions => Some(Tab::Sessions),
+                Pending::Flows => Some(Tab::Flows),
+                Pending::Jobs => Some(Tab::Jobs),
+                _ => None,
+            };
+            match tab {
+                Some(t) => s.domain.load_errors[t.index()] = Some(e.to_string()),
+                None => s.notice(e.to_string(), true),
+            }
             return vec![];
         }
     };
@@ -905,9 +1149,42 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
             d.jobs_available = jobs;
             d.conn = Some(ConnState::Connected);
         }
-        (Pending::Sessions, Reply::Sessions(v)) => d.sessions = v,
-        (Pending::Flows, Reply::Flows(v)) => d.flows = v,
-        (Pending::Jobs, Reply::Jobs(v)) => d.jobs = v,
+        (Pending::Sessions, Reply::Sessions(v)) => {
+            d.sessions = v;
+            d.load_errors[0] = None;
+        }
+        (Pending::Flows, Reply::Flows(v)) => {
+            d.flows = v;
+            d.load_errors[1] = None;
+        }
+        (Pending::Jobs, Reply::Jobs(v)) => {
+            d.jobs = v;
+            d.load_errors[2] = None;
+        }
+        (Pending::Runs(f), Reply::Runs(v)) => {
+            d.runs.insert(f, v);
+        }
+        (Pending::FlowDetail(f), Reply::Flow(v)) => {
+            d.flow_details.insert(f, *v);
+        }
+        (Pending::RunView { id, follow }, Reply::Run(v)) => {
+            let main = v.main_session.clone();
+            d.run_views.insert(id, *v);
+            if follow {
+                return crate::follow::show(s, main, vec![], None);
+            }
+            s.ui.last_follow = None;
+        }
+        (Pending::JobHistory(j), Reply::JobHistory(v)) => {
+            d.job_history.insert(j, v);
+        }
+        (Pending::Authoring { key, follow }, Reply::Session(sum)) => {
+            d.authoring.insert(key, sum.id.clone());
+            if follow {
+                s.ui.last_follow = None;
+                return crate::follow::show(s, sum.id, vec![], None);
+            }
+        }
         (what, reply) => return crate::chat_update::chat_reply(s, what, reply),
     }
     vec![]

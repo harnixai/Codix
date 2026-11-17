@@ -1,0 +1,6 @@
+# 场景 m14：需要你的事冒出来。1 秒 s8 要批一条 kill，2 秒 s3 的目标卡住。
+name: m14-attention
+seed: default
+timeline:
+  - {at: 1000, prompt_pending: {"session": "s8", "prompt": {"id": "p9", "kind": {"permission": {"tool": "Bash", "summary": "kill -9 4123"}}, "asked_ms": 1763280001000}}}
+  - {at: 2000, goal_changed: {"session": "s3", "goal": {"objective": "整理 OAuth 迁移方案对比", "phase": "blocked", "rounds_started": 3, "max_rounds": 32, "blocked_reason": "需要你确认是否继续翻译"}}}
