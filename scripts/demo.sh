@@ -33,9 +33,11 @@ mkdir -p "$D/home" "$D/shop"
 install -m 600 "$ENV_SRC" "$D/env"
 set -a; source "$D/env"; set +a
 # Agix 不读 ANTHROPIC_MODEL：模型名写进它的设置。提问的超时放长，留给人看的那个不会自己撤掉。
+# 允许客户端放宽权限模式：演示里 Shift+Tab 才能切到"自动接受编辑"（缺省设置下只能收紧）。
 cat > "$D/home/settings.json" <<JSON
 {
   "model": { "model_name": "${ANTHROPIC_MODEL:-claude-sonnet-4-6}" },
+  "allow_client_permission_override": true,
   "execution": { "permission_prompt_timeout_secs": 86400 }
 }
 JSON
