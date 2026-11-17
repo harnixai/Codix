@@ -141,6 +141,14 @@ pub(crate) fn options_of(spec: &OpenSpec) -> Value {
     let mut rules = ask_rules(&spec.asks);
     if let (Some(r), Value::Array(allow)) = (rules.as_array_mut(), tools::read_only_rules()) {
         r.extend(allow);
+        // 流程自己的工具（flow_state / flow_submit / flow_propose）只动这次运行的记录。Harnix 把它们
+        // 做成引擎内建的工具；这里是 Agix 的宿主工具，缺省每次都问人——一站交付就得有人批，
+        // 无人看着的运行就卡住。
+        r.extend(
+            spec.tools
+                .iter()
+                .map(|t| json!({"source": "session", "behavior": "allow", "tool_name": t.name})),
+        );
     }
     let mut o = json!({
         "prompt_types": ["permission", "question"],
@@ -356,5 +364,17 @@ mod tests {
         );
         assert!(rules.iter().any(|r| r["behavior"] == "allow"));
         assert!(o.get("host_tools").is_none());
+
+        spec.tools = harnix_flow::runner::tool_specs();
+        let o = options_of(&spec);
+        let rules = o["permission_rules"].as_array().unwrap();
+        for t in ["flow_state", "flow_submit", "flow_propose"] {
+            assert!(
+                rules
+                    .iter()
+                    .any(|r| r["behavior"] == "allow" && r["tool_name"] == t),
+                "流程自己的工具不问人：{t}"
+            );
+        }
     }
 }

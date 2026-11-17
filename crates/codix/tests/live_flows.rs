@@ -184,12 +184,15 @@ async fn a_run_goes_from_start_to_finish() {
     assert_eq!(done.stations[0].status, StationStatus::Passed);
     // 主会话是这次运行的会话，归属是流程。
     let main = done.main_session.clone();
-    let sum = c
-        .sessions()
-        .await
-        .into_iter()
-        .find(|s| s.id == main)
-        .expect("主会话在列表里");
+    let all = c.sessions().await;
+    let sum = all.iter().find(|s| s.id == main).unwrap_or_else(|| {
+        panic!(
+            "主会话 {main:?} 不在列表里：{:?}",
+            all.iter()
+                .map(|s| (&s.id, &s.provenance.origin))
+                .collect::<Vec<_>>()
+        )
+    });
     assert!(
         matches!(&sum.provenance.origin, port::Origin::FlowStation { run, .. } if *run == id),
         "{:?}",
