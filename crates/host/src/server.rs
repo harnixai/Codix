@@ -189,11 +189,21 @@ async fn connection(sh: Arc<Shared>, stream: UnixStream, conn: u64) {
     };
     // `list` 探测 socket 时只连不发，走的就是这里。
     let Ok(Ok(Some(line))) = first else { return };
-    let (id, mut client, force) = match serde_json::from_str::<ClientFrame>(&line) {
+    let (id, mut client, force, idle_ms) = match serde_json::from_str::<ClientFrame>(&line) {
         Ok(ClientFrame {
             id,
-            cmd: Command::Hello { client, force },
-        }) => (id, client, force),
+            cmd:
+                Command::Hello {
+                    client,
+                    force,
+                    idle_timeout_ms,
+                },
+        }) => (
+            id,
+            client,
+            force,
+            idle_timeout_ms.unwrap_or(sh.idle_timeout_ms),
+        ),
         _ => {
             if let Ok(IdOnly { id }) = serde_json::from_str(&line) {
                 let err = PortError::Failed("first frame must be hello".into());
@@ -250,7 +260,7 @@ async fn connection(sh: Arc<Shared>, stream: UnixStream, conn: u64) {
         let mut kicked = close_rx;
         loop {
             let hb_deadline = seen + sh.heartbeat_timeout;
-            let idle_deadline = (sh.idle_timeout_ms > 0).then(|| idle.deadline(sh.idle_timeout_ms));
+            let idle_deadline = (idle_ms > 0).then(|| idle.deadline(idle_ms));
             let deadline = idle_deadline.map_or(hb_deadline, |d| d.min(hb_deadline));
             tokio::select! {
                 _ = closed(&mut kicked) => break,

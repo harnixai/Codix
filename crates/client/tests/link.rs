@@ -113,7 +113,7 @@ async fn calls_are_matched_and_events_come_first() {
     let dir = tempfile::tempdir().unwrap();
     let _s = serve_at(&sock(&dir));
     let b = Arc::new(
-        SocketBackend::connect(sock(&dir), None, me(7), false)
+        SocketBackend::connect(sock(&dir), None, me(7), false, None)
             .await
             .unwrap(),
     );
@@ -137,7 +137,7 @@ async fn reconnects_after_the_instance_restarts() {
     let dir = tempfile::tempdir().unwrap();
     let s = serve_at(&sock(&dir));
     let b = Arc::new(
-        SocketBackend::connect(sock(&dir), None, me(7), false)
+        SocketBackend::connect(sock(&dir), None, me(7), false, None)
             .await
             .unwrap(),
     );
@@ -169,15 +169,15 @@ async fn reconnects_after_the_instance_restarts() {
 async fn kicked_client_does_not_reconnect() {
     let dir = tempfile::tempdir().unwrap();
     let _s = serve_at(&sock(&dir));
-    let a = SocketBackend::connect(sock(&dir), None, me(7), false)
+    let a = SocketBackend::connect(sock(&dir), None, me(7), false, None)
         .await
         .unwrap();
     let mut ev = a.events();
-    match SocketBackend::connect(sock(&dir), None, me(8), false).await {
+    match SocketBackend::connect(sock(&dir), None, me(8), false, None).await {
         Err(PortError::Occupied { holder, .. }) => assert_eq!(holder.pid, 7),
         other => panic!("{:?}", other.map(|b| b.instance().clone())),
     }
-    let b = SocketBackend::connect(sock(&dir), None, me(8), true)
+    let b = SocketBackend::connect(sock(&dir), None, me(8), true, None)
         .await
         .unwrap();
     match next(&mut ev).await {
@@ -219,7 +219,7 @@ async fn gives_up_when_the_instance_pid_is_dead() {
     let dir = tempfile::tempdir().unwrap();
     let disc = dir.path().join("instance.json");
     let s = serve_at(&sock(&dir));
-    let b = SocketBackend::connect(sock(&dir), Some(disc.clone()), me(7), false)
+    let b = SocketBackend::connect(sock(&dir), Some(disc.clone()), me(7), false, None)
         .await
         .unwrap();
     let mut ev = b.events();

@@ -15,6 +15,9 @@ pub enum Command {
         client: ClientInfo,
         #[serde(default)]
         force: bool,
+        /// 这一次接入的空闲超时（`codix attach --idle-timeout`）；`None` 用实例自己配置的。
+        #[serde(default)]
+        idle_timeout_ms: Option<u64>,
     },
     Heartbeat {
         last_input_ms: u64,

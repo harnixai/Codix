@@ -164,6 +164,7 @@ impl Raw {
             Command::Hello {
                 client: client(pid),
                 force,
+                idle_timeout_ms: None,
             },
         )
         .await;
@@ -203,6 +204,7 @@ async fn handshake_attaches_and_repeated_hello_is_idempotent() {
         Command::Hello {
             client: client(7),
             force: false,
+            idle_timeout_ms: None,
         },
     )
     .await;
@@ -321,6 +323,7 @@ async fn silent_client_is_dropped_after_heartbeat_timeout() {
         Command::Hello {
             client: client(7),
             force: false,
+            idle_timeout_ms: None,
         },
     )
     .await;
@@ -341,6 +344,7 @@ async fn idle_fallback_detaches() {
         Command::Hello {
             client: c,
             force: false,
+            idle_timeout_ms: None,
         },
     )
     .await;

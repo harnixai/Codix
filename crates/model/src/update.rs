@@ -132,6 +132,7 @@ impl State {
                 Command::Hello {
                     client,
                     force: false,
+                    idle_timeout_ms: None,
                 },
             ),
             self.call(
