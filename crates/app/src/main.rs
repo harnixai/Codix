@@ -151,7 +151,7 @@ async fn run(
     );
     install_panic_hook();
     t.enter(true)?;
-    let result = event_loop(&mut t, instances, start, cfg_err, settings).await;
+    let result = event_loop(&mut t, instances, start, cfg_err, settings, true).await;
     t.leave()?;
     term::restore(&mut t, negotiated);
     result
@@ -179,16 +179,19 @@ async fn event_loop(
     start: Start,
     cfg_err: Option<String>,
     settings: model::Settings,
+    mock_mode: bool,
 ) -> Result<()> {
     let keymap = Arc::new(keys::Keymap::default());
-    let (mut core, effects) = Core::new(
-        instances,
-        keymap,
-        t.size(),
-        Box::new(now_ms),
-        start,
-        settings,
-    );
+    // mock 的数据以一个固定时刻为"现在"：交互运行时让时钟从那一刻起走，耗时、"下次触发"
+    // 这些才对得上。真实实例用墙上时间。
+    let begin = std::time::Instant::now();
+    let epoch = mock::MockOptions::default().epoch_ms;
+    let clock: Box<dyn Fn() -> u64 + Send> = if mock_mode {
+        Box::new(move || epoch + begin.elapsed().as_millis() as u64)
+    } else {
+        Box::new(now_ms)
+    };
+    let (mut core, effects) = Core::new(instances, keymap, t.size(), clock, start, settings);
     if let Some(e) = cfg_err {
         core.handle(Msg::Event(Box::new(port::Event::Notice {
             level: port::NoticeLevel::Error,

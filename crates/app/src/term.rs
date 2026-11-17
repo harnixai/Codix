@@ -33,6 +33,13 @@ pub struct CrosstermTerm {
 }
 
 impl CrosstermTerm {
+    /// 清屏并让下一帧整屏重画。不用 `Terminal::clear`：它要先向终端查询光标位置，
+    /// 不回应查询的终端（串口控制台之类）上会等两秒然后报错退出；`resize` 不查询。
+    fn clear_screen(&mut self) -> io::Result<()> {
+        let (c, r) = crossterm::terminal::size().unwrap_or((80, 24));
+        self.terminal.resize(ratatui::layout::Rect::new(0, 0, c, r))
+    }
+
     pub fn new() -> io::Result<Self> {
         Ok(CrosstermTerm {
             terminal: Terminal::new(CrosstermBackend::new(io::stdout()))?,
@@ -59,7 +66,7 @@ impl Term for CrosstermTerm {
         execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
         self.entered = true;
         self.set_mouse(mouse)?;
-        self.terminal.clear()
+        self.clear_screen()
     }
 
     fn leave(&mut self) -> io::Result<()> {
@@ -93,7 +100,7 @@ impl Term for CrosstermTerm {
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.terminal.clear()
+        self.clear_screen()
     }
 }
 
