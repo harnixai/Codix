@@ -581,7 +581,9 @@ fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
         .filter(|(j, x)| x.needs.contains(&st.id) || (x.needs.is_empty() && *j == i + 1))
         .map(|(_, x)| x.title.as_str())
         .collect();
-    let field = |k: &str, v: String, tone: Tone| Line::toned(pad(k, 8), Tone::Dim).push(v, tone);
+    let label_w = label_width(&["id", "执行", "skill", "出口", "前一站", "下一站", "定义"]);
+    let field =
+        |k: &str, v: String, tone: Tone| Line::toned(pad(k, label_w), Tone::Dim).push(v, tone);
     let mut out = vec![
         field("id", st.id.to_string(), Tone::Code),
         field("执行", st.work.clone(), Tone::Normal),
@@ -611,12 +613,10 @@ fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
         ),
     ];
     let yaml = station_yaml(&d.yaml, st.id.as_str());
-    if !yaml.is_empty() {
-        out.push(Line::toned("定义", Tone::Dim));
-        out.extend(
-            yaml.into_iter()
-                .map(|l| Line::toned(format!("  {l}"), Tone::Code)),
-        );
+    // "定义"也是一个字段：YAML 从值那一列起，续行同样缩到那一列，中线和上面一致。
+    for (k, l) in yaml.into_iter().enumerate() {
+        let name = if k == 0 { "定义" } else { "" };
+        out.push(Line::toned(pad(name, label_w), Tone::Dim).push(l, Tone::Code));
     }
     out
 }
@@ -638,6 +638,11 @@ fn station_yaml(yaml: &str, id: &str) -> Vec<String> {
         out.push(l.get(indent..).unwrap_or(l.trim_start()).to_string());
     }
     out
+}
+
+/// 字段名一列的宽度：按最长的那个名字，再空两格。名字左对齐，值从同一列起。
+fn label_width(labels: &[&str]) -> usize {
+    labels.iter().map(|k| display_width(k)).max().unwrap_or(0) + 2
 }
 
 /// 按显示宽度补齐（中文字占两列，`format!("{:<n}")` 按字符数补会错位）。
@@ -690,7 +695,12 @@ impl JobDefRow {
 /// 作业的定义（右下）：触发规则、状态，简单作业的提示词与 skills，流程作业的流程与主题。
 /// 会话、流程、作业都是项目级的，所以这里不再写项目。
 pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
-    let field = |k: &str| Line::toned(pad(k, 8), Tone::Dim);
+    let labels: &[&str] = match &j.kind {
+        JobKind::Simple { .. } => &["触发", "状态", "提示词", "skills", "场景"],
+        JobKind::Flow { .. } => &["触发", "状态", "流程", "主题", "输入"],
+    };
+    let label_w = label_width(labels);
+    let field = |k: &str| Line::toned(pad(k, label_w), Tone::Dim);
     let next = j
         .next_fire_ms
         .map(|t| format!("下次 {}", fmt_clock(t)))

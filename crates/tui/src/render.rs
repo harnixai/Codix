@@ -91,15 +91,23 @@ fn frame_block(focused: bool) -> Block<'static> {
         .border_style(border_style(focused))
 }
 
-/// 框上沿的标题条：左标题从第 2 列起，右标题贴右边，各自带底色。
+/// 框上沿的标题：左标题从第 2 列起，右标题贴右边。不带底色，和右上的标签头一个做法：
+/// 有焦点时左标题换主色加粗，没焦点是淡色；右标题始终是淡色。
 fn titles(f: &mut Frame, frame: Rect, left: &Line, right: &Line, focused: bool) {
     let room = frame.w.saturating_sub(4) as usize;
     if room == 0 {
         return;
     }
-    let paint = |l: &Line| {
+    let left_style = if focused {
+        Style::default()
+            .fg(th().accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        style(Tone::Dim)
+    };
+    let paint = |l: &Line, st: Style| {
         let text = format!(" {} ", l.text());
-        RLine::from(RSpan::styled(text, bar(focused)))
+        RLine::from(RSpan::styled(text, st))
     };
     let rw = if right.spans.is_empty() {
         0
@@ -110,14 +118,14 @@ fn titles(f: &mut Frame, frame: Rect, left: &Line, right: &Line, focused: bool) 
     if lw > 2 {
         let l = Line::plain(truncate_to_width(&left.text(), lw - 2));
         f.render_widget(
-            Paragraph::new(paint(&l)),
+            Paragraph::new(paint(&l, left_style)),
             rr(Rect::new(frame.x + 2, frame.y, lw as u16, 1)),
         );
     }
     if rw > 2 {
         let r = Line::plain(truncate_to_width(&right.text(), rw - 2));
         f.render_widget(
-            Paragraph::new(paint(&r)),
+            Paragraph::new(paint(&r, style(Tone::Dim))),
             rr(Rect::new(
                 frame.right() - 2 - rw as u16,
                 frame.y,
@@ -291,29 +299,18 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
         f.render_widget(Paragraph::new(RLine::from(spans)), rr(*hit));
     }
     section(f, s.upper, &p.upper);
-    // 下半的标题：有焦点时字也亮（带底色），否则是淡色的字。
-    let title = p.lower.title.clone().unwrap_or_default();
-    if down {
-        titles(
-            f,
-            s.lower_frame,
-            &Line::plain(title),
-            &p.lower
-                .title_right
-                .clone()
-                .map(Line::plain)
-                .unwrap_or_default(),
-            true,
-        );
-    } else if !title.is_empty() {
-        let t = truncate_to_width(&format!(" {title} "), s.area.w.saturating_sub(4) as usize);
-        lines(
-            f,
-            Rect::new(s.area.x + 2, mid, display_width(&t) as u16, 1),
-            &[Line::toned(t, Tone::Dim)],
-            None,
-        );
-    }
+    // 下半的标题：和对话区一样，有焦点时字换主色，不带底色。
+    titles(
+        f,
+        s.lower_frame,
+        &Line::plain(p.lower.title.clone().unwrap_or_default()),
+        &p.lower
+            .title_right
+            .clone()
+            .map(Line::plain)
+            .unwrap_or_default(),
+        down,
+    );
     section(f, s.lower, &p.lower);
 }
 

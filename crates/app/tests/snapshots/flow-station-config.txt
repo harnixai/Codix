@@ -6,13 +6,13 @@
 │ 出口    output、gate: ci                                                                     ││     ✓ 登录限流  已完成                  7/7 站  22h13m  86.0k│
 │ 前一站  设计                                                                                 ││ ▸   周报                                weekly-report  项目  │
 │ 下一站  代码评审、文档评审                                                                   ││ ▸ ◎ 发布检查                            release-check  全局  │
-│ 定义                                                                                         ││                                                              │
-│   - id: impl                                                                                 ││                                                              │
-│     title: 实现                                                                              ││                                                              │
-│     needs: [design]                                                                          ││                                                              │
-│     tasks:                                                                                   ││                                                              │
-│       - {id: backend, executor: {kind: agent}, skill: implement}                             ││                                                              │
-│ ───────────────────────────────────────────────────────────────────────── ↑2 ↓3 · Shift+↑↓ ─ ││                                                              │
+│ 定义    - id: impl                                                                           ││                                                              │
+│           title: 实现                                                                        ││                                                              │
+│           needs: [design]                                                                    ││                                                              │
+│           tasks:                                                                             ││                                                              │
+│             - {id: backend, executor: {kind: agent}, skill: implement}                       ││                                                              │
+│             - {id: frontend, executor: {kind: agent}, skill: implement}                      ││                                                              │
+│ ───────────────────────────────────────────────────────────────────────── ↑2 ↓2 · Shift+↑↓ ─ ││                                                              │
 │ ╭──────────────────────────────────────────────────────────╮                                 ││                                                              │
 │ │ ▄▀▀ ▄▀▄ █▀▄ █ ▀▄▀                                        │                                 ││                                                              │
 │ │ ▀▄▄ ▀▄▀ █▄▀ █ ▄▀▄   Codix 0.1.0                          │                                 ││                                                              │

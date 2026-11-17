@@ -20,7 +20,7 @@
 │      test auth::token::tests::rejects_empty ... ok                                           ││                                                              │
 │      … +18 行 (ctrl+o 展开)                                                                  ││                                                              │
 │                                                                                              ││                                                              │
-│ ⏺ Bash(cargo test --test integration)                                                        │├─ 重构认证模块 ───────────────────────────────────────────────┤
+│ ⏺ Bash(cargo test --test integration)                                                        │├─ 重构认证模块 ──────────────────────────────────── 5 个在跑 ─┤
 │   ⎿  Error: error[E0432]: unresolved import `auth::oauth::MockProvider`                      ││›◐ 主 Agent                                       等你   41.0k│
 │       --> tests/integration.rs:4:5                                                           ││ ├ ▾ ◐ ◆ 审查认证改动  reviewer        等你批准  12.0k   8m00s│
 │        |                                                                                     ││ │ ├ ▾ ● ◆ 检查依赖许可  general         运行中   3.7k   2m20s│
