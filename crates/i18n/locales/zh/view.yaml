@@ -62,6 +62,7 @@ view:
     filter: "没有匹配「{filter}」的 · Esc 清除过滤"
     sessions: "还没有会话 · 选上面一行新建，或者直接在左边输入"
     flows: "还没有流程 · n 在左边对话里描述一个流程来创建"
+    flows_unavailable: "流程尚未接入：等 Harnix 的流程内核拆分发布后接上"
     jobs: "还没有作业 · n 在左边对话里说清楚何时做什么"
   job_detail: "{name} 的详情"
   confirm:

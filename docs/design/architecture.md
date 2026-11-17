@@ -255,7 +255,8 @@ loop {
 ├── keybindings.json              快捷键覆盖
 ├── flows/                        流程包，所有实例共用（流程接入后才用）
 └── instances/<名字>/             目录 0700
-    ├── instance.json             发现文件：名字、pid、socket、项目、启动时刻、版本、当前接入者
+    ├── instance.json             发现文件：名字、pid、项目、启动时刻、版本、当前接入者；实例退出时删掉
+    ├── meta.json                 实例自己的设定（项目）；停了也留着，`codix start` 照它重新拉起
     ├── instance.lock             flock：同名实例只能跑一个；拿不到锁的 `codix host` 立即退出
     ├── host.sock                 0600
     ├── groups.json               Agix 的 groups_file，回收上一次没收尾的进程组

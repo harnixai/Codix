@@ -556,6 +556,10 @@ fn empty_hint(s: &State) -> String {
     }
     match s.ui.tab {
         Tab::Sessions => i18n::t!("view.empty.sessions"),
+        // 实例还没接流程（architecture §8.6）：别让人以为是自己没建。
+        Tab::Flows if s.domain.instance.is_some() && !s.domain.flows_available => {
+            i18n::t!("view.empty.flows_unavailable")
+        }
         Tab::Flows => i18n::t!("view.empty.flows"),
         Tab::Jobs => i18n::t!("view.empty.jobs"),
     }
