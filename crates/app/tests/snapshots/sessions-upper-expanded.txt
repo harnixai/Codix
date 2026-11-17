@@ -1,23 +1,23 @@
  Codix  实例 dev@ops-01                                                                                                                                ● 已连接
 ╭─ 会话 › 重构认证模块 ─────────────────────────────────────────────────────────────── ◐ 等你 ─╮╭─ 会话 ─ 流程 ─ 作业 ─────────────────────────────────────────╮
-│ dev@ops-01 · ~/work/auth · code · claude-sonnet-5-5 · 用户新建                               ││ ▸ ● 排查内存泄漏                ~/work/gateway  code  26.2k  │
-│ ─ goal 与 todo · goal ● 进行中 · todo 2/7 ──────────────────────────────────── Ctrl+T 收起 ─ ││ ▸ ● 支付重试（主会话）              ~/work/pay  code  61.0k ⇶│
-│ goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮                                                    ││ ▾ ◐ 重构认证模块                   ~/work/auth  code  41.0k  │
+│ dev@ops-01 · ~/work/auth · code · claude-sonnet-5-5 · 用户新建                               ││ ＋ 新建会话  Enter · 或在输入框里 /new                       │
+│ ─ goal 与 todo · goal ● 进行中 · todo 2/7 ──────────────────────────────────── Ctrl+T 收起 ─ ││ ▸ ● 排查内存泄漏                                code  26.2k  │
+│ goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮                                                    ││ ▾ ◐ 重构认证模块                                code  41.0k  │
 │ todo 2/7                                                                                     ││      goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮               │
-│   ☒ 梳理现有认证入口                                                                         ││›     todo ▾ 2/7  ☒ 梳理现有认证入口  ☒ 调研 OAuth 库  ◼ 实…  │
-│   ☒ 调研 OAuth 库                                                                            ││          ☒ 梳理现有认证入口                                  │
-│   ◼ 实现 provider                                                                            ││          ☒ 调研 OAuth 库                                     │
-│   ☐ 迁移 session 存储                                                                        ││          ◼ 实现 provider                                     │
-│   ☐ 改写登录与回调路由                                                                       ││          ☐ 迁移 session 存储                                 │
-│   ☐ 补齐集成测试                                                                             ││          ☐ 改写登录与回调路由                                │
-│   ☐ 更新文档与迁移说明                                                                       ││          ☐ 补齐集成测试                                      │
-│ ──────────────────────────────────────────────────────────────────────────────────────────── ││          ☐ 更新文档与迁移说明                                │
-│      … +9 行 (ctrl+o 展开)                                                                   ││ ▸ ◐ 导出 CSV（主会话）           ~/work/report  code  28.8k ⇶│
-│                                                                                              ││ ▸ ○ 日志巡检                          /srv/ops  ops   8.2k ⏰│
-│ ⏺ Bash(cargo test auth)                                                                      ││ ▸ ○ 翻译文档                           ~/notes  code   5.3k ⑂│
-│   ⎿  running 18 tests                                                                        ││ ▸ ○ 写周报                            ~/notes  code   5.2k ⏰│
-│      test auth::token::tests::parses_bearer ... ok                                           ││ ▸ ○ 昨天的调研                         ~/notes  code   8.0k ⑂│
-│      test auth::token::tests::rejects_empty ... ok                                           ││ ▸ ○ 老项目会话                         ~/notes  code   2.6k  │
+│   ▶ 3. 实现 provider                                                                         ││›     todo ▾ 2/7  ▶ 实现 provider  ☐ 迁移 session 存储  ☐ 改… │
+│   ☐ 4. 迁移 session 存储                                                                     ││          ▶ 3. 实现 provider                                  │
+│   ☐ 5. 改写登录与回调路由                                                                    ││          ☐ 4. 迁移 session 存储                              │
+│   ☐ 6. 补齐集成测试                                                                          ││          ☐ 5. 改写登录与回调路由                             │
+│   ☐ 7. 更新文档与迁移说明                                                                    ││          ☐ 6. 补齐集成测试                                   │
+│   ✓ 1. 梳理现有认证入口                                                                      ││          ☐ 7. 更新文档与迁移说明                             │
+│   ✓ 2. 调研 OAuth 库                                                                         ││          ✓ 1. 梳理现有认证入口                               │
+│ ──────────────────────────────────────────────────────────────────────────────────────────── ││          ✓ 2. 调研 OAuth 库                                  │
+│      … +9 行 (ctrl+o 展开)                                                                   ││ ▸ ○ 翻译文档                                    code   5.3k ⑂│
+│                                                                                              ││ ▸ ○ 昨天的调研                                  code   8.0k ⑂│
+│ ⏺ Bash(cargo test auth)                                                                      ││ ▸ ○ 老项目会话                                  code   2.6k  │
+│   ⎿  running 18 tests                                                                        ││                                                              │
+│      test auth::token::tests::parses_bearer ... ok                                           ││                                                              │
+│      test auth::token::tests::rejects_empty ... ok                                           ││                                                              │
 │      … +18 行 (ctrl+o 展开)                                                                  ││                                                              │
 │                                                                                              ││                                                              │
 │ ⏺ Bash(cargo test --test integration)                                                        │├─ 重构认证模块 ───────────────────────────────────────────────┤

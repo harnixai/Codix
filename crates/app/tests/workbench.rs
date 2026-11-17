@@ -98,15 +98,15 @@ async fn side_selection_by_keys_click_and_wheel() {
     let mut h = Harness::new("default", WIDE).await;
     h.keys("F2 Down Down").await;
     assert_eq!(h.core.state.ui.upper().selected, 2);
-    let n = h.core.state.main_sessions().count();
+    let n = h.core.state.session_rows().len();
     h.keys("PageDown").await;
     assert_eq!(h.core.state.ui.upper().selected, n - 1, "停在最后一项");
-    let second = h.core.state.main_sessions().nth(1).unwrap().title.clone();
+    let second = h.core.state.user_sessions().nth(1).unwrap().title.clone();
     let (col, row) = h.find(&second).unwrap();
     h.click(col, row);
-    assert_eq!(h.core.state.ui.upper().selected, 1);
+    assert_eq!(h.core.state.ui.upper().selected, 2, "第 0 行是新建会话");
     h.mouse(model::MouseKind::ScrollDown, col, row);
-    assert_eq!(h.core.state.ui.upper().selected, 4);
+    assert_eq!(h.core.state.ui.upper().selected, 5);
 }
 
 #[tokio::test(start_paused = true)]

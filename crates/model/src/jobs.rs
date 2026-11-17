@@ -5,13 +5,15 @@ use keys::Action;
 use port::{Command, JobId, JobKind, JobOutcome, JobTarget};
 use tui::{Line, Tone};
 
-use crate::panel::{fmt_clock, job_info, outcome};
+use crate::panel::{JobDefRow, fmt_clock, job_def, outcome};
 use crate::state::{Focus, State, Tab};
 use crate::update::{Effect, Pending};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobLower {
     Info(usize),
+    /// 流程作业的流程：Enter 跳到流程标签里它的位置。
+    Flow(String),
     Heading,
     Entry(usize),
 }
@@ -40,7 +42,14 @@ impl State {
         let Some(job) = self.domain.jobs.iter().find(|j| j.id == id) else {
             return vec![];
         };
-        let mut out: Vec<JobLower> = (0..job_info(job).len()).map(JobLower::Info).collect();
+        let mut out: Vec<JobLower> = job_def(job, None)
+            .iter()
+            .enumerate()
+            .map(|(i, r)| match r {
+                JobDefRow::Flow(name, _) => JobLower::Flow(name.clone()),
+                JobDefRow::Plain(_) => JobLower::Info(i),
+            })
+            .collect();
         out.push(JobLower::Heading);
         let n = self.domain.job_history.get(&id).map_or(0, Vec::len);
         out.extend((0..n).map(JobLower::Entry));
@@ -71,10 +80,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 _ => crate::marks::Mark::Idle,
             };
             let (g, tone) = m.pair();
-            let kind = match j.kind {
-                JobKind::Simple { .. } => "简单",
-                JobKind::Flow { .. } => "流程",
-            };
+
             let next = if j.enabled {
                 j.next_fire_ms
                     .map(|t| format!("下次 {}", fmt_clock(t)))
@@ -91,7 +97,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
             crate::sessions::split_line(
                 Line::toned(format!("{g} "), tone)
                     .push(j.name.clone(), Tone::Normal)
-                    .push(format!("  {}  {kind}", j.cron), Tone::Dim),
+                    .push(format!("  {}", j.cron), Tone::Dim),
                 Line::toned(format!("{next}  "), Tone::Dim).push(last, ltone),
                 width,
             )
@@ -106,19 +112,34 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
     let Some(job) = s.domain.jobs.iter().find(|j| j.id == id) else {
         return vec![];
     };
-    let info = job_info(job);
+    let flow_title = match &job.kind {
+        JobKind::Flow { flow, .. } => s
+            .domain
+            .flows
+            .iter()
+            .find(|f| &f.name == flow)
+            .map(|f| f.title.as_str()),
+        _ => None,
+    };
+    let def = job_def(job, flow_title);
+    let line_at = |i: usize| def.get(i).map(|r| r.line().clone()).unwrap_or_default();
+    let flow_at = def
+        .iter()
+        .position(|r| matches!(r, JobDefRow::Flow(..)))
+        .unwrap_or(0);
     let history = s.domain.job_history.get(&id).cloned().unwrap_or_default();
     s.job_lower_rows()
         .iter()
         .map(|r| match r {
-            JobLower::Info(i) => info[*i].clone(),
+            JobLower::Info(i) => line_at(*i),
+            JobLower::Flow(_) => line_at(flow_at),
             JobLower::Heading => Line::toned(
                 if history.is_empty() {
-                    "触发历史：还没有"
+                    "触发记录：还没有"
                 } else {
-                    "触发历史 · Enter 打开那一次"
+                    "触发记录 · Enter 打开那一次"
                 },
-                Tone::Strong,
+                Tone::Dim,
             ),
             JobLower::Entry(i) => {
                 let e = &history[*i];
@@ -191,6 +212,11 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             prefill(s, "删除这个作业");
             vec![]
         }
+        (Action::Open, _) if s.ui.focus == Focus::SideLower && selected_flow_link(s).is_some() => {
+            let name = selected_flow_link(s)?;
+            jump_to_flow(s, &name);
+            vec![]
+        }
         (Action::Open, _) => {
             s.show_chat_pub();
             s.ui.focus = Focus::Composer;
@@ -202,4 +228,29 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         }
         _ => return None,
     })
+}
+
+fn selected_flow_link(s: &State) -> Option<String> {
+    match s
+        .job_lower_rows()
+        .get(s.ui.lower[Tab::Jobs.index()].selected)?
+    {
+        JobLower::Flow(name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// 从流程作业跳到流程标签里它用的那个流程（选中即展开它的运行、左边切到它的编写会话）。
+fn jump_to_flow(s: &mut State, name: &str) {
+    s.ui.tab = Tab::Flows;
+    s.ui.focus = Focus::SideUpper;
+    s.ui.filter[Tab::Flows.index()].clear();
+    match s
+        .flow_rows()
+        .iter()
+        .position(|r| r == &crate::flows::FlowRow::Flow(name.to_string()))
+    {
+        Some(i) => s.ui.upper_mut().selected = i,
+        None => s.notice(format!("这个项目里没有流程 {name}"), true),
+    }
 }

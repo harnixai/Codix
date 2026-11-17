@@ -13,6 +13,8 @@ use crate::state::State;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessRow {
+    /// 第一行：新建会话（也可以在输入框里 /new）。
+    New,
     Session(SessionId),
     Goal(SessionId),
     Todo(SessionId),
@@ -20,10 +22,11 @@ pub enum SessRow {
 }
 
 impl SessRow {
-    pub fn session(&self) -> &SessionId {
+    pub fn session(&self) -> Option<&SessionId> {
         match self {
+            SessRow::New => None,
             SessRow::Session(s) | SessRow::Goal(s) | SessRow::Todo(s) | SessRow::TodoItem(s, _) => {
-                s
+                Some(s)
             }
         }
     }
@@ -47,9 +50,13 @@ pub enum TreeRow {
 
 impl State {
     pub fn session_rows(&self) -> Vec<SessRow> {
-        let mut out = vec![];
         let filter = &self.ui.filter[0];
-        for s in self.main_sessions() {
+        let mut out = if filter.is_empty() {
+            vec![SessRow::New]
+        } else {
+            vec![]
+        };
+        for s in self.user_sessions() {
             if !filter.is_empty() && !s.title.contains(filter.as_str()) {
                 continue;
             }
@@ -66,7 +73,11 @@ impl State {
             if !c.todos.is_empty() {
                 out.push(SessRow::Todo(s.id.clone()));
                 if self.ui.todo_expanded.contains(&s.id) {
-                    out.extend((0..c.todos.len()).map(|i| SessRow::TodoItem(s.id.clone(), i)));
+                    out.extend(
+                        crate::marks::todo_order(&c.todos)
+                            .into_iter()
+                            .map(|i| SessRow::TodoItem(s.id.clone(), i)),
+                    );
                 }
             }
         }
@@ -77,7 +88,7 @@ impl State {
     pub fn selected_session(&self) -> Option<SessionId> {
         self.session_rows()
             .get(self.ui.upper[0].selected)
-            .map(|r| r.session().clone())
+            .and_then(|r| r.session().cloned())
     }
 
     pub fn tree_rows(&self) -> Vec<TreeRow> {
@@ -233,6 +244,8 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
     let rows = s.session_rows();
     rows.iter()
         .map(|r| match r {
+            SessRow::New => Line::toned("＋ 新建会话", Tone::Accent)
+                .push("  Enter · 或在输入框里 /new", Tone::Dim),
             SessRow::Session(id) => {
                 let Some(x) = s.domain.sessions.iter().find(|x| &x.id == id) else {
                     return Line::default();
@@ -288,7 +301,11 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     format!("     todo {mark} {done}/{}  ", c.todos.len()),
                     Tone::Dim,
                 );
-                for t in c.todos.iter().take(4) {
+                for t in crate::marks::todo_order(&c.todos)
+                    .into_iter()
+                    .take(4)
+                    .map(|i| &c.todos[i])
+                {
                     let (g, tone) = todo_glyph(t.status);
                     line = line
                         .push(format!("{g} "), tone)
@@ -301,10 +318,15 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     return Line::default();
                 };
                 let (g, tone) = todo_glyph(t.status);
+                let text_tone = if t.status == TodoStatus::Done {
+                    Tone::Dim
+                } else {
+                    Tone::Normal
+                };
                 trim(
                     Line::toned("         ", Tone::Normal)
                         .push(format!("{g} "), tone)
-                        .push(t.text.clone(), tone),
+                        .push(format!("{}. {}", i + 1, t.text), text_tone),
                     width,
                 )
             }
@@ -332,9 +354,9 @@ fn session_line(s: &State, x: &SessionSummary, width: usize) -> Line {
         .push(x.title.clone(), Tone::Normal);
     let icon = origin_icon(&x.provenance.origin);
     let right = Line::toned(
+        // 会话都是这个项目的（实例绑定项目目录），不再逐行写项目。
         format!(
-            "{}  {}  {:>5}{}",
-            x.provenance.project.as_deref().unwrap_or("无项目"),
+            "{}  {:>5}{}",
             x.provenance.scene,
             fmt_k(x.usage.total()),
             if icon.is_empty() {
@@ -458,8 +480,20 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     }
     let rows = s.session_rows();
     let row = rows.get(s.ui.upper[0].selected).cloned();
-    let id = row.as_ref().map(|r| r.session().clone());
+    let id = row.as_ref().and_then(|r| r.session().cloned());
     Some(match (a, row) {
+        (Action::Open, Some(SessRow::New)) => {
+            s.show_chat_pub();
+            s.ui.focus = Focus::Composer;
+            vec![s.call(
+                Pending::CreateOnly,
+                Command::CreateSession {
+                    project: None,
+                    scene: None,
+                    model: None,
+                },
+            )]
+        }
         (Action::Expand, Some(SessRow::Session(id))) => {
             s.ui.sess_expanded.insert(id);
             vec![]
@@ -470,8 +504,8 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             }
             vec![]
         }
-        (Action::Collapse, Some(r)) => {
-            let id = r.session().clone();
+        (Action::Collapse, Some(r)) if r.session().is_some() => {
+            let id = r.session().cloned()?;
             s.ui.todo_expanded.remove(&id);
             s.ui.sess_expanded.remove(&id);
             s.ui.upper[0].selected = s

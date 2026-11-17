@@ -636,14 +636,15 @@ fn render(
             let cont = || Line::plain("     ");
             if name == "TodoWrite" {
                 for (i, t) in todos.iter().enumerate() {
-                    let (g, tone) = match t.status {
-                        TodoStatus::Done => ("☒ ", Tone::Dim),
-                        TodoStatus::InProgress => ("◼ ", Tone::Strong),
-                        TodoStatus::Pending => ("☐ ", Tone::Normal),
+                    let (g, _) = crate::marks::todo(t.status);
+                    let tone = match t.status {
+                        TodoStatus::Done => Tone::Dim,
+                        TodoStatus::InProgress => Tone::Strong,
+                        TodoStatus::Pending => Tone::Normal,
                     };
                     let first = if i == 0 { lead() } else { cont() };
                     ls.extend(wrap_text(
-                        &format!("{g}{}", t.text),
+                        &format!("{g} {}. {}", i + 1, t.text),
                         tone,
                         w,
                         &first,

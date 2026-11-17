@@ -160,18 +160,18 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 } else {
                     "▸"
                 };
-                let origin = match f.origin {
-                    port::FlowOrigin::Builtin => "内置",
-                    port::FlowOrigin::Override => "覆盖",
-                    port::FlowOrigin::User => "用户",
-                };
+                let origin = f.origin.label();
+                // 全局流程在名字前标 ◎（各项目共用）；项目级的不标，只留出对齐的位置。
+                let scope = if f.origin.is_global() { "◎ " } else { "  " };
                 let running = if f.active_runs > 0 {
                     format!("{} 个在跑", f.active_runs)
                 } else {
                     String::new()
                 };
                 crate::sessions::split_line(
-                    Line::toned(format!("{mark} "), Tone::Dim).push(f.title.clone(), Tone::Normal),
+                    Line::toned(format!("{mark} "), Tone::Dim)
+                        .push(scope, Tone::Accent)
+                        .push(f.title.clone(), Tone::Normal),
                     Line::toned(format!("{}  {origin}  {running}", f.name), Tone::Dim),
                     width,
                 )

@@ -11,12 +11,35 @@ pub struct FlowSummary {
     pub active_runs: u32,
 }
 
+/// 流程从哪来。会话、流程、作业都是项目级的：项目里建的流程只在这个项目可见，
+/// 转成全局后所有项目都能用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowOrigin {
+    /// 随 Codix 发布的（全局）。
     Builtin,
+    /// 用户的全局流程（`~/.codix/flows/`）。
+    Global,
+    /// 这个项目的流程。
+    #[serde(alias = "user")]
+    Project,
+    /// 项目里覆盖了同名全局流程的。
     Override,
-    User,
+}
+
+impl FlowOrigin {
+    pub fn is_global(self) -> bool {
+        matches!(self, FlowOrigin::Builtin | FlowOrigin::Global)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FlowOrigin::Builtin => "全局 · 内置",
+            FlowOrigin::Global => "全局",
+            FlowOrigin::Project => "项目",
+            FlowOrigin::Override => "项目 · 覆盖全局",
+        }
+    }
 }
 
 /// 查看定义（需求 F-08）：站的概要与原始 YAML。

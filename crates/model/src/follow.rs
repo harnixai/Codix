@@ -55,6 +55,19 @@ pub(crate) fn after_update(s: &mut State) -> Vec<Effect> {
         s.ui.flow_expanded.insert(name.clone());
         s.ui.flow_auto = Some(name);
     }
+    if s.ui.tab == Tab::Flows {
+        match (s.ui.focus, s.selected_flow_row()) {
+            (Focus::SideUpper, _) => s.ui.flow_station = None,
+            (Focus::SideLower, Some(FlowRow::Flow(name))) => {
+                if let Some(FlowLower::DefStation(i)) =
+                    s.flow_lower_rows().get(s.ui.lower().selected).cloned()
+                {
+                    s.ui.flow_station = Some((name, i));
+                }
+            }
+            _ => {}
+        }
+    }
     let mut out = data(s);
     out.extend(follow(s));
     out
@@ -170,7 +183,7 @@ fn target(s: &State) -> Option<Target> {
     match (s.ui.tab, s.ui.focus) {
         (Tab::Sessions, Focus::SideUpper) => {
             let row = s.session_rows().get(s.ui.upper().selected).cloned()?;
-            Some(Target::Session(row.session().clone(), vec![], None))
+            Some(Target::Session(row.session()?.clone(), vec![], None))
         }
         (Tab::Sessions, Focus::SideLower) => {
             let root = s.selected_session()?;
@@ -254,7 +267,7 @@ pub enum Attention {
 impl State {
     pub fn attention(&self) -> Vec<Attention> {
         let mut out = vec![];
-        for x in self.main_sessions() {
+        for x in self.user_sessions() {
             let blocked = self
                 .domain
                 .convs

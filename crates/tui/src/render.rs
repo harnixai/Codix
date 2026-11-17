@@ -277,10 +277,10 @@ fn side(f: &mut Frame, s: &crate::layout::SideRegions, p: &SidePane) {
         rr(Rect::new(s.area.x, mid, s.area.w, 1)),
     );
     for (tab, hit) in p.tabs.iter().zip(&s.tab_hits) {
-        // 上半的字不加底色：当前标签只换颜色。
+        // 上半的字不加底色：当前标签只换颜色。焦点在下半时也保持选中色：下半是它的延伸。
         let st = if tab.active {
             let st = Style::default().add_modifier(Modifier::BOLD);
-            if up { st.fg(th().accent) } else { st }
+            if up || down { st.fg(th().accent) } else { st }
         } else if tab.badge > 0 {
             style(Tone::Attention)
         } else {

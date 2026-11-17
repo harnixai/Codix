@@ -1084,7 +1084,7 @@ flows:
           title: 上线
           needs: [sign]
           exit: [{kind: gate, gate: ci}]
-  - summary: {name: weekly-report, title: 周报, origin: user, active_runs: 0}
+  - summary: {name: weekly-report, title: 周报, origin: project, active_runs: 0}
     stations:
       - {"id": "collect", "title": "收集", "work": "session", "skill": "collect-tickets", "exit": ["output"], "status": "pending"}
       - {"id": "summarize", "title": "汇总", "needs": ["collect"], "work": "session", "skill": "summarize-week", "exit": ["output"], "status": "pending"}
@@ -1110,7 +1110,7 @@ flows:
           title: 待确认
           needs: [summarize]
           exit: [{kind: confirm}]
-  - summary: {name: release-check, title: 发布检查, origin: user, active_runs: 0}
+  - summary: {name: release-check, title: 发布检查, origin: global, active_runs: 0}
     stations:
       - {"id": "lint", "title": "静态检查", "work": "program", "exit": ["gate: lint"], "status": "pending"}
       - {"id": "smoke", "title": "冒烟测试", "needs": ["lint"], "work": "agent", "skill": "smoke-test", "exit": ["output"], "status": "pending"}

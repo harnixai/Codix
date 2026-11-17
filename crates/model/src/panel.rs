@@ -97,12 +97,16 @@ impl State {
                     .or_else(|| f.map(|f| f.title.clone()))
                     .unwrap_or_else(|| name.clone());
                 let mut l = Line::toned(format!("流程设计：{title}"), Tone::Strong);
+                if let (Some(d), Some(i)) = (d, self.station_in_view(name)) {
+                    return l
+                        .push(
+                            format!(" › 第 {} 站 {}", i + 1, d.stations[i].title),
+                            Tone::Strong,
+                        )
+                        .push(" · 回到上半看整个流程", Tone::Dim);
+                }
                 if let Some(d) = d {
-                    let origin = match d.summary.origin {
-                        port::FlowOrigin::Builtin => "内置",
-                        port::FlowOrigin::Override => "覆盖",
-                        port::FlowOrigin::User => "用户",
-                    };
+                    let origin = d.summary.origin.label();
                     l = l.push(
                         format!(
                             " · {} · {origin} · {} 站 · {} 个在跑",
@@ -182,7 +186,10 @@ impl State {
         let conv = self.domain.convs.get(&id);
         let mut out = match &kind {
             PanelKind::Flow(name) => match self.domain.flow_details.get(name) {
-                Some(d) => flow_body(d, width),
+                Some(d) => match self.station_in_view(name) {
+                    Some(i) => station_body(d, i),
+                    None => flow_body(d, width),
+                },
                 None => vec![Line::toned("流程设计加载中 …", Tone::Dim)],
             },
             PanelKind::Job(job) => match self.domain.jobs.iter().find(|j| &j.id == job) {
@@ -215,18 +222,63 @@ impl State {
         out
     }
 
-    /// 面板占几行：开着是标题线 + 内容 + 下沿，收起只剩标题线，没有面板是 0。
+    /// 面板占几行：开着是标题线 + 内容（最多 `PANEL_MAX` 行）+ 下沿，收起只剩标题线，没有面板是 0。
     pub(crate) fn panel_rows(&self, width: usize) -> u16 {
         if self.panel_here().is_none() {
             0
         } else if self.panel_open() {
-            self.panel_content(width).len() as u16 + 2
+            self.panel_content(width).len().min(PANEL_MAX) as u16 + 2
         } else {
             1
         }
     }
 
-    /// 排进 `height` 行的面板：标题线（右边是 Ctrl+T）、放得下的内容、下沿。
+    /// 面板上下文的名字：换了上下文，滚动回到顶上。
+    fn panel_key(&self) -> String {
+        format!(
+            "{:?}:{:?}:{:?}",
+            self.ui.chat,
+            self.panel_target().map(|(_, k)| k),
+            self.ui.flow_station
+        )
+    }
+
+    /// 编写会话的面板正在看流程的哪一站。
+    fn station_in_view(&self, flow: &str) -> Option<usize> {
+        let (f, i) = self.ui.flow_station.as_ref()?;
+        let n = self.domain.flow_details.get(flow)?.stations.len();
+        (f == flow && *i < n).then_some(*i)
+    }
+
+    fn panel_offset(&self) -> usize {
+        if self.ui.panel_scroll.0 == self.panel_key() {
+            self.ui.panel_scroll.1
+        } else {
+            0
+        }
+    }
+
+    /// Shift+↑ / Shift+↓ 或在面板上滚轮。
+    pub(crate) fn scroll_panel(&mut self, delta: isize) {
+        let len = self.panel_content(self.panel_width()).len();
+        let room = self
+            .chat_regions()
+            .chat
+            .and_then(|c| c.panel)
+            .map_or(0, |p| (p.h as usize).saturating_sub(2));
+        let max = len.saturating_sub(room);
+        let off = (self.panel_offset() as isize + delta).clamp(0, max as isize) as usize;
+        self.ui.panel_scroll = (self.panel_key(), off);
+    }
+
+    fn panel_width(&self) -> usize {
+        self.chat_regions()
+            .chat
+            .map_or(80, |c| c.transcript.w as usize)
+    }
+
+    /// 排进 `height` 行的面板：标题线（右边是 Ctrl+T）、看得见的那段内容、下沿（放不下时
+    /// 右边标出上下各还有几行）。
     pub(crate) fn panel_lines(&self, width: usize, height: usize) -> Vec<Line> {
         let Some((id, kind)) = self.panel_here() else {
             return vec![];
@@ -249,30 +301,28 @@ impl State {
             return out;
         }
         let room = height - 2;
-        let mut body: Vec<Line> = self
-            .panel_content(width)
-            .iter()
-            .map(|l| {
-                if l.width() > width {
-                    Line::toned(truncate_to_width(&l.text(), width), Tone::Normal)
-                } else {
-                    l.clone()
-                }
-            })
-            .collect();
-        if body.len() > room {
-            let hidden = body.len() - (room - 1);
-            body.truncate(room - 1);
-            body.push(Line::toned(
-                format!("… 还有 {hidden} 行（在对话里问详情）"),
-                Tone::Dim,
-            ));
-        }
-        out.extend(body);
-        out.push(rule(None, "", width));
+        let content = self.panel_content(width);
+        let off = self.panel_offset().min(content.len().saturating_sub(room));
+        out.extend(content.iter().skip(off).take(room).map(|l| {
+            if l.width() > width {
+                Line::toned(truncate_to_width(&l.text(), width), Tone::Normal)
+            } else {
+                l.clone()
+            }
+        }));
+        let below = content.len().saturating_sub(off + room);
+        let more = if off > 0 || below > 0 {
+            format!(" ↑{off} ↓{below} · Shift+↑↓ ")
+        } else {
+            String::new()
+        };
+        out.push(rule(None, &more, width));
         out
     }
 }
+
+/// 面板内容最多几行；再多就滚动。
+const PANEL_MAX: usize = 10;
 
 /// `─ 标题 ─────── 右边 ─`：标题太长先截标题，右边的快捷键总在。
 fn rule(title: Option<Line>, right: &str, width: usize) -> Line {
@@ -340,7 +390,8 @@ fn goal_lines(c: &Conversation, width: usize) -> Vec<Line> {
             format!("todo {done}/{}", c.todos.len()),
             Tone::Dim,
         ));
-        for t in &c.todos {
+        for i in marks::todo_order(&c.todos) {
+            let t = &c.todos[i];
             let (g, tone) = marks::todo(t.status);
             let text_tone = if t.status == port::TodoStatus::Done {
                 Tone::Dim
@@ -351,7 +402,10 @@ fn goal_lines(c: &Conversation, width: usize) -> Vec<Line> {
                 Line::toned("  ", Tone::Normal)
                     .push(format!("{g} "), tone)
                     .push(
-                        truncate_to_width(&t.text, width.saturating_sub(4)),
+                        truncate_to_width(
+                            &format!("{}. {}", i + 1, t.text),
+                            width.saturating_sub(4),
+                        ),
                         text_tone,
                     ),
             );
@@ -500,6 +554,94 @@ fn flow_body(d: &FlowDetail, inner: usize) -> Vec<Line> {
     out
 }
 
+/// 流程里一站的配置：执行方式、skill、出口、前后关系，再加上定义里它那一段 YAML。
+fn station_body(d: &FlowDetail, i: usize) -> Vec<Line> {
+    let st = &d.stations[i];
+    let names = |ids: &[port::StationId]| -> String {
+        ids.iter()
+            .filter_map(|n| d.stations.iter().find(|x| &x.id == n))
+            .map(|x| x.title.as_str())
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    let before = if st.needs.is_empty() {
+        i.checked_sub(1)
+            .map(|j| d.stations[j].title.clone())
+            .unwrap_or_else(|| "（起点）".into())
+    } else {
+        names(&st.needs)
+    };
+    let after: Vec<&str> = d
+        .stations
+        .iter()
+        .enumerate()
+        .filter(|(j, x)| x.needs.contains(&st.id) || (x.needs.is_empty() && *j == i + 1))
+        .map(|(_, x)| x.title.as_str())
+        .collect();
+    let field = |k: &str, v: String, tone: Tone| Line::toned(pad(k, 8), Tone::Dim).push(v, tone);
+    let mut out = vec![
+        field("id", st.id.to_string(), Tone::Code),
+        field("执行", st.work.clone(), Tone::Normal),
+        field(
+            "skill",
+            st.skill.clone().unwrap_or_else(|| "—".into()),
+            Tone::Code,
+        ),
+        field(
+            "出口",
+            if st.exit.is_empty() {
+                "—".into()
+            } else {
+                st.exit.join("、")
+            },
+            Tone::Normal,
+        ),
+        field("前一站", before, Tone::Normal),
+        field(
+            "下一站",
+            if after.is_empty() {
+                "（终点）".into()
+            } else {
+                after.join("、")
+            },
+            Tone::Normal,
+        ),
+    ];
+    let yaml = station_yaml(&d.yaml, st.id.as_str());
+    if !yaml.is_empty() {
+        out.push(Line::toned("定义", Tone::Dim));
+        out.extend(
+            yaml.into_iter()
+                .map(|l| Line::toned(format!("  {l}"), Tone::Code)),
+        );
+    }
+    out
+}
+
+/// 从流程 YAML 里摘出某一站那一段（`- id: <id>` 起，到下一个同级条目止）。只为给人看，
+/// 不解析：阶段 3 的引擎给结构化的站配置时换掉。
+fn station_yaml(yaml: &str, id: &str) -> Vec<String> {
+    let lines: Vec<&str> = yaml.lines().collect();
+    let Some(start) = lines.iter().position(|l| l.trim() == format!("- id: {id}")) else {
+        return vec![];
+    };
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    let mut out = vec![lines[start][indent..].to_string()];
+    for l in &lines[start + 1..] {
+        let ind = l.len() - l.trim_start().len();
+        if !l.trim().is_empty() && ind <= indent {
+            break;
+        }
+        out.push(l.get(indent..).unwrap_or(l.trim_start()).to_string());
+    }
+    out
+}
+
+/// 按显示宽度补齐（中文字占两列，`format!("{:<n}")` 按字符数补会错位）。
+fn pad(k: &str, w: usize) -> String {
+    format!("{k}{}", " ".repeat(w.saturating_sub(display_width(k))))
+}
+
 /// `11-16 09:00`（UTC）。
 pub(crate) fn fmt_clock(ms: u64) -> String {
     let secs = ms / 1000;
@@ -528,71 +670,170 @@ pub(crate) fn outcome(o: &JobOutcome) -> (String, Tone) {
     (format!("{} {text}", m.glyph()), m.tone())
 }
 
-pub(crate) fn job_info(j: &Job) -> Vec<Line> {
+/// 作业定义的一行；流程作业的"流程"那一行可以跳到流程标签里那个流程。
+pub(crate) enum JobDefRow {
+    Plain(Line),
+    Flow(String, Line),
+}
+
+impl JobDefRow {
+    pub fn line(&self) -> &Line {
+        match self {
+            JobDefRow::Plain(l) | JobDefRow::Flow(_, l) => l,
+        }
+    }
+}
+
+/// 作业的定义（右下）：触发规则、状态，简单作业的提示词与 skills，流程作业的流程与主题。
+/// 会话、流程、作业都是项目级的，所以这里不再写项目。
+pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
+    let field = |k: &str| Line::toned(pad(k, 8), Tone::Dim);
     let next = j
         .next_fire_ms
         .map(|t| format!("下次 {}", fmt_clock(t)))
         .unwrap_or_else(|| "不会再触发".into());
-    let mut out = vec![Line::toned(
-        format!(
-            "{}（{next}）· {} · 错过补跑：{}",
-            j.cron,
-            if j.enabled { "启用" } else { "已停用" },
-            if j.catch_up { "是" } else { "否" }
-        ),
-        Tone::Normal,
-    )];
+    let mut out = vec![
+        JobDefRow::Plain(field("触发").push(j.cron.clone(), Tone::Code).push(
+            format!(
+                "（{next}）· 错过补跑：{}",
+                if j.catch_up { "是" } else { "否" }
+            ),
+            Tone::Dim,
+        )),
+        JobDefRow::Plain(field("状态").push(
+            if j.enabled {
+                "启用 · 空格停用"
+            } else {
+                "已停用 · 空格启用"
+            },
+            if j.enabled { Tone::Normal } else { Tone::Dim },
+        )),
+    ];
     match &j.kind {
         JobKind::Simple {
             prompt,
             skills,
-            project,
             scene,
             model,
+            ..
         } => {
-            out.push(Line::toned("简单作业：提示词 + skills", Tone::Dim));
-            out.push(Line::toned("提示词 ", Tone::Dim).push(prompt.clone(), Tone::Normal));
-            out.push(Line::toned(
+            out.push(JobDefRow::Plain(
+                field("提示词").push(prompt.clone(), Tone::Normal),
+            ));
+            out.push(JobDefRow::Plain(field("skills").push(
+                if skills.is_empty() {
+                    "—".into()
+                } else {
+                    skills.join("、")
+                },
+                Tone::Code,
+            )));
+            out.push(JobDefRow::Plain(field("场景").push(
                 format!(
-                    "skills {} · 项目 {} · 场景 {} · 模型 {}",
-                    if skills.is_empty() {
-                        "—".into()
-                    } else {
-                        skills.join("、")
-                    },
-                    project.as_deref().unwrap_or("—"),
-                    scene.as_deref().unwrap_or("—"),
+                    "{} · 模型 {}",
+                    scene.as_deref().unwrap_or("缺省"),
                     model.as_deref().unwrap_or("缺省")
                 ),
-                Tone::Dim,
-            ));
+                Tone::Normal,
+            )));
         }
-        JobKind::Flow { flow, subject, .. } => {
-            out.push(Line::toned("流程作业", Tone::Dim));
-            out.push(Line::toned("流程 ", Tone::Dim).push(flow.clone(), Tone::Normal));
-            out.push(Line::toned("主题 ", Tone::Dim).push(subject.clone(), Tone::Normal));
+        JobKind::Flow {
+            flow,
+            subject,
+            inputs,
+        } => {
+            out.push(JobDefRow::Flow(
+                flow.clone(),
+                field("流程")
+                    .push(format!("▸ {}", flow_title.unwrap_or(flow)), Tone::Accent)
+                    .push("  Enter 跳到这个流程", Tone::Dim),
+            ));
+            out.push(JobDefRow::Plain(
+                field("主题").push(subject.clone(), Tone::Normal),
+            ));
+            if !inputs.is_null() && inputs.as_object().is_none_or(|o| !o.is_empty()) {
+                out.push(JobDefRow::Plain(
+                    field("输入").push(inputs.to_string(), Tone::Code),
+                ));
+            }
         }
     }
     out
 }
 
+/// 作业的执行情况（左上面板）：次数、成败、耗时与 token 的统计，再列最近几次。
 fn job_body(j: &Job, history: &[JobEntry], inner: usize) -> Vec<Line> {
-    let mut out = job_info(j);
-    out.push(Line::toned("最近的触发", Tone::Dim));
+    let mut out = vec![];
     if history.is_empty() {
-        out.push(Line::toned("还没有触发过", Tone::Dim));
-    }
-    for e in history.iter().take(5) {
-        let (o, tone) = outcome(&e.outcome);
+        out.push(Line::toned("还没有执行过 · R 立即运行一次", Tone::Dim));
+    } else {
+        let n = history.len();
+        let count = |f: fn(&JobOutcome) -> bool| history.iter().filter(|e| f(&e.outcome)).count();
+        let done = count(|o| matches!(o, JobOutcome::Done));
+        let failed = count(|o| matches!(o, JobOutcome::Failed { .. }));
+        let skipped = count(|o| matches!(o, JobOutcome::Skipped));
+        let finished = done + failed;
+        let rate = (done * 100).checked_div(finished).unwrap_or(0);
+        let ended: Vec<&JobEntry> = history
+            .iter()
+            .filter(|e| matches!(e.outcome, JobOutcome::Done))
+            .collect();
+        let avg = |f: fn(&JobEntry) -> u64| {
+            if ended.is_empty() {
+                0
+            } else {
+                ended.iter().map(|e| f(e)).sum::<u64>() / ended.len() as u64
+            }
+        };
+        let total: u64 = history.iter().map(|e| e.usage.total()).sum();
         out.push(
-            Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim)
-                .push(truncate_to_width(&o, inner.saturating_sub(16)), tone),
+            Line::toned(format!("执行 {n} 次 · "), Tone::Normal)
+                .push(format!("成功 {done}"), Tone::Ok)
+                .push(" · ", Tone::Dim)
+                .push(
+                    format!("失败 {failed}"),
+                    if failed > 0 { Tone::Error } else { Tone::Dim },
+                )
+                .push(format!(" · 跳过 {skipped} · 成功率 {rate}%"), Tone::Dim),
         );
+        out.push(Line::toned(
+            format!(
+                "成功的平均耗时 {} · 平均 {} tokens · 合计 {}",
+                crate::sessions::fmt_elapsed(avg(|e| e.elapsed_ms)),
+                crate::chat::fmt_k(avg(|e| e.usage.total())),
+                crate::chat::fmt_k(total)
+            ),
+            Tone::Dim,
+        ));
     }
     out.push(Line::toned(
-        "在下面的对话里修改或删除这个作业，或者让它立即跑一次",
+        match j.next_fire_ms {
+            Some(t) if j.enabled => format!("下次 {}", fmt_clock(t)),
+            _ if !j.enabled => "已停用，不会触发".into(),
+            _ => "不会再触发".into(),
+        },
         Tone::Dim,
     ));
+    for e in history.iter().take(8) {
+        let (o, tone) = outcome(&e.outcome);
+        let target = match &e.target {
+            Some(port::JobTarget::Session { title, .. }) => format!("  → 「{title}」"),
+            Some(port::JobTarget::Run { subject, .. }) => format!("  → 运行「{subject}」"),
+            None => String::new(),
+        };
+        out.push(
+            Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim)
+                .push(truncate_to_width(&o, inner.saturating_sub(40)), tone)
+                .push(
+                    format!(
+                        "  {}  {}{target}",
+                        crate::sessions::fmt_elapsed(e.elapsed_ms),
+                        crate::chat::fmt_k(e.usage.total())
+                    ),
+                    Tone::Dim,
+                ),
+        );
+    }
     out
 }
 

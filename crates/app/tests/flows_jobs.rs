@@ -227,12 +227,12 @@ async fn jobs_list_details_history_and_follow() {
     assert!(h.chat_title().starts_with("作业："), "{}", h.chat_title());
     let t = h.panel();
     assert!(
-        h.text().contains("─ 作业：每日巡检 · 启用") && t.contains("最近的触发"),
+        h.text().contains("─ 作业：每日巡检 · 启用") && t.contains("执行 3 次 · 成功 2 · 失败 1"),
         "作业面板\n{t}"
     );
     let text = h.text();
     assert!(text.contains("每日巡检 的详情"));
-    assert!(text.contains("触发历史"));
+    assert!(text.contains("触发记录"));
     assert!(text.contains("0 9 * * *"));
     h.snapshot("jobs");
     let rows = h.core.state.job_lower_rows();
@@ -335,4 +335,92 @@ async fn run_stations_are_flat_colored_and_switch_to_their_context() {
     h.keys("Down").await;
     assert_eq!(h.chat_title(), "后端", "选中站里的子 Agent 切到它的会话");
     h.snapshot("flow-run-demo");
+}
+
+#[tokio::test(start_paused = true)]
+async fn selecting_a_station_of_a_definition_shows_its_config_in_the_panel() {
+    let mut h = flows("default").await;
+    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
+    let imp = h
+        .core
+        .state
+        .flow_lower_rows()
+        .iter()
+        .position(|r| matches!(r, FlowLower::DefStation(2)))
+        .unwrap();
+    h.pick_lower(imp).await;
+    assert!(
+        h.chat_title().contains("编写流程：需求到上线"),
+        "左边仍是编写会话"
+    );
+    let text = h.text();
+    assert!(
+        text.contains("─ 流程设计：需求到上线 › 第 3 站 实现"),
+        "{text}"
+    );
+    let p = h.panel();
+    for want in [
+        "skill",
+        "implement",
+        "前一站",
+        "设计",
+        "下一站",
+        "代码评审、文档评审",
+        "- id: impl",
+        "tasks:",
+    ] {
+        assert!(p.contains(want), "缺 {want}\n{p}");
+    }
+    assert!(text.contains("Shift+↑↓"), "超过 10 行时下沿标出可以滚动");
+    let before = h.text();
+    h.keys("Shift+Down Shift+Down").await;
+    assert_ne!(before, h.text(), "Shift+↓ 滚动面板");
+    assert!(h.text().contains("↑2 "));
+    h.snapshot("flow-station-config");
+    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
+    assert!(
+        h.text()
+            .contains("─ 流程设计：需求到上线 · feature-to-ship"),
+        "回到上半看整个流程"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn global_flows_are_marked_and_flow_jobs_jump_to_their_flow() {
+    let mut h = flows("default").await;
+    let text = h.text();
+    assert!(text.contains("◎ 需求到上线"), "全局流程标 ◎\n{text}");
+    assert!(!text.contains("◎ 周报"), "项目级的不标");
+    h.keys("F4").await;
+    let weekly = h
+        .core
+        .state
+        .job_rows()
+        .iter()
+        .position(|id| {
+            h.core
+                .state
+                .domain
+                .jobs
+                .iter()
+                .any(|j| &j.id == id && matches!(j.kind, port::JobKind::Flow { .. }))
+        })
+        .unwrap();
+    h.pick_upper(weekly).await;
+    let link = h
+        .core
+        .state
+        .job_lower_rows()
+        .iter()
+        .position(|r| matches!(r, JobLower::Flow(_)))
+        .unwrap();
+    h.pick_lower(link).await;
+    h.keys("Enter").await;
+    h.settle().await;
+    assert_eq!(h.core.state.ui.tab, model::Tab::Flows, "跳到流程标签");
+    assert!(
+        matches!(h.core.state.selected_flow_row(), Some(FlowRow::Flow(_))),
+        "选中它用的流程"
+    );
+    assert!(h.chat_title().starts_with("编写流程："));
 }

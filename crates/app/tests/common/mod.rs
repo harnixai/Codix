@@ -165,13 +165,17 @@ impl Harness {
 
     /// 在会话标签里选中标题为 `title` 的主 Agent 并打开它。
     pub async fn open_session(&mut self, title: &str) {
+        self.keys("F2").await;
         let i = self
             .core
             .state
-            .main_sessions()
-            .position(|s| s.title == title)
-            .unwrap_or_else(|| panic!("没有会话 {title}"));
-        self.keys("F2").await;
+            .session_rows()
+            .iter()
+            .position(|r| {
+                matches!(r, model::SessRow::Session(id)
+                    if self.core.state.domain.sessions.iter().any(|x| &x.id == id && x.title == title))
+            })
+            .unwrap_or_else(|| panic!("会话列表里没有 {title}"));
         let cur = self.core.state.ui.upper().selected;
         let (key, n) = if i >= cur {
             ("Down", i - cur)

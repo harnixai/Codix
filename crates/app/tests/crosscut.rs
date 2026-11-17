@@ -179,8 +179,8 @@ async fn f12_event_log_lists_events_and_commands() {
 #[tokio::test(start_paused = true)]
 async fn selection_follows_in_sessions_tab_without_enter() {
     let mut h = Harness::new("default", SIZE).await;
-    h.select_session("日志巡检").await;
-    assert_eq!(h.chat_title(), "日志巡检", "选中即切换");
+    h.select_session("昨天的调研").await;
+    assert_eq!(h.chat_title(), "昨天的调研", "选中即切换");
     h.select_session("重构认证模块").await;
     assert_eq!(h.chat_title(), "重构认证模块");
     h.select_task("审查认证改动").await;

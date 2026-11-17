@@ -17,14 +17,28 @@ async fn upper_lists_main_agents_with_origin_and_expands_goal_and_todo() {
     let mut h = wb("default").await;
     h.select_session("重构认证模块").await;
     let rows = h.core.state.session_rows();
+    assert_eq!(rows[0], model::SessRow::New, "第一行是新建会话");
     assert!(
-        rows.iter()
-            .all(|r| !r.session().as_str().starts_with("s1-")),
-        "子 Agent 的侧链不在主列表里"
+        rows.iter().filter_map(|r| r.session()).all(|id| {
+            let x = h
+                .core
+                .state
+                .domain
+                .sessions
+                .iter()
+                .find(|x| &x.id == id)
+                .unwrap();
+            matches!(
+                x.provenance.origin,
+                port::Origin::User | port::Origin::Fork { .. }
+            )
+        }),
+        "只列人发起的会话：子 Agent、流程、作业开出来的都不在"
     );
     let text = h.text();
-    assert!(text.contains("⏰"), "作业来源图标");
-    assert!(text.contains("⇶") && text.contains("⑂"));
+    assert!(text.contains("＋ 新建会话"));
+    assert!(text.contains("⑂"), "分叉的标出来");
+    assert!(!text.contains("⏰") && !text.contains("⇶"));
     h.keys("Right").await;
     let text = h.text();
     assert!(
@@ -220,8 +234,6 @@ async fn m10_goal_rounds_and_blocked() {
 #[tokio::test(start_paused = true)]
 async fn m25_ownership_line_for_every_origin() {
     for (title, want) in [
-        ("支付重试（主会话）", "流程「需求到上线」› 支付重试 › 实现"),
-        ("日志巡检", "作业「"),
         ("昨天的调研", "分叉自 重构认证模块"),
         ("重构认证模块", "用户新建"),
         ("老项目会话", "⚠ 被实例 research 占用"),
@@ -231,4 +243,53 @@ async fn m25_ownership_line_for_every_origin() {
         let text = h.text();
         assert!(text.contains(want), "{title}：缺 {want}\n{text}");
     }
+    // 流程与作业开出来的会话不在会话列表里，从流程、作业标签进去。
+    let mut h = wb("default").await;
+    h.keys("F3").await;
+    let r1 = h
+        .core
+        .state
+        .flow_rows()
+        .iter()
+        .position(|r| matches!(r, model::FlowRow::Run(_, id) if id.as_str() == "r1"))
+        .unwrap();
+    h.pick_upper(r1).await;
+    assert!(h.text().contains("流程「需求到上线」› 支付重试 › 实现"));
+    h.keys("F4").await;
+    h.pick_upper(0).await;
+    let entry = h
+        .core
+        .state
+        .job_lower_rows()
+        .iter()
+        .position(|r| matches!(r, model::JobLower::Entry(0)))
+        .unwrap();
+    h.pick_lower(entry).await;
+    assert!(h.text().contains("作业「"), "{}", h.text());
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_session_row_creates_and_opens() {
+    let mut h = wb("default").await;
+    h.keys("F2").await;
+    h.pick_upper(0).await;
+    h.keys("Enter").await;
+    h.settle().await;
+    assert!(
+        h.calls("dev")
+            .iter()
+            .any(|c| matches!(c, Command::CreateSession { .. }))
+    );
+    assert_eq!(h.core.state.ui.focus, model::Focus::Composer);
+}
+
+#[tokio::test(start_paused = true)]
+async fn todos_are_numbered_open_first_done_last() {
+    let mut h = wb("default").await;
+    h.select_session("重构认证模块").await;
+    let p = h.panel();
+    let lines: Vec<&str> = p.lines().filter(|l| l.contains(". ")).collect();
+    assert!(lines[0].contains("▶ 3. 实现 provider"), "{p}");
+    assert!(lines.last().unwrap().contains("✓ 2. 调研 OAuth 库"), "{p}");
+    assert!(!p.contains("☒"), "做完的是 ✓，不是 ☒");
 }

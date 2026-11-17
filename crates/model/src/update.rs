@@ -710,6 +710,8 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             s.ui.focus = Focus::SideUpper;
         }
         Action::TogglePanel => s.toggle_panel(),
+        Action::PanelUp => s.scroll_panel(-1),
+        Action::PanelDown => s.scroll_panel(1),
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
         Action::TabJobs => switch_tab(s, Tab::Jobs),
@@ -919,6 +921,13 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
             let delta = if m.kind == MouseKind::ScrollUp { -3 } else { 3 };
             if r.chat.is_some_and(|c| c.transcript.contains(col, row)) {
                 crate::chat_update::scroll(s, delta);
+                return vec![];
+            }
+            if r.chat
+                .and_then(|c| c.panel)
+                .is_some_and(|p| p.contains(col, row))
+            {
+                s.scroll_panel(delta.signum());
                 return vec![];
             }
             if let Some(side) = &r.side {

@@ -205,6 +205,8 @@ pub struct Ui {
     pub detail: bool,
     /// Ctrl+T 收放过的对话区顶部面板（按会话记）；没记的按有没有内容决定。
     pub panel: std::collections::HashMap<SessionId, bool>,
+    /// 面板滚到第几行，连同当时的上下文；上下文一换就回到顶上。
+    pub panel_scroll: (String, usize),
     /// Shift+Tab 轮换的权限模式。
     pub permission: PermissionMode,
     /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
@@ -237,6 +239,8 @@ pub struct Ui {
     pub station_collapsed: std::collections::HashSet<String>,
     /// 上一次因为选中而自动展开的流程：同一个流程被 ← 收起后不再自动展开。
     pub flow_auto: Option<String>,
+    /// 流程定义的下半选中了哪一站：编写会话的面板改为显示这一站的配置；回到上半选流程时清掉。
+    pub flow_station: Option<(String, usize)>,
     /// 上一次"选中即切换"的依据；选中没变就不再切。
     pub last_follow: Option<String>,
     /// 各标签的过滤字（`/`），以及是否正在输入过滤字。
@@ -325,6 +329,7 @@ impl State {
                 composer: ComposerState::default(),
                 detail: false,
                 panel: Default::default(),
+                panel_scroll: Default::default(),
                 permission: PermissionMode::Default,
                 ask_active: false,
                 ask_selected: 0,
@@ -345,6 +350,7 @@ impl State {
                 flow_expanded: Default::default(),
                 station_collapsed: Default::default(),
                 flow_auto: None,
+                flow_station: None,
                 last_follow: None,
                 filter: Default::default(),
                 filtering: false,
@@ -409,6 +415,16 @@ impl State {
             .sessions
             .iter()
             .filter(|s| !matches!(s.provenance.origin, port::Origin::SubAgent { .. }))
+    }
+
+    /// 会话标签列的会话：人发起的（新建、分叉）。流程和作业开出来的会话在流程、作业标签里找。
+    pub fn user_sessions(&self) -> impl Iterator<Item = &SessionSummary> {
+        self.main_sessions().filter(|s| {
+            matches!(
+                s.provenance.origin,
+                port::Origin::User | port::Origin::Fork { .. }
+            )
+        })
     }
 
     pub fn wide(&self) -> bool {

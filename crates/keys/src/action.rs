@@ -21,6 +21,8 @@ pub enum Action {
     EventLog,
     ToggleDetail,
     TogglePanel,
+    PanelUp,
+    PanelDown,
     CycleMode,
     Exit,
 
@@ -112,6 +114,8 @@ impl Action {
             EventLog => "事件日志（mock）",
             ToggleDetail => "转录精简 / 详细",
             TogglePanel => "收放对话区顶部面板（goal / todo、流程设计、作业）",
+            PanelUp => "顶部面板向上滚",
+            PanelDown => "顶部面板向下滚",
             CycleMode => "切换权限模式",
             Exit => "退出",
             Submit => "提交",

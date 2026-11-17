@@ -123,10 +123,17 @@ pub(crate) fn outcome(o: &JobOutcome) -> Mark {
 
 pub(crate) fn todo(t: TodoStatus) -> (&'static str, Tone) {
     match t {
-        TodoStatus::Done => ("☒", Tone::Dim),
-        TodoStatus::InProgress => ("◼", Tone::Accent),
+        TodoStatus::Done => ("✓", Tone::Ok),
+        TodoStatus::InProgress => ("▶", Tone::Accent),
         TodoStatus::Pending => ("☐", Tone::Normal),
     }
+}
+
+/// todo 的显示顺序：没做完的（正在做、待做）在上，做完的沉到下面；各组里仍按原来的序号。
+pub(crate) fn todo_order(todos: &[port::Todo]) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..todos.len()).collect();
+    idx.sort_by_key(|i| (todos[*i].status == TodoStatus::Done, *i));
+    idx
 }
 
 /// 拆分树里区分子 Agent 与任务的小图标：子 Agent 有会话，选中就切过去；任务只有输出。

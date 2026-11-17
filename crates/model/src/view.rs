@@ -469,6 +469,16 @@ fn side_pane(s: &State, tabs: Vec<TabLabel>, r: &tui::layout::SideRegions) -> Si
                     Tone::Error,
                 )],
                 (None, true) => vec![Line::toned(empty_hint(s), Tone::Dim)],
+                // 会话列表总有"新建会话"那一行；没有别的会话时在它下面给提示。
+                (None, false)
+                    if s.ui.tab == Tab::Sessions
+                        && s.ui.filter[0].is_empty()
+                        && s.user_sessions().next().is_none() =>
+                {
+                    let mut v = visible;
+                    v.push(Line::toned(empty_hint(s), Tone::Dim));
+                    v
+                }
                 (None, false) => visible,
             },
             selected,
@@ -483,7 +493,7 @@ fn empty_hint(s: &State) -> String {
         return format!("没有匹配「{f}」的 · Esc 清除过滤");
     }
     match s.ui.tab {
-        Tab::Sessions => "还没有会话 · n 新建，或者直接在左边输入".into(),
+        Tab::Sessions => "还没有会话 · 选上面一行新建，或者直接在左边输入".into(),
         Tab::Flows => "还没有流程 · n 在左边对话里描述一个流程来创建".into(),
         Tab::Jobs => "还没有作业 · n 在左边对话里说清楚何时做什么".into(),
     }
