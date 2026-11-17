@@ -1,5 +1,5 @@
 //! 给演示用的真实实例灌一批数据（由 `scripts/demo.sh` 调用）：用真实模型跑几个会话，让
-//! todo、子 Agent、后台任务、goal、待答的提问、作业与触发记录都有东西可看。
+//! todo、子 Agent、后台任务、goal、待答的提问、作业与触发记录、宿主工具、一次停在待确认的流程运行都有东西可看。
 //!
 //! 用法：`CODIX_HOME=<demo/home> demo_seed <codix 二进制> <示例项目目录>`，凭据从环境变量来。
 
@@ -26,6 +26,10 @@ const TALKS: &[(&str, bool)] = &[
     ),
     (
         "调用 Bash 工具，参数 run_in_background 设为 true，命令是：for i in $(seq 1 3600); do echo tick $i; sleep 2; done 。启动之后直接回复“已在后台运行”，不要读它的输出、不要等它结束、不要停掉它。",
+        true,
+    ),
+    (
+        "先用 job_list 看看现在有哪些作业，然后用 job_save 建一个作业：名字“每周清理”，cron 是 0 18 * * 5，提示词是“清理 shop 里的临时文件并汇报”。不用再问我确认。最后只回复一句话。",
         true,
     ),
     (
@@ -234,6 +238,19 @@ async fn main() {
     )
     .await;
     println!("  • 每日依赖检查（已立即触发一次） · 半小时巡检（停用）");
+
+    println!("流程：");
+    match b
+        .call(Command::StartRun {
+            flow: "example-review".into(),
+            subject: "审查 shop 的代码".into(),
+            inputs: serde_json::json!({}),
+        })
+        .await
+    {
+        Ok(_) => println!("  • 内置流程 example-review：审查完停在“待确认”那一站"),
+        Err(e) => println!("  流程没起来：{e}"),
+    }
 
     println!("等前几段跑完（至多 5 分钟）……");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);

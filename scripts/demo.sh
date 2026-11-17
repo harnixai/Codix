@@ -123,7 +123,7 @@ CODIX_HOME=$D/home "$ROOT/target/debug/examples/demo_seed" "$BIN" "$D/shop"
 cat <<TXT
 
 演示准备好了：
-  demo/live.sh    打开真实实例（会话、子 Agent、任务、goal、待答提问、作业）
-  demo/mock.sh    打开 mock 演示（流程标签的样子在这里看）
+  demo/live.sh    打开真实实例（会话、子 Agent、任务、goal、待答提问、作业、流程运行）
+  demo/mock.sh    打开 mock 演示（脚本数据，不起实例、不调模型）
   demo/stop.sh    停掉演示实例
 TXT
