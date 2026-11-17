@@ -1,0 +1,21 @@
+# 状态与种类的名字（marks.rs）。
+marks:
+  kind:
+    agent: 子 Agent
+    teammate: 团队成员
+    shell: shell
+    monitor: monitor
+    code: 程序
+    mcp: MCP
+    cron: 定时
+  origin:
+    builtin: 全局 · 内置
+    global: 全局
+    project: 项目
+    override: 项目 · 覆盖全局
+  error:
+    occupied: "实例已被 {holder} 接入"
+    no_instance: "没有实例 {name}"
+    session_held: "会话被实例 {name} 占用"
+    unsupported: "不支持：{what}"
+    disconnected: 连接已断开

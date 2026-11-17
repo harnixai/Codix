@@ -603,7 +603,7 @@ fn instances_done(s: &mut State, op: InstOp, r: Result<InstOk, PortError>) -> Ve
                     holder = holder.label(),
                     idle = crate::view::fmt_duration(*idle_ms)
                 ),
-                _ => e.to_string(),
+                _ => crate::marks::error_text(&e),
             };
             if matches!(s.ui.screen, Screen::Instances(_)) {
                 set_picker_message(s, text);
@@ -1167,8 +1167,8 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
                 _ => None,
             };
             match tab {
-                Some(t) => s.domain.load_errors[t.index()] = Some(e.to_string()),
-                None => s.notice(e.to_string(), true),
+                Some(t) => s.domain.load_errors[t.index()] = Some(crate::marks::error_text(&e)),
+                None => s.notice(crate::marks::error_text(&e), true),
             }
             return vec![];
         }

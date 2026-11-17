@@ -149,6 +149,44 @@ pub(crate) fn kind_icon(k: &TaskKind) -> (&'static str, Tone) {
     }
 }
 
+/// 任务种类给人看的名字（端口里只有枚举，不带界面文字）。
+pub(crate) fn kind_label(k: &TaskKind) -> String {
+    match k {
+        TaskKind::Agent => i18n::t!("marks.kind.agent"),
+        TaskKind::Teammate => i18n::t!("marks.kind.teammate"),
+        TaskKind::Shell => i18n::t!("marks.kind.shell"),
+        TaskKind::Monitor => i18n::t!("marks.kind.monitor"),
+        TaskKind::Code => i18n::t!("marks.kind.code"),
+        TaskKind::Mcp => i18n::t!("marks.kind.mcp"),
+        TaskKind::Cron => i18n::t!("marks.kind.cron"),
+        TaskKind::Unknown(s) => s.clone(),
+    }
+}
+
+/// 流程从哪来：`全局 · 内置` / `项目` ……
+pub(crate) fn origin_label(o: port::FlowOrigin) -> String {
+    match o {
+        port::FlowOrigin::Builtin => i18n::t!("marks.origin.builtin"),
+        port::FlowOrigin::Global => i18n::t!("marks.origin.global"),
+        port::FlowOrigin::Project => i18n::t!("marks.origin.project"),
+        port::FlowOrigin::Override => i18n::t!("marks.origin.override"),
+    }
+}
+
+/// 端口错误在界面上的说法。
+pub(crate) fn error_text(e: &port::PortError) -> String {
+    match e {
+        port::PortError::Occupied { holder, .. } => {
+            i18n::t!("marks.error.occupied", holder = holder.label())
+        }
+        port::PortError::NoSuchInstance(n) => i18n::t!("marks.error.no_instance", name = n),
+        port::PortError::SessionHeld(n) => i18n::t!("marks.error.session_held", name = n),
+        port::PortError::Unsupported(w) => i18n::t!("marks.error.unsupported", what = w),
+        port::PortError::Disconnected => i18n::t!("marks.error.disconnected"),
+        port::PortError::Failed(m) => m.clone(),
+    }
+}
+
 /// 右栏行尾的用时与 token：`9m40s, 12.0k/4.5k`（输入 / 输出，缓存不单列）。状态不写字——
 /// 行首的符号与颜色已经说了。没有的项不写。
 pub(crate) fn cost(elapsed_ms: u64, usage: Option<&port::Usage>) -> String {

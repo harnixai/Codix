@@ -43,19 +43,6 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    pub fn label(&self) -> &str {
-        match self {
-            TaskKind::Agent => "子 Agent",
-            TaskKind::Teammate => "团队成员",
-            TaskKind::Shell => "shell",
-            TaskKind::Monitor => "monitor",
-            TaskKind::Code => "程序",
-            TaskKind::Mcp => "MCP",
-            TaskKind::Cron => "定时",
-            TaskKind::Unknown(s) => s,
-        }
-    }
-
     pub fn has_session(&self) -> bool {
         matches!(self, TaskKind::Agent | TaskKind::Teammate)
     }

@@ -5,18 +5,20 @@ use tokio::sync::mpsc;
 
 use crate::{Attach, ClientInfo, Command, Event, InstanceInfo, Millis, NewInstance, Reply};
 
+/// 端口的错误。这里的 Display 只给日志与调试看（英文、不翻译）；界面上显示的说法由 model
+/// 按当前语言给出（端口是协议，不带界面文字）。
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum PortError {
     /// 实例已被另一个 TUI 接入（需求 I-06）。
-    #[error("实例已被 {} 接入", holder.label())]
+    #[error("instance attached by {}", holder.label())]
     Occupied { holder: ClientInfo, idle_ms: Millis },
-    #[error("没有实例 {0}")]
+    #[error("no such instance: {0}")]
     NoSuchInstance(String),
-    #[error("会话被实例 {0} 占用")]
+    #[error("session held by instance {0}")]
     SessionHeld(String),
-    #[error("不支持：{0}")]
+    #[error("unsupported: {0}")]
     Unsupported(String),
-    #[error("连接已断开")]
+    #[error("disconnected")]
     Disconnected,
     #[error("{0}")]
     Failed(String),

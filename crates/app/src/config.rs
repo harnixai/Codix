@@ -192,14 +192,12 @@ pub fn load_from(dir: &std::path::Path) -> (Config, Vec<String>) {
         Ok(t) => t,
         Err(_) => {
             let _ = std::fs::create_dir_all(dir);
-            // 此时语言还没初始化：模板按环境（CODIX_LANG、LANG）选，写出后用户可以再改。
-            let template = default_yaml(&language(&Config {
-                ui: UiConfig {
-                    language: "auto".into(),
-                    ..UiConfig::default()
-                },
-                ..Config::default()
-            }));
+            // 模板只看 CODIX_LANG，不看 LANG：macOS 上中文用户的 LANG 常是 en_US，照它会一上来
+            // 就是英文界面。缺省中文，写出后用户可以改 ui.language。
+            let lang = std::env::var("CODIX_LANG")
+                .map(|l| i18n::normalize(&l))
+                .unwrap_or_else(|_| i18n::REFERENCE.to_string());
+            let template = default_yaml(&lang);
             let _ = std::fs::write(&path, template);
             template.to_string()
         }

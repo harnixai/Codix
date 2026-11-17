@@ -417,7 +417,7 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                         .agent_type
                         .clone()
                         .unwrap_or_else(|| i18n::t!("sessions.sub_agent")),
-                    k => k.label().to_string(),
+                    k => crate::marks::kind_label(k),
                 };
                 let end = t.ended_ms.unwrap_or(now);
                 // 子 Agent 与任务用图标分开：◆ 是子 Agent（选中切到它的会话），其余是任务

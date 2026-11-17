@@ -31,15 +31,6 @@ impl FlowOrigin {
     pub fn is_global(self) -> bool {
         matches!(self, FlowOrigin::Builtin | FlowOrigin::Global)
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            FlowOrigin::Builtin => "全局 · 内置",
-            FlowOrigin::Global => "全局",
-            FlowOrigin::Project => "项目",
-            FlowOrigin::Override => "项目 · 覆盖全局",
-        }
-    }
 }
 
 /// 查看定义（需求 F-08）：站的概要与原始 YAML。

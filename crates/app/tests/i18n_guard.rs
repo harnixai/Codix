@@ -1,5 +1,5 @@
 //! 守卫（需求 L-11）：界面文字都在 `crates/i18n/locales/` 里，代码里不再写死中文。
-//! 扫 model、tui、keys、app 的源码：去掉 `//` 注释后，一行里还有中文（汉字或全角标点）就算
+//! 扫 port、model、tui、keys、app 的源码：去掉 `//` 注释后，一行里还有中文（汉字或全角标点）就算
 //! 漏了。`#[cfg(test)]` 之后的测试代码、行尾带 `i18n-allow` 的行不算。
 
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 pub fn leftovers() -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = vec![];
-    for c in ["model", "tui", "keys", "app"] {
+    for c in ["port", "model", "tui", "keys", "app"] {
         rs_files(&root.join(c).join("src"), &mut files);
     }
     files.sort();

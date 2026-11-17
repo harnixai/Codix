@@ -1,0 +1,20 @@
+marks:
+  kind:
+    agent: sub-agent
+    teammate: teammate
+    shell: shell
+    monitor: monitor
+    code: program
+    mcp: MCP
+    cron: scheduled
+  origin:
+    builtin: global · built-in
+    global: global
+    project: project
+    override: project · overrides global
+  error:
+    occupied: "instance is attached by {holder}"
+    no_instance: "no instance {name}"
+    session_held: "session is held by instance {name}"
+    unsupported: "not supported: {what}"
+    disconnected: disconnected

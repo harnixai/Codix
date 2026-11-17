@@ -110,7 +110,7 @@ impl State {
                         .push(i18n::t!("panel.flow_back"), Tone::Dim);
                 }
                 if let Some(d) = d {
-                    let origin = d.summary.origin.label();
+                    let origin = crate::marks::origin_label(d.summary.origin);
                     l = l.push(
                         i18n::t!(
                             "panel.flow_meta",
