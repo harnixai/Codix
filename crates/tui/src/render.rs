@@ -208,8 +208,8 @@ fn chat(f: &mut Frame, c: &crate::layout::ChatRegions, p: &ChatPane) {
     if let (Some(r), Some(s)) = (c.status, &p.status) {
         lines(f, r, std::slice::from_ref(s), None);
     }
-    if let Some(r) = c.todos {
-        lines(f, r, &p.todos, None);
+    if let Some(r) = c.panel {
+        lines(f, r, &p.panel, None);
     }
     if !p.picker.is_empty() {
         let n = (p.picker.len() as u16).min(c.transcript.h);

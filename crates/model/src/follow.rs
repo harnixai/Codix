@@ -1,9 +1,8 @@
-//! 右栏选中即切换（需求：选中带会话的东西，左边对话区跟着切过去）、按需加载、卡片同步、
+//! 右栏选中即切换（需求：选中带会话的东西，左边对话区跟着切过去）、按需加载、
 //! 全局待处理与 Ctrl+G（需求 L-04、L-05）。每次 update 之后跑一遍。
 
 use port::{Command, JobOutcome, RunStatus, SessionId, SessionState, StationStatus};
 
-use crate::cards::Card;
 use crate::flows::{FlowLower, FlowRow};
 use crate::sessions::{SessRow, TreeRow};
 use crate::state::{Focus, Screen, State, Tab};
@@ -47,9 +46,17 @@ pub(crate) fn after_update(s: &mut State) -> Vec<Effect> {
     if s.ui.screen != Screen::Workbench {
         return vec![];
     }
+    // 选中流程即展开它的运行；人收起过的同一个流程不再自动展开。先于取数据，好让运行列表
+    // 在同一轮里就去取。
+    if (s.ui.tab, s.ui.focus) == (Tab::Flows, Focus::SideUpper)
+        && let Some(FlowRow::Flow(name)) = s.selected_flow_row()
+        && s.ui.flow_auto.as_deref() != Some(name.as_str())
+    {
+        s.ui.flow_expanded.insert(name.clone());
+        s.ui.flow_auto = Some(name);
+    }
     let mut out = data(s);
     out.extend(follow(s));
-    sync_cards(s);
     out
 }
 
@@ -124,6 +131,7 @@ fn follow(s: &mut State) -> Vec<Effect> {
     if s.ui.last_follow.as_deref() == Some(key.as_str()) {
         return vec![];
     }
+
     let target = target(s);
     // 目标的数据还没到（运行详情、编辑会话）时先不记下，到了再切。
     if target.is_some() {
@@ -131,6 +139,13 @@ fn follow(s: &mut State) -> Vec<Effect> {
     }
     match target {
         Some(Target::Session(id, parents, via)) => show(s, id, parents, via),
+        Some(Target::Output(owner, task, parents)) => {
+            if s.ui.task_view.as_ref() == Some(&task) {
+                return vec![];
+            }
+            s.ui.ctx_parents = parents;
+            crate::chat_update::open_task_output(s, owner, task)
+        }
         Some(Target::Authoring(key, cmd)) => match s.domain.authoring.get(&key).cloned() {
             Some(id) => show(s, id, vec![], None),
             None => load(
@@ -146,6 +161,8 @@ fn follow(s: &mut State) -> Vec<Effect> {
 
 enum Target {
     Session(SessionId, Vec<(SessionId, String)>, Option<port::TaskId>),
+    /// 没有会话的任务：看它的输出（只读）。
+    Output(SessionId, port::TaskId, Vec<(SessionId, String)>),
     Authoring(String, Command),
 }
 
@@ -161,12 +178,11 @@ fn target(s: &State) -> Option<Target> {
                 TreeRow::Root(id) => Some(Target::Session(id.clone(), vec![], None)),
                 TreeRow::Task { id, .. } => {
                     let t = s.task(id)?;
-                    let child = t.agent_session.clone()?;
-                    Some(Target::Session(
-                        child,
-                        vec![(root.clone(), title_of(s, &root))],
-                        Some(t.id.clone()),
-                    ))
+                    let parents = vec![(root.clone(), title_of(s, &root))];
+                    Some(match t.agent_session.clone() {
+                        Some(child) => Target::Session(child, parents, Some(t.id.clone())),
+                        None => Target::Output(root, t.id.clone(), parents),
+                    })
                 }
                 TreeRow::Finished { .. } => None,
             }
@@ -184,8 +200,18 @@ fn target(s: &State) -> Option<Target> {
         (Tab::Flows, Focus::SideLower) => {
             let v = s.selected_run()?;
             match s.flow_lower_rows().get(s.ui.lower().selected)? {
-                FlowLower::Main | FlowLower::Station(_) => {
-                    Some(Target::Session(v.main_session.clone(), vec![], None))
+                FlowLower::Main => Some(Target::Session(v.main_session.clone(), vec![], None)),
+                // 有独立会话的站切到它；其余的站都在运行的主会话里做。
+                FlowLower::Station(st) => {
+                    let st = v.stations.iter().find(|x| &x.id == st)?;
+                    Some(match &st.session {
+                        Some(id) => Target::Session(
+                            id.clone(),
+                            vec![(v.main_session.clone(), v.summary.subject.clone())],
+                            None,
+                        ),
+                        None => Target::Session(v.main_session.clone(), vec![], None),
+                    })
                 }
                 FlowLower::StationTask(st, k) => {
                     let t = v.stations.iter().find(|x| &x.id == st)?.tasks.get(*k)?;
@@ -214,34 +240,6 @@ fn target(s: &State) -> Option<Target> {
             }
         },
         _ => None,
-    }
-}
-
-/// 编写 / 作业会话最上面的卡片跟着数据刷新。
-fn sync_cards(s: &mut State) {
-    let bound: Vec<(String, SessionId)> = s
-        .domain
-        .authoring
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    for (key, sid) in bound {
-        let card = if let Some(name) = key.strip_prefix("flow:") {
-            s.domain
-                .flow_details
-                .get(name)
-                .map(|d| Card::Flow(Box::new(d.clone())))
-        } else if let Some(id) = key.strip_prefix("job:") {
-            s.domain.jobs.iter().find(|j| j.id.as_str() == id).map(|j| {
-                let h = s.domain.job_history.get(&j.id).cloned().unwrap_or_default();
-                Card::Job(Box::new(j.clone()), h)
-            })
-        } else {
-            None
-        };
-        if let (Some(card), Some(c)) = (card, s.domain.convs.get_mut(&sid)) {
-            c.set_card(card);
-        }
     }
 }
 

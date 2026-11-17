@@ -8,3 +8,9 @@
 git clone --recurse-submodules <repo>
 git -C agix checkout main
 ```
+
+阶段 2 的界面接的是 mock 后端，直接运行就是演示：
+
+```sh
+cargo run -p app          # 演示 demo：会话、任务树、goal、流程运行、作业都在里面，约一分钟内自己动起来
+```

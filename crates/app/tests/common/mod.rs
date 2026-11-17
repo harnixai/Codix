@@ -288,6 +288,17 @@ impl Harness {
             .unwrap_or_default()
     }
 
+    /// 对话区顶部面板的全部内容（不受面板高度限制）；收起时为空。
+    pub fn panel(&self) -> String {
+        self.core
+            .state
+            .panel_content(200)
+            .iter()
+            .map(|l| l.text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn calls(&self, instance: &str) -> Vec<port::Command> {
         self.instances
             .backend(instance)

@@ -74,8 +74,9 @@ pub struct LayoutSpec {
     /// 输入框内容的行数（不含边框）；会被限制在对话区高度的 1/3 以内。
     pub composer_rows: u16,
     pub status: bool,
-    /// 状态行与输入框之间的 todo 清单行数（Ctrl+T，交互 §4.3）。
-    pub todo_rows: u16,
+    /// 对话区顶部面板的行数（含标题线与下沿；收起时只有标题线这 1 行；Ctrl+T，交互 §4.3）；
+    /// 会被限制在对话区高度的 1/3 以内。
+    pub panel_rows: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -96,7 +97,8 @@ pub struct ChatRegions {
     pub owner: Rect,
     pub transcript: Rect,
     pub status: Option<Rect>,
-    pub todos: Option<Rect>,
+    /// 归属行下面的面板：goal / todo、流程设计、运行进度、作业。
+    pub panel: Option<Rect>,
     /// 带边框的整个输入框。
     pub composer: Rect,
     pub composer_inner: Rect,
@@ -189,15 +191,17 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
     let composer = Rect::new(a.x, hints.y.saturating_sub(box_h), a.w, box_h);
     let mut above = composer.y;
     let room = |above: u16| above.saturating_sub(a.y + 1);
-    let todos = (spec.todo_rows > 0 && room(above) > spec.todo_rows + 2).then(|| {
-        above -= spec.todo_rows;
-        Rect::new(a.x, above, a.w, spec.todo_rows)
-    });
     let status = (spec.status && room(above) > 2).then(|| {
         above -= 1;
         Rect::new(a.x, above, a.w, 1)
     });
-    let transcript = Rect::new(a.x, a.y + 1, a.w, above.saturating_sub(a.y + 1));
+    let mut top = a.y + 1;
+    let panel_h = spec.panel_rows.min(a.h / 3);
+    let panel = (panel_h >= 1 && room(above) > panel_h + 2).then(|| {
+        top += panel_h;
+        Rect::new(a.x, a.y + 1, a.w, panel_h)
+    });
+    let transcript = Rect::new(a.x, top, a.w, above.saturating_sub(top));
     // 输入框照 Claude Code 只有上下两条横线，内容区占满宽度。
     let composer_inner = Rect::new(
         composer.x,
@@ -210,7 +214,7 @@ fn chat(frame: Rect, spec: &LayoutSpec) -> ChatRegions {
         owner,
         transcript,
         status,
-        todos,
+        panel,
         composer,
         composer_inner,
         hints,
@@ -270,7 +274,7 @@ mod tests {
             mode,
             composer_rows: 1,
             status: true,
-            todo_rows: 0,
+            panel_rows: 0,
         }
     }
 
@@ -339,14 +343,18 @@ mod tests {
     }
 
     #[test]
-    fn todos_sit_between_status_and_composer() {
+    fn panel_sits_under_owner_and_is_capped_at_a_third() {
         let mut s = spec(PaneMode::Single {
             showing: ShowPane::Chat,
         });
-        s.todo_rows = 4;
+        s.panel_rows = 6;
         let chat = compute(Size::new(100, 40), &s, &[]).chat.unwrap();
-        let todos = chat.todos.unwrap();
-        assert_eq!(todos.bottom(), chat.composer.y);
-        assert_eq!(chat.status.unwrap().bottom(), todos.y);
+        let panel = chat.panel.unwrap();
+        assert_eq!(panel.y, chat.owner.bottom());
+        assert_eq!(panel.h, 6);
+        assert_eq!(chat.transcript.y, panel.bottom());
+        s.panel_rows = 30;
+        let chat = compute(Size::new(100, 40), &s, &[]).chat.unwrap();
+        assert_eq!(chat.panel.unwrap().h, 37 / 3, "不超过对话区的 1/3");
     }
 }

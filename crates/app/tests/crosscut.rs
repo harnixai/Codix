@@ -102,6 +102,10 @@ async fn m20_first_run_has_guiding_empty_states() {
     let mut h = Harness::new("m20-first-run", SIZE).await;
     let text = h.text();
     assert!(text.contains("Codix 0.1.0"), "欢迎块");
+    assert!(
+        h.panel().is_empty() && !text.contains("Ctrl+T"),
+        "没有 goal / todo 的会话没有面板，连标题线也没有"
+    );
     assert!(text.contains("还没有会话"), "{text}");
     h.keys("F3").await;
     assert!(h.text().contains("还没有流程"));
@@ -181,5 +185,42 @@ async fn selection_follows_in_sessions_tab_without_enter() {
     assert_eq!(h.chat_title(), "重构认证模块");
     h.select_task("审查认证改动").await;
     assert_eq!(h.chat_title(), "审查认证改动", "下半选中子 Agent 也跟着切");
+    h.select_task("tail -f app.log").await;
+    assert!(
+        h.core.state.ui.task_view.is_some(),
+        "选中没有会话的任务：看它的输出"
+    );
+    assert!(h.text().contains("› tail -f app.log"));
     assert!(matches!(h.core.state.ui.screen, Screen::Workbench));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_one_demo_plays_through_every_tab() {
+    let mut h = Harness::new("demo", SIZE).await;
+    h.select_session("重构认证模块").await;
+    h.advance(40_000).await;
+    assert!(
+        h.panel().contains("受阻：需要你确认数据库迁移方案"),
+        "goal 轮次走到受阻\n{}",
+        h.panel()
+    );
+    let items = h.core.state.attention();
+    for kind in ["Session", "Run", "Job"] {
+        assert!(
+            items.iter().any(|a| format!("{a:?}").starts_with(kind)),
+            "演示里有 {kind} 类待处理：{items:?}"
+        );
+    }
+    h.keys("F3").await;
+    h.settle().await;
+    assert!(h.text().contains("需求到上线"));
+    h.keys("F4").await;
+    h.settle().await;
+    assert!(h.text().contains("依赖巡检"));
+    h.select_session("Codix 展示").await;
+    h.keys("Enter").await;
+    h.type_str("看看效果").await;
+    h.keys("Enter").await;
+    h.advance(8_000).await;
+    assert!(h.transcript().contains("看看效果"));
 }

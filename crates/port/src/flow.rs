@@ -95,6 +95,9 @@ pub struct StationView {
     /// 未达标时的说明。
     #[serde(default)]
     pub unmet: Option<String>,
+    /// 这一站有自己的会话（独立会话的站）；没有就在运行的主会话里做。
+    #[serde(default)]
+    pub session: Option<crate::SessionId>,
 }
 
 /// 与 Harnix flow 的 `StationStatus` 一一对应。

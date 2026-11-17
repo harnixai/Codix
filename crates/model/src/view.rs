@@ -20,11 +20,6 @@ pub(crate) fn layout_spec(s: &State) -> LayoutSpec {
 pub(crate) fn chat_layout(s: &State) -> (LayoutSpec, Vec<String>) {
     let labels = tab_labels(s);
     let conv = s.conv();
-    let todo_rows = if s.ui.show_todos {
-        conv.map_or(0, |c| c.todos.len().min(5)) as u16
-    } else {
-        0
-    };
     let mut spec = LayoutSpec {
         mode: layout::pane_mode_for(
             s.ui.size.cols,
@@ -34,10 +29,11 @@ pub(crate) fn chat_layout(s: &State) -> (LayoutSpec, Vec<String>) {
         ),
         composer_rows: 1,
         status: conv.is_some_and(|c| c.running || !c.prompts.is_empty()),
-        todo_rows,
+        panel_rows: 0,
     };
     if let Some(chat) = layout::compute(s.ui.size, &spec, &labels).chat {
         let w = chat.composer_inner.w as usize;
+        spec.panel_rows = s.panel_rows(chat.transcript.w as usize);
         spec.composer_rows = match ask_lines(s, w.saturating_sub(2)) {
             Some((lines, _)) => lines.len() as u16,
             None => s.ui.composer.layout(w, PLACEHOLDER).0.len() as u16,
@@ -277,12 +273,10 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         transcript_focused: s.ui.focus == Focus::Transcript,
         below,
         status: conv.and_then(|c| status_line(s, c, width)),
-        todos: if s.ui.show_todos {
-            conv.map(|c| todo_lines(&c.todos, width))
-                .unwrap_or_default()
-        } else {
-            vec![]
-        },
+        panel: r
+            .panel
+            .map(|p| s.panel_lines(width, p.h as usize))
+            .unwrap_or_default(),
         composer: Composer {
             focused: s.ui.focus == Focus::Composer && s.ui.overlay.is_none() && ask.is_none(),
             lines,
@@ -372,21 +366,6 @@ fn status_line(s: &State, c: &crate::chat::Conversation, width: usize) -> Option
             .push(verb, Tone::Accent)
             .push(format!(" ({tail})"), Tone::Dim),
     )
-}
-
-fn todo_lines(todos: &[port::Todo], width: usize) -> Vec<Line> {
-    todos
-        .iter()
-        .take(5)
-        .map(|t| {
-            let (g, tone) = match t.status {
-                port::TodoStatus::Done => ("☒", Tone::Dim),
-                port::TodoStatus::InProgress => ("◼", Tone::Strong),
-                port::TodoStatus::Pending => ("☐", Tone::Normal),
-            };
-            Line::toned(truncate_to_width(&format!("  {g} {}", t.text), width), tone)
-        })
-        .collect()
 }
 
 /// 提问框的行与选中行（交互 §4.6，照 Claude Code）。固定结构：标题、摘要、来源、问句，

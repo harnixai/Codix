@@ -128,7 +128,9 @@ pub struct ChatPane {
     /// 转录区底部的浮动提示，如 `↓ 有新内容 (End)`。
     pub below: Option<Line>,
     pub status: Option<Line>,
-    pub todos: Vec<Line>,
+    /// 归属行下面的面板（goal / todo、流程设计、运行进度、作业），已按面板高度排好，
+    /// 最后一行是它的下沿。空表示收起。
+    pub panel: Vec<Line>,
     pub composer: Composer,
     /// 补全列表：浮在输入框正上方，自下而上贴着它（交互 §4.5）。
     pub picker: Vec<Line>,

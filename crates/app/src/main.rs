@@ -16,7 +16,7 @@ use port::Instances;
 #[derive(Parser)]
 #[command(name = "codix", version, about = "跑在终端里的 agent 工作台")]
 struct Cli {
-    /// 用 mock 后端：内置场景名（如 default）或场景文件路径。
+    /// 用 mock 后端：内置场景名或场景文件路径。阶段 2 不带它也是 mock，打开演示 `demo`。
     #[arg(long, global = true)]
     mock: Option<String>,
     /// mock 时间线的加速倍数。
@@ -66,10 +66,8 @@ fn now_ms() -> u64 {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let Some(scenario) = cli.mock.as_deref() else {
-        eprintln!("真实实例在阶段 3 接入；现在请用 mock：codix --mock default");
-        std::process::exit(2);
-    };
+    // 真实实例在阶段 3 接入；在那之前直接打开 mock 的演示。
+    let scenario = cli.mock.as_deref().unwrap_or("demo");
     let scenario = mock::load_scenario(scenario)
         .or_else(|_| mock::load_seed(scenario).map(|_| mock::Scenario::seed_only(scenario)))
         .with_context(|| format!("没有场景或种子 {scenario}"))?;

@@ -167,21 +167,11 @@ impl State {
 }
 
 pub(crate) fn state_glyph(s: SessionState) -> (&'static str, Tone) {
-    match s {
-        SessionState::Running => ("●", Tone::Ok),
-        SessionState::Waiting => ("◐", Tone::Attention),
-        SessionState::Idle => ("○", Tone::Dim),
-    }
+    crate::marks::session(s).pair()
 }
 
 pub(crate) fn task_glyph(t: TaskStatus) -> (&'static str, Tone) {
-    match t {
-        TaskStatus::Running => ("●", Tone::Ok),
-        TaskStatus::Waiting => ("◐", Tone::Attention),
-        TaskStatus::Done => ("✓", Tone::Dim),
-        TaskStatus::Failed => ("✗", Tone::Error),
-        TaskStatus::Stopped => ("■", Tone::Dim),
-    }
+    crate::marks::task(t).pair()
 }
 
 pub(crate) fn status_text(t: TaskStatus) -> &'static str {
@@ -323,11 +313,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
 }
 
 fn todo_glyph(t: TodoStatus) -> (&'static str, Tone) {
-    match t {
-        TodoStatus::Done => ("☒", Tone::Dim),
-        TodoStatus::InProgress => ("◼", Tone::Strong),
-        TodoStatus::Pending => ("☐", Tone::Normal),
-    }
+    crate::marks::todo(t)
 }
 
 fn trim(line: Line, width: usize) -> Line {
@@ -419,14 +405,14 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 } else {
                     String::new()
                 };
-                let status_tone = if t.status == TaskStatus::Waiting {
-                    Tone::Attention
-                } else {
-                    Tone::Dim
-                };
+                let status_tone = crate::marks::task(t.status).text_tone();
+                // 子 Agent 与任务用图标分开：◆ 是子 Agent（选中切到它的会话），其余是任务
+                // （选中看它的输出）。
+                let (icon, itone) = crate::marks::kind_icon(&t.kind);
                 let left = Line::toned(prefix.clone(), Tone::Dim)
                     .push(mark, Tone::Dim)
                     .push(format!("{g} "), tone)
+                    .push(format!("{icon} "), itone)
                     .push(t.label.clone(), Tone::Normal)
                     .push(format!("  {kind}"), Tone::Dim);
                 let right = Line::toned(status_text(t.status), status_tone)

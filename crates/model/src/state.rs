@@ -203,8 +203,8 @@ pub struct Ui {
     pub composer: ComposerState,
     /// Ctrl+O：转录精简 / 详细。
     pub detail: bool,
-    /// Ctrl+T：显示 todo 清单。
-    pub show_todos: bool,
+    /// Ctrl+T 收放过的对话区顶部面板（按会话记）；没记的按有没有内容决定。
+    pub panel: std::collections::HashMap<SessionId, bool>,
     /// Shift+Tab 轮换的权限模式。
     pub permission: PermissionMode,
     /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
@@ -233,6 +233,10 @@ pub struct Ui {
     /// 正在给这个会话改名：输入框里是新名字（交互 §5.2 `r`）。
     pub rename: Option<SessionId>,
     pub flow_expanded: std::collections::HashSet<String>,
+    /// 运行里收起的站（`运行/站`）；有子 Agent 的站缺省展开。
+    pub station_collapsed: std::collections::HashSet<String>,
+    /// 上一次因为选中而自动展开的流程：同一个流程被 ← 收起后不再自动展开。
+    pub flow_auto: Option<String>,
     /// 上一次"选中即切换"的依据；选中没变就不再切。
     pub last_follow: Option<String>,
     /// 各标签的过滤字（`/`），以及是否正在输入过滤字。
@@ -320,7 +324,7 @@ impl State {
                 chat: None,
                 composer: ComposerState::default(),
                 detail: false,
-                show_todos: false,
+                panel: Default::default(),
                 permission: PermissionMode::Default,
                 ask_active: false,
                 ask_selected: 0,
@@ -339,6 +343,8 @@ impl State {
                 task_view: None,
                 rename: None,
                 flow_expanded: Default::default(),
+                station_collapsed: Default::default(),
+                flow_auto: None,
                 last_follow: None,
                 filter: Default::default(),
                 filtering: false,

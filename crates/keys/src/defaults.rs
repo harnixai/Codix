@@ -28,7 +28,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Global, "F6", A::FocusToggle),
         b(C::Global, "Alt+O", A::FocusToggle),
         b(C::Global, "Ctrl+O", A::ToggleDetail),
-        b(C::Global, "Ctrl+T", A::ToggleTodos),
+        b(C::Global, "Ctrl+T", A::TogglePanel),
         b(C::Global, "Ctrl+B", A::PaneToggle),
         b(C::Global, "Ctrl+G", A::NextAttention),
         b(C::Global, "F8", A::MouseToggle),

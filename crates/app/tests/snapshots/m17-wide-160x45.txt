@@ -22,8 +22,8 @@
 │                                                                                              ││                                                              │
 │                                                                                              │├─ 排查内存泄漏 ───────────────────────────────────────────────┤
 │                                                                                              ││›● 主 Agent                                     运行中   26.2k│
-│                                                                                              ││ ├ ● heaptrack ./target/release/gateway… 运行中          3m20s│
-│                                                                                              ││ └ ● watch -n 5 'ps -o rss= -p $(pgrep … 运行中          3m00s│
+│                                                                                              ││ ├ ● $ heaptrack ./target/release/gatew… 运行中          3m20s│
+│                                                                                              ││ └ ● ◉ watch -n 5 'ps -o rss= -p $(pgre… 运行中          3m00s│
 │                                                                                              ││                                                              │
 │                                                                                              ││                                                              │
 │                                                                                              ││                                                              │

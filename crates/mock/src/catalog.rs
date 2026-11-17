@@ -3,10 +3,11 @@
 const SEEDS: &[(&str, &str)] = &[
     ("empty", include_str!("../seeds/empty.yaml")),
     ("default", include_str!("../seeds/default.yaml")),
-    ("showcase", include_str!("../seeds/showcase.yaml")),
+    ("demo", include_str!("../seeds/demo.yaml")),
 ];
 
 const SCENARIOS: &[(&str, &str)] = &[
+    ("demo", include_str!("../scenarios/demo.yaml")),
     ("default", include_str!("../scenarios/default.yaml")),
     ("m21-kicked", include_str!("../scenarios/m21-kicked.yaml")),
     (
@@ -59,7 +60,6 @@ const SCENARIOS: &[(&str, &str)] = &[
         include_str!("../scenarios/m20-first-run.yaml"),
     ),
     ("m16-storm", include_str!("../scenarios/m16-storm.yaml")),
-    ("showcase", include_str!("../scenarios/showcase.yaml")),
 ];
 
 pub fn seed(name: &str) -> Option<&'static str> {

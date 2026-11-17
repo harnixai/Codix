@@ -1,17 +1,17 @@
  Codix  实例 dev@ops-01                                                                                                                                ● 已连接
 ╭─ 会话 › 重构认证模块 ─────────────────────────────────────────────────────────────── ◐ 等你 ─╮╭─ 会话 ─ 流程 ─ 作业 ─────────────────────────────────────────╮
 │ dev@ops-01 · ~/work/auth · code · claude-sonnet-5-5 · 用户新建                               ││ ▸ ● 排查内存泄漏                ~/work/gateway  code  26.2k  │
-│   ⎿  更新了 src/auth/mod.rs，+9 −3                                                           ││ ▸ ● 支付重试（主会话）              ~/work/pay  code  61.0k ⇶│
-│      @@ -10,9 +10,15 @@ pub struct Session {                                                 ││ ▾ ◐ 重构认证模块                   ~/work/auth  code  41.0k  │
-│           pub expires: Instant,                                                              ││      goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮               │
-│       }                                                                                      ││›     todo ▾ 2/7  ☒ 梳理现有认证入口  ☒ 调研 OAuth 库  ◼ 实…  │
-│                                                                                              ││          ☒ 梳理现有认证入口                                  │
-│      -pub trait AuthProvider: Send + Sync {                                                  ││          ☒ 调研 OAuth 库                                     │
-│      -    fn verify(&self, token: &str) -> Result<String, AuthError>;                        ││          ◼ 实现 provider                                     │
-│      -}                                                                                      ││          ☐ 迁移 session 存储                                 │
-│      +pub trait AuthProvider: Send + Sync {                                                  ││          ☐ 改写登录与回调路由                                │
-│      +    fn verify(&self, token: &str) -> Result<String, AuthError>;                        ││          ☐ 补齐集成测试                                      │
-│      +    /// 授权码流程的入口；静态 provider 不支持。                                       ││          ☐ 更新文档与迁移说明                                │
+│ ─ goal 与 todo · goal ● 进行中 · todo 2/7 ──────────────────────────────────── Ctrl+T 收起 ─ ││ ▸ ● 支付重试（主会话）              ~/work/pay  code  61.0k ⇶│
+│ goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮                                                    ││ ▾ ◐ 重构认证模块                   ~/work/auth  code  41.0k  │
+│ todo 2/7                                                                                     ││      goal ● 迁到 OAuth，测试全绿 · 第 2/256 轮               │
+│   ☒ 梳理现有认证入口                                                                         ││›     todo ▾ 2/7  ☒ 梳理现有认证入口  ☒ 调研 OAuth 库  ◼ 实…  │
+│   ☒ 调研 OAuth 库                                                                            ││          ☒ 梳理现有认证入口                                  │
+│   ◼ 实现 provider                                                                            ││          ☒ 调研 OAuth 库                                     │
+│   ☐ 迁移 session 存储                                                                        ││          ◼ 实现 provider                                     │
+│   ☐ 改写登录与回调路由                                                                       ││          ☐ 迁移 session 存储                                 │
+│   ☐ 补齐集成测试                                                                             ││          ☐ 改写登录与回调路由                                │
+│   ☐ 更新文档与迁移说明                                                                       ││          ☐ 补齐集成测试                                      │
+│ ──────────────────────────────────────────────────────────────────────────────────────────── ││          ☐ 更新文档与迁移说明                                │
 │      … +9 行 (ctrl+o 展开)                                                                   ││ ▸ ◐ 导出 CSV（主会话）           ~/work/report  code  28.8k ⇶│
 │                                                                                              ││ ▸ ○ 日志巡检                          /srv/ops  ops   8.2k ⏰│
 │ ⏺ Bash(cargo test auth)                                                                      ││ ▸ ○ 翻译文档                           ~/notes  code   5.3k ⑂│
@@ -22,11 +22,11 @@
 │                                                                                              ││                                                              │
 │ ⏺ Bash(cargo test --test integration)                                                        │├─ 重构认证模块 ───────────────────────────────────────────────┤
 │   ⎿  Error: error[E0432]: unresolved import `auth::oauth::MockProvider`                      ││›◐ 主 Agent                                       等你   41.0k│
-│       --> tests/integration.rs:4:5                                                           ││ ├ ▾ ◐ 审查认证改动  reviewer          等你批准  12.0k   8m00s│
-│        |                                                                                     ││ │ ├ ▾ ● 检查依赖许可  general           运行中   3.7k   2m20s│
-│      4 | use auth::oauth::MockProvider;                                                      ││ │ │ └ ● cargo deny check licenses  she… 运行中          1m40s│
-│        |     ^^^^^^^^^^^^^^^^^^^^^^^^^ no `MockProvider` in `auth::oauth`                    ││ │ └ ● cargo test  shell                 运行中          2m00s│
-│                                                                                              ││ ├ ● tail -f app.log  monitor            运行中         15m00s│
+│       --> tests/integration.rs:4:5                                                           ││ ├ ▾ ◐ ◆ 审查认证改动  reviewer        等你批准  12.0k   8m00s│
+│        |                                                                                     ││ │ ├ ▾ ● ◆ 检查依赖许可  general         运行中   3.7k   2m20s│
+│      4 | use auth::oauth::MockProvider;                                                      ││ │ │ └ ● $ cargo deny check licenses  s… 运行中          1m40s│
+│        |     ^^^^^^^^^^^^^^^^^^^^^^^^^ no `MockProvider` in `auth::oauth`                    ││ │ └ ● $ cargo test  shell               运行中          2m00s│
+│                                                                                              ││ ├ ● ◉ tail -f app.log  monitor          运行中         15m00s│
 │      error: could not compile `auth` (test "integration") due to 1 previous error            ││ └ ▸ 已结束 (4)                                               │
 │                                                                                              ││                                                              │
 │ ◐ 等你批准：Bash(cargo test --workspace)                                                     ││                                                              │

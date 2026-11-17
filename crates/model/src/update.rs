@@ -191,7 +191,7 @@ impl State {
     }
 
     pub(crate) fn log(&mut self, line: String) {
-        let at = crate::cards::fmt_clock(self.ui.now_ms);
+        let at = crate::panel::fmt_clock(self.ui.now_ms);
         self.ui.event_log.push_back(format!("{at}  {line}"));
         while self.ui.event_log.len() > 500 {
             self.ui.event_log.pop_front();
@@ -709,7 +709,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             s.ui.filtering = true;
             s.ui.focus = Focus::SideUpper;
         }
-        Action::ToggleTodos => s.ui.show_todos = !s.ui.show_todos,
+        Action::TogglePanel => s.toggle_panel(),
         Action::TabSessions => switch_tab(s, Tab::Sessions),
         Action::TabFlows => switch_tab(s, Tab::Flows),
         Action::TabJobs => switch_tab(s, Tab::Jobs),

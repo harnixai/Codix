@@ -37,7 +37,14 @@ async fn upper_lists_main_agents_with_origin_and_expands_goal_and_todo() {
     assert!(h.text().contains("todo ▾"), "todo 展开明细");
     h.snapshot("sessions-upper-expanded");
     h.keys("Left").await;
-    assert!(!h.text().contains("goal "), "收起");
+    assert!(
+        !h.core
+            .state
+            .session_rows()
+            .iter()
+            .any(|r| matches!(r, model::SessRow::Goal(_))),
+        "收起"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -58,7 +65,20 @@ async fn lower_tree_three_levels_and_finished_group() {
         assert!(text.contains(want), "缺 {want}\n{text}");
     }
     assert!(text.contains("等你批准"), "在等人的子 Agent 高亮");
-    assert!(!text.contains("调研 OAuth 库"), "已结束的缺省收起");
+    let in_tree = |h: &Harness, label: &str| {
+        h.core.state.tree_rows().iter().any(|r| match r {
+            model::TreeRow::Task { id, .. } => h
+                .core
+                .state
+                .conv_tasks()
+                .iter()
+                .any(|t| &t.id == id && t.label == label),
+            _ => false,
+        })
+    };
+    assert!(!in_tree(&h, "调研 OAuth 库"), "已结束的缺省收起");
+    assert!(text.contains("◆ 审查认证改动"), "子 Agent 有图标");
+    assert!(text.contains("$ cargo test"), "shell 任务有自己的图标");
     h.keys("Tab").await;
     let finished = h
         .core
@@ -71,7 +91,7 @@ async fn lower_tree_three_levels_and_finished_group() {
         h.keys("Down").await;
     }
     h.keys("Enter").await;
-    assert!(h.text().contains("调研 OAuth 库"), "展开已结束");
+    assert!(in_tree(&h, "调研 OAuth 库"), "展开已结束");
     h.snapshot("sessions-tree");
 }
 

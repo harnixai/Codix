@@ -53,7 +53,7 @@ fn mark(seen: &mut BTreeSet<&'static str>, f: &FrameState) {
                 for (k, on) in [
                     ("chat.below", c.below.is_some()),
                     ("chat.status", c.status.is_some()),
-                    ("chat.todos", !c.todos.is_empty()),
+                    ("chat.panel", !c.panel.is_empty()),
                     ("chat.picker", !c.picker.is_empty()),
                     ("chat.ask", c.ask.is_some()),
                     ("chat.badge", !c.badge.spans.is_empty()),
@@ -146,7 +146,7 @@ async fn every_optional_frame_field_is_produced_somewhere() {
         "body.detached",
         "body.instances",
         "chat.status",
-        "chat.todos",
+        "chat.panel",
         "chat.picker",
         "chat.ask",
         "chat.badge",

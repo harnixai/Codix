@@ -1,12 +1,13 @@
-//! 流程标签（需求 F，交互 §5.3）：上半是流程定义（展开是它的运行），下半是选中运行的
-//! 主 Agent、各站与站里的子 Agent；选中流程定义时下半列出定义的各站。详情与修改在左边：
-//! 选中流程 → 它的编写会话（最上面钉着设计卡），选中运行 → 运行的主会话。
+//! 流程标签（需求 F，交互 §5.3）：上半是流程定义（选中即展开它的运行），下半是选中运行的
+//! 主 Agent、各站（不缩进，按进展上色）与站里的子 Agent；选中流程定义时下半列出定义的各站。
+//! 详情与修改在左边：选中流程 → 它的编写会话（顶部面板是流程设计），选中运行或站 → 那里的会话。
 
 use keys::Action;
 use port::{Command, RunId, RunOp, RunStatus, RunSummary, RunView, StationId, StationStatus};
-use tui::{Line, Tone, truncate_to_width};
+use tui::{Line, Tone};
 
 use crate::chat::fmt_k;
+use crate::marks;
 use crate::sessions::{fmt_elapsed, task_glyph};
 use crate::state::{Confirm, Focus, State, Tab};
 use crate::update::{Effect, Pending};
@@ -74,9 +75,11 @@ impl State {
                 let mut out = vec![FlowLower::Main];
                 for st in &v.stations {
                     out.push(FlowLower::Station(st.id.clone()));
-                    out.extend(
-                        (0..st.tasks.len()).map(|i| FlowLower::StationTask(st.id.clone(), i)),
-                    );
+                    if self.station_open(&v.summary.id, &st.id) {
+                        out.extend(
+                            (0..st.tasks.len()).map(|i| FlowLower::StationTask(st.id.clone(), i)),
+                        );
+                    }
                 }
                 out
             }
@@ -90,31 +93,56 @@ impl State {
         }
     }
 
+    /// 有子 Agent 的站缺省展开，→ / ← 收放。
+    pub(crate) fn station_open(&self, run: &RunId, station: &StationId) -> bool {
+        !self
+            .ui
+            .station_collapsed
+            .contains(&format!("{run}/{station}"))
+    }
+
     fn run_summary(&self, flow: &str, id: &RunId) -> Option<&RunSummary> {
         self.domain.runs.get(flow)?.iter().find(|r| &r.id == id)
     }
 }
 
-pub(crate) fn run_status(s: &RunStatus) -> (&'static str, String, Tone) {
-    match s {
-        RunStatus::Running => ("●", "运行中".into(), Tone::Ok),
-        RunStatus::Waiting { reason } => ("◐", format!("等待：{reason}"), Tone::Attention),
-        RunStatus::Pausing => ("⏸", "暂停中".into(), Tone::Dim),
-        RunStatus::Paused => ("⏸", "已暂停".into(), Tone::Dim),
-        RunStatus::Finished => ("✓", "已完成".into(), Tone::Dim),
-        RunStatus::Cancelled => ("■", "已取消".into(), Tone::Dim),
+/// 运行走到哪了：`站 3/7 实现`；结束了的只说几站。各处（列表、下框标题、面板）同一个写法。
+pub(crate) fn progress(r: &RunSummary) -> String {
+    match (&r.status, &r.current) {
+        (RunStatus::Finished | RunStatus::Cancelled, _) | (_, None) => {
+            format!(
+                "{}/{} 站",
+                r.stations_done.min(r.stations_total),
+                r.stations_total
+            )
+        }
+        (_, Some(c)) => format!("站 {}/{} {c}", r.stations_done + 1, r.stations_total),
     }
 }
 
-pub(crate) fn station_glyph(s: StationStatus) -> (&'static str, &'static str, Tone) {
+/// 运行的状态：符号、文字、符号的颜色。
+pub(crate) fn run_status(s: &RunStatus) -> (&'static str, String, Tone) {
+    let text = match s {
+        RunStatus::Running => "运行中".into(),
+        RunStatus::Waiting { reason } => format!("等待：{reason}"),
+        RunStatus::Pausing => "暂停中".into(),
+        RunStatus::Paused => "已暂停".into(),
+        RunStatus::Finished => "已完成".into(),
+        RunStatus::Cancelled => "已取消".into(),
+    };
+    let m = marks::run(s);
+    (m.glyph(), text, m.tone())
+}
+
+pub(crate) fn station_text(s: StationStatus) -> &'static str {
     match s {
-        StationStatus::Pending => ("○", "待进入", Tone::Dim),
-        StationStatus::Held => ("⏸", "搁置 · a 放行", Tone::Attention),
-        StationStatus::Working => ("●", "进行中", Tone::Ok),
-        StationStatus::Unmet => ("✗", "未达标", Tone::Error),
-        StationStatus::Passed => ("✓", "已通过", Tone::Dim),
-        StationStatus::Skipped => ("⊘", "已跳过", Tone::Dim),
-        StationStatus::Stale => ("↺", "待重做", Tone::Warn),
+        StationStatus::Pending => "待进入",
+        StationStatus::Held => "搁置 · a 放行",
+        StationStatus::Working => "进行中",
+        StationStatus::Unmet => "未达标",
+        StationStatus::Passed => "已通过",
+        StationStatus::Skipped => "已跳过",
+        StationStatus::Stale => "待重做",
     }
 }
 
@@ -143,7 +171,7 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     String::new()
                 };
                 crate::sessions::split_line(
-                    Line::toned(format!("{mark} "), Tone::Dim).push(f.title.clone(), Tone::Strong),
+                    Line::toned(format!("{mark} "), Tone::Dim).push(f.title.clone(), Tone::Normal),
                     Line::toned(format!("{}  {origin}  {running}", f.name), Tone::Dim),
                     width,
                 )
@@ -154,16 +182,12 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                 };
                 let (g, text, tone) = run_status(&r.status);
                 let end = r.ended_ms.unwrap_or(now);
-                let station = r
-                    .current
-                    .as_ref()
-                    .map(|c| format!("站 {}/{} {c}", r.stations_done + 1, r.stations_total))
-                    .unwrap_or_default();
+                let station = progress(r);
                 crate::sessions::split_line(
                     Line::toned("    ", Tone::Normal)
                         .push(format!("{g} "), tone)
                         .push(r.subject.clone(), Tone::Normal)
-                        .push(format!("  {text}"), tone),
+                        .push(format!("  {text}"), marks::run(&r.status).text_tone()),
                     Line::toned(
                         format!(
                             "{station}  {}  {}",
@@ -185,29 +209,25 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
         let Some(d) = s.domain.flow_details.get(&name) else {
             return vec![];
         };
-        let depth = crate::cards::layers(&d.stations);
+        let depth = crate::panel::layers(&d.stations);
         return d
             .stations
             .iter()
             .zip(depth)
             .map(|(st, l)| {
-                Line::plain(truncate_to_width(
-                    &format!(
-                        "{}{}. {}  {}",
-                        "  ".repeat(l.min(4)),
-                        l + 1,
-                        st.title,
-                        st.work
-                    ),
+                crate::sessions::split_line(
+                    Line::toned(format!("{:>2}. ", l + 1), Tone::Dim)
+                        .push(st.title.clone(), Tone::Normal)
+                        .push(format!("  {}", st.work), Tone::Dim),
+                    Line::toned(join_note(&d.stations, st), Tone::Dim),
                     width,
-                ))
+                )
             })
             .collect();
     }
     let Some(v) = s.selected_run() else {
         return vec![];
     };
-    let depth = crate::cards::layers(&v.stations);
     rows.iter()
         .map(|r| match r {
             FlowLower::Main => {
@@ -216,34 +236,35 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                     .map(|x| crate::sessions::state_glyph(x.state))
                     .unwrap_or(("○", Tone::Dim));
                 crate::sessions::split_line(
-                    Line::toned(format!("{g} "), tone).push("主 Agent", Tone::Strong),
+                    Line::toned(format!("  {g} "), tone).push("主 Agent", Tone::Strong),
                     Line::toned(fmt_k(sum.map_or(0, |x| x.usage.total())), Tone::Dim),
                     width,
                 )
             }
             FlowLower::Station(id) => {
-                let i = v.stations.iter().position(|x| &x.id == id).unwrap_or(0);
-                let st = &v.stations[i];
-                let (g, text, tone) = station_glyph(st.status);
-                let indent = "  ".repeat(depth[i].min(4));
-                let mut left = Line::toned(indent, Tone::Dim)
-                    .push(format!("{g} "), tone)
-                    .push(st.title.clone(), Tone::Normal)
+                let Some(st) = v.stations.iter().find(|x| &x.id == id) else {
+                    return Line::default();
+                };
+                let m = marks::station(st.status);
+                // 不缩进：进展靠颜色读（做完的正常、正在做的主色、没轮到的淡色），
+                // 汇合靠"← 等 …"读。
+                let fold = match (st.tasks.is_empty(), s.station_open(&v.summary.id, id)) {
+                    (true, _) => "  ",
+                    (false, true) => "▾ ",
+                    (false, false) => "▸ ",
+                };
+                let mut left = Line::toned(fold, Tone::Dim)
+                    .push(format!("{} ", m.glyph()), m.tone())
+                    .push(st.title.clone(), m.name_tone())
                     .push(format!("  {}", st.work), Tone::Dim);
-                if st.needs.len() > 1 {
-                    let names: Vec<&str> = st
-                        .needs
-                        .iter()
-                        .filter_map(|n| {
-                            v.stations
-                                .iter()
-                                .find(|x| &x.id == n)
-                                .map(|x| x.title.as_str())
-                        })
-                        .collect();
-                    left = left.push(format!("  ← 等 {}", names.join(", ")), Tone::Dim);
+                if st.session.is_some() {
+                    left = left.push("  独立会话", Tone::Dim);
                 }
-                let mut right = Line::toned(text, tone);
+                let note = join_note(&v.stations, st);
+                if !note.is_empty() {
+                    left = left.push(format!("  {note}"), Tone::Dim);
+                }
+                let mut right = Line::toned(station_text(st.status), m.text_tone());
                 if let Some(u) = &st.unmet {
                     right = Line::toned(format!("未达标：{u}"), Tone::Error);
                 }
@@ -260,28 +281,26 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
                 crate::sessions::split_line(left, right, width)
             }
             FlowLower::StationTask(id, k) => {
-                let i = v.stations.iter().position(|x| &x.id == id).unwrap_or(0);
-                let st = &v.stations[i];
+                let Some(st) = v.stations.iter().find(|x| &x.id == id) else {
+                    return Line::default();
+                };
                 let t = &st.tasks[*k];
                 let (g, tone) = task_glyph(t.status);
                 let last = *k + 1 == st.tasks.len();
-                let indent = "  ".repeat(depth[i].min(4));
+                let (icon, itone) = if t.session.is_some() {
+                    crate::marks::kind_icon(&port::TaskKind::Agent)
+                } else {
+                    crate::marks::kind_icon(&port::TaskKind::Unknown(String::new()))
+                };
                 crate::sessions::split_line(
+                    Line::toned(if last { "    └ " } else { "    ├ " }, Tone::Dim)
+                        .push(format!("{g} "), tone)
+                        .push(format!("{icon} "), itone)
+                        .push(t.label.clone(), Tone::Normal),
                     Line::toned(
-                        format!("{indent}  {}", if last { "└ " } else { "├ " }),
-                        Tone::Dim,
-                    )
-                    .push(format!("{g} "), tone)
-                    .push(t.label.clone(), Tone::Normal)
-                    .push(
-                        if t.session.is_some() {
-                            "  子 Agent"
-                        } else {
-                            ""
-                        },
-                        Tone::Dim,
+                        crate::sessions::status_text(t.status),
+                        crate::marks::task(t.status).text_tone(),
                     ),
-                    Line::toned(crate::sessions::status_text(t.status), Tone::Dim),
                     width,
                 )
             }
@@ -290,14 +309,24 @@ pub(crate) fn lower_lines(s: &State, width: usize) -> Vec<Line> {
         .collect()
 }
 
+/// 汇合的站标出它在等谁：`← 等 代码评审、文档评审`。
+fn join_note(all: &[port::StationView], st: &port::StationView) -> String {
+    if st.needs.len() < 2 {
+        return String::new();
+    }
+    let names: Vec<&str> = st
+        .needs
+        .iter()
+        .filter_map(|n| all.iter().find(|x| &x.id == n).map(|x| x.title.as_str()))
+        .collect();
+    format!("← 等 {}", names.join("、"))
+}
+
 pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
     match s.selected_flow_row() {
         Some(FlowRow::Run(flow, id)) => {
             let r = s.run_summary(&flow, &id);
-            (
-                r.map(|r| r.subject.clone()),
-                r.map(|r| format!("站 {}/{}", r.stations_done, r.stations_total)),
-            )
+            (r.map(|r| r.subject.clone()), r.map(progress))
         }
         Some(FlowRow::Flow(name)) => (
             s.domain
@@ -405,6 +434,23 @@ fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         _ => None,
     };
     let id = run.summary.id.clone();
+    match (a, &row) {
+        (Action::Expand, FlowLower::Station(st)) => {
+            s.ui.station_collapsed.remove(&format!("{id}/{st}"));
+            return Some(vec![]);
+        }
+        (Action::Collapse, FlowLower::Station(st) | FlowLower::StationTask(st, _)) => {
+            s.ui.station_collapsed.insert(format!("{id}/{st}"));
+            let at = s
+                .flow_lower_rows()
+                .iter()
+                .position(|r| r == &FlowLower::Station(st.clone()))
+                .unwrap_or(0);
+            s.ui.lower[Tab::Flows.index()].selected = at;
+            return Some(vec![]);
+        }
+        _ => {}
+    }
     Some(match (a, station) {
         (Action::Open, _) => {
             s.show_chat_pub();

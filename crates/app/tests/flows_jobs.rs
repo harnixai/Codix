@@ -44,9 +44,8 @@ async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
         "{}",
         h.chat_title()
     );
-    let t = h.transcript();
+    let t = h.panel();
     for want in [
-        "流程设计：需求到上线",
         "收集需求",
         "代码评审 ∥ 文档评审",
         "← 等 代码评审、文档评审",
@@ -56,7 +55,23 @@ async fn selecting_a_flow_opens_its_authoring_session_with_a_design_card() {
         assert!(t.contains(want), "缺 {want}\n{t}");
     }
     assert!(h.text().contains("需求到上线 的各站"), "下半是定义的各站");
-    h.snapshot("flow-authoring-card");
+    assert!(
+        h.text()
+            .contains("─ 流程设计：需求到上线 · feature-to-ship"),
+        "面板的标题线"
+    );
+    assert!(h.text().contains("Ctrl+T 收起"));
+    assert!(!h.transcript().contains("流程设计"), "不在转录里");
+    h.snapshot("flow-authoring");
+    h.keys("Ctrl+T").await;
+    assert!(h.panel().is_empty(), "Ctrl+T 收起");
+    let text = h.text();
+    assert!(
+        text.contains("─ 流程设计：需求到上线") && text.contains("Ctrl+T 展开"),
+        "收起后标题线还在\n{text}"
+    );
+    h.keys("Ctrl+T").await;
+    assert!(!h.panel().is_empty());
     h.keys("v").await;
     assert!(h.text().contains("feature-to-ship 的定义"), "查看 YAML");
 }
@@ -81,7 +96,7 @@ async fn selecting_a_run_follows_its_main_agent_and_shows_stations() {
         "实现",
         "后端",
         "前端",
-        "← 等 代码评审, 文档评审",
+        "← 等 代码评审、文档评审",
     ] {
         assert!(text.contains(want), "缺 {want}\n{text}");
     }
@@ -187,13 +202,13 @@ async fn m12_change_the_flow_by_talking_and_the_card_updates() {
     let mut h = flows("m12-flow-author").await;
     h.pick_upper(flow_index(&h, "feature-to-ship")).await;
     h.settle().await;
-    assert!(!h.transcript().contains("安全评审"));
+    assert!(!h.panel().contains("安全评审"));
     h.keys("Enter").await;
     h.type_str("加一个安全评审站").await;
     h.keys("Enter").await;
     h.advance(3_000).await;
-    let t = h.transcript();
-    assert!(t.contains("安全评审"), "设计卡跟着变\n{t}");
+    let t = h.panel();
+    assert!(t.contains("安全评审"), "流程设计跟着变\n{t}");
     assert!(t.contains("← 等 代码评审、文档评审、安全评审"));
     h.keys("F3 n").await;
     assert_eq!(
@@ -210,10 +225,10 @@ async fn jobs_list_details_history_and_follow() {
     h.pick_upper(0).await;
     h.settle().await;
     assert!(h.chat_title().starts_with("作业："), "{}", h.chat_title());
-    let t = h.transcript();
+    let t = h.panel();
     assert!(
-        t.contains("作业：每日巡检") && t.contains("最近的触发"),
-        "作业卡\n{t}"
+        h.text().contains("─ 作业：每日巡检 · 启用") && t.contains("最近的触发"),
+        "作业面板\n{t}"
     );
     let text = h.text();
     assert!(text.contains("每日巡检 的详情"));
@@ -266,4 +281,58 @@ async fn m13_jobs_fire_and_fail() {
         .unwrap();
     assert!(matches!(j4.last, Some(port::JobOutcome::Failed { .. })));
     assert!(h.core.state.attention_count(model::Tab::Jobs) >= 1);
+}
+
+fn station_row(h: &Harness, id: &str) -> usize {
+    h.core
+        .state
+        .flow_lower_rows()
+        .iter()
+        .position(|r| matches!(r, FlowLower::Station(s) if s.as_str() == id))
+        .unwrap_or_else(|| panic!("没有站 {id}"))
+}
+
+#[tokio::test(start_paused = true)]
+async fn run_stations_are_flat_colored_and_switch_to_their_context() {
+    let mut h = flows("demo").await;
+    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
+    assert!(
+        h.core
+            .state
+            .flow_rows()
+            .iter()
+            .any(|r| matches!(r, FlowRow::Run(f, _) if f == "feature-to-ship")),
+        "选中流程即展开它的运行"
+    );
+    h.pick_upper(run_index(&h, "r1")).await;
+    let p = h.panel();
+    assert!(
+        h.text()
+            .contains("─ 运行：支付重试（需求到上线） · ● 运行中 · 站 3/7 实现")
+            && p.contains("✓ 收集需求 → ✓ 设计 → ● 实现"),
+        "运行里的会话，面板是运行进度\n{p}"
+    );
+    let text = h.text();
+    assert!(
+        text.contains("│   ✓ 收集需求") && text.contains("│ ▾ ● 实现"),
+        "站不缩进\n{text}"
+    );
+    h.pick_lower(station_row(&h, "design")).await;
+    assert_eq!(h.chat_title(), "设计（独立会话）", "有独立会话的站切到它");
+    h.pick_lower(station_row(&h, "collect")).await;
+    assert_eq!(h.chat_title(), "支付重试（主会话）", "其余的站在主会话里");
+    let impl_at = station_row(&h, "impl");
+    h.pick_lower(impl_at).await;
+    let n = h.core.state.flow_lower_rows().len();
+    h.keys("Left").await;
+    assert_eq!(
+        h.core.state.flow_lower_rows().len(),
+        n - 2,
+        "← 收起站里的子 Agent"
+    );
+    h.keys("Right").await;
+    assert_eq!(h.core.state.flow_lower_rows().len(), n);
+    h.keys("Down").await;
+    assert_eq!(h.chat_title(), "后端", "选中站里的子 Agent 切到它的会话");
+    h.snapshot("flow-run-demo");
 }

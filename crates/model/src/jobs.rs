@@ -1,11 +1,11 @@
 //! 作业标签（需求 J，交互 §5.4）：上半是作业列表，下半是选中作业的详情与触发历史。
-//! 左边是这个作业的编辑会话（最上面钉着作业卡）；新建、修改、删除都在对话里说。
+//! 左边是这个作业的编辑会话（顶部面板是作业详情）；新建、修改、删除都在对话里说。
 
 use keys::Action;
 use port::{Command, JobId, JobKind, JobOutcome, JobTarget};
 use tui::{Line, Tone};
 
-use crate::cards::{fmt_clock, job_info, outcome};
+use crate::panel::{fmt_clock, job_info, outcome};
 use crate::state::{Focus, State, Tab};
 use crate::update::{Effect, Pending};
 
@@ -63,11 +63,14 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
         .iter()
         .filter_map(|id| s.domain.jobs.iter().find(|j| &j.id == id))
         .map(|j| {
-            let (g, tone) = if j.enabled {
-                ("●", Tone::Ok)
-            } else {
-                ("○", Tone::Dim)
+            let m = match (&j.last, j.enabled) {
+                (_, false) => crate::marks::Mark::Paused,
+                (Some(o @ (JobOutcome::Running | JobOutcome::Failed { .. })), _) => {
+                    crate::marks::outcome(o)
+                }
+                _ => crate::marks::Mark::Idle,
             };
+            let (g, tone) = m.pair();
             let kind = match j.kind {
                 JobKind::Simple { .. } => "简单",
                 JobKind::Flow { .. } => "流程",
@@ -81,13 +84,13 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
             };
             let (last, ltone) = match &j.last {
                 Some(JobOutcome::Failed { .. }) => ("上次 ✗", Tone::Error),
-                Some(JobOutcome::Done) => ("上次 ✓", Tone::Dim),
-                Some(JobOutcome::Running) => ("运行中", Tone::Ok),
+                Some(JobOutcome::Done) => ("上次 ✓", Tone::Ok),
+                Some(JobOutcome::Running) => ("运行中", Tone::Accent),
                 _ => ("", Tone::Dim),
             };
             crate::sessions::split_line(
                 Line::toned(format!("{g} "), tone)
-                    .push(j.name.clone(), Tone::Strong)
+                    .push(j.name.clone(), Tone::Normal)
                     .push(format!("  {}  {kind}", j.cron), Tone::Dim),
                 Line::toned(format!("{next}  "), Tone::Dim).push(last, ltone),
                 width,

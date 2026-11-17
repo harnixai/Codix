@@ -97,7 +97,8 @@ scripts:                        # 可以复用的事件片段
 ### 3.3 交互运行
 
 ```sh
-codix --mock m11-flow-run            # 用这个场景启动真实终端界面
+codix                                # 阶段 2 直接打开演示 demo（一个场景里什么都有）
+codix --mock m11-flow-run            # 用某个测试场景启动真实终端界面
 codix --mock m11-flow-run --speed 4  # 时间线加速 4 倍
 codix --mock default                 # 只加载种子，不跑时间线
 ```

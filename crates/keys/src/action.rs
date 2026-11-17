@@ -20,7 +20,7 @@ pub enum Action {
     Back,
     EventLog,
     ToggleDetail,
-    ToggleTodos,
+    TogglePanel,
     CycleMode,
     Exit,
 
@@ -111,7 +111,7 @@ impl Action {
             Back => "返回",
             EventLog => "事件日志（mock）",
             ToggleDetail => "转录精简 / 详细",
-            ToggleTodos => "显示 / 隐藏 todo",
+            TogglePanel => "收放对话区顶部面板（goal / todo、流程设计、作业）",
             CycleMode => "切换权限模式",
             Exit => "退出",
             Submit => "提交",

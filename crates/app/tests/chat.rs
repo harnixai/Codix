@@ -329,8 +329,8 @@ async fn m16_storm_relayouts_one_block_per_delta() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn showcase_history_renders_every_block_kind() {
-    let mut h = Harness::new("showcase", SIZE).await;
+async fn demo_history_renders_every_block_kind() {
+    let mut h = Harness::new("demo", SIZE).await;
     h.open_session("Codix 展示").await;
     let t = h.transcript();
     for want in [
@@ -354,7 +354,7 @@ async fn showcase_history_renders_every_block_kind() {
     ] {
         assert!(t.contains(want), "缺 {want}");
     }
-    h.snapshot("showcase-history");
+    h.snapshot("demo-history");
     ask(&mut h, "继续").await;
     h.advance(5_000).await;
     assert!(

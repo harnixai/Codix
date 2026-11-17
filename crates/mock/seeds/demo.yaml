@@ -641,12 +641,6 @@ sessions:
         model: claude-sonnet-5-5
         origin: {fork: {from: s1, from_title: 重构认证模块}}
       updated_ms: 1763190000000
-    goal: {objective: 整理 OAuth 迁移方案对比, phase: paused, rounds_started: 3, max_rounds: 32}
-    todos:
-      - {text: 收集三种迁移做法, status: done}
-      - {text: 列出各自的风险, status: done}
-      - {text: 估算工作量, status: done}
-      - {text: 整理成一页对比, status: done}
     history:
       - user: {text: 把 OAuth 迁移的几种做法整理成一页对比。}
       - assistant:
@@ -675,6 +669,38 @@ sessions:
     history:
       - user: {text: 进入「实现」站：后端与前端分别交给子 Agent 完成。}
       - assistant: {text: 已派出两个子 Agent：后端负责重试队列与退避策略，前端负责失败后的重试入口。}
+
+  - summary:
+      id: s4-design
+      title: 设计（独立会话）
+      state: idle
+      usage: {input: 6000, output: 2400, cache_read: 4000, cache_write: 300}
+      provenance:
+        instance: dev
+        host: ops-01
+        project: ~/work/pay
+        scene: code
+        model: claude-sonnet-5-5
+        origin: {flow_station: {run: r1, flow_title: 需求到上线, subject: 支付重试, station: design, station_title: 设计}}
+      updated_ms: 1763277000000
+    history:
+      - user: {text: 进入「设计」站：根据需求写出支付重试的设计文档。}
+      - assistant:
+          text: |
+            ## 支付重试设计
+
+            **目标**：网络抖动或渠道超时时自动重试，不重复扣款。
+
+            | 项 | 方案 |
+            |---|---|
+            | 触发 | 渠道超时 / 5xx |
+            | 退避 | 指数退避，1s 起，上限 60s，最多 5 次 |
+            | 幂等 | 每笔支付带 `idempotency_key` |
+
+            - 重试队列落库，进程重启后继续
+            - 超过次数转人工，并发告警
+
+            请确认后进入「实现」。
 
   - summary:
       id: s4-backend
@@ -781,6 +807,11 @@ sessions:
       provenance: {instance: dev, host: ops-01, project: ~/work/gateway, scene: code, model: claude-sonnet-5-5, origin: user}
       updated_ms: 1763279960000
     running: true
+    goal: {objective: 定位网关内存泄漏并给出修复, phase: active, rounds_started: 1, max_rounds: 50}
+    todos:
+      - {text: 用 heaptrack 跑压测采样, status: done}
+      - {text: 对比分配热点, status: in_progress}
+      - {text: 提交修复并复测 RSS, status: pending}
     history:
       - user: {text: 网关进程 RSS 一天涨了 2GB，帮我找原因。}
       - assistant: {text: 我先用 heaptrack 跑一段压测，再对比分配热点。}
@@ -1124,7 +1155,7 @@ runs:
     main_session: s4
     stations:
       - {"id": "collect", "title": "收集需求", "work": "session", "skill": "gather-requirements", "exit": ["output"], "status": "passed", "elapsed_ms": 420000, "usage": {"input": 3000, "output": 900, "cache_read": 2000}}
-      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "passed", "elapsed_ms": 900000, "usage": {"input": 6000, "output": 2400, "cache_read": 9000}}
+      - {"id": "design", "title": "设计", "needs": ["collect"], "work": "session", "skill": "write-design", "exit": ["output", "confirm"], "status": "passed", "session": "s4-design", "elapsed_ms": 900000, "usage": {"input": 6000, "output": 2400, "cache_read": 9000}}
       - {"id": "impl", "title": "实现", "needs": ["design"], "work": "agent × 2", "skill": "implement", "exit": ["output", "gate: ci"], "status": "working", "elapsed_ms": 580000, "usage": {"input": 12000, "output": 4500, "cache_read": 19000, "cache_write": 2200}, "tasks": [{"id": "t6", "label": "后端", "status": "running", "session": "s4-backend"}, {"id": "t7", "label": "前端", "status": "done", "session": "s4-frontend"}]}
       - {"id": "review-code", "title": "代码评审", "needs": ["impl"], "work": "agent", "skill": "review-code", "exit": ["output"], "status": "pending"}
       - {"id": "review-docs", "title": "文档评审", "needs": ["impl"], "work": "agent", "skill": "review-docs", "exit": ["output"], "status": "pending"}
