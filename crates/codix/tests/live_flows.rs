@@ -295,3 +295,119 @@ async fn a_flow_with_runs_not_finished_cannot_be_changed_until_they_are_cancelle
         t.results
     );
 }
+
+/// 库的一致性套件对着我们的 `SessionHost`：一个键只开一次、一次 send 恰起一轮并且结束、问句
+/// 送来能答、关掉的会话不在了……套件要在进程里拿到宿主，引擎就得嵌在测试进程里，凭据得在
+/// 进程的环境里——写环境要 `unsafe`，所以带着凭据把自己再起一遍，只跑里面那个用例。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn our_session_host_passes_the_conformance_suite() {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "conformance_inside",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .envs(live::credentials())
+        .env("CODIX_CONFORMANCE", "1")
+        .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
+        .status()
+        .unwrap();
+    assert!(status.success(), "一致性套件没过（输出在上面）");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn conformance_inside() {
+    if std::env::var_os("CODIX_CONFORMANCE").is_none() {
+        return;
+    }
+    use harnix_flow::conformance::{Subject, run_all};
+    let lv = Live::new();
+    let project = std::path::PathBuf::from(lv.project_path());
+    let (embedded, client, notes) = engine::Embedded::start(engine::EngineConfig {
+        data_root: lv.home.path().to_path_buf(),
+        project: project.clone(),
+        groups_file: lv.home.path().join("groups.json"),
+    })
+    .await
+    .expect("嵌入引擎");
+    let hub = host::Hub::start(
+        std::sync::Arc::new(client),
+        notes,
+        host::HubConfig {
+            instance: "conformance".into(),
+            host: "local".into(),
+            project: project.clone(),
+            version: "0".into(),
+            started_ms: live::now_ms(),
+            registry: host::hub::Registry::in_memory(),
+            jobs: None,
+            clock: std::sync::Arc::new(live::now_ms),
+        },
+    )
+    .await
+    .expect("Hub");
+    let subject = Subject::new(host::flows::session_host(&hub), "code")
+        .project(project)
+        .idle_turn("Reply with only the word OK and stop.")
+        .asking_turn(
+            "Use the Write tool to create a file named probe.txt containing hi. Do nothing else.",
+            "Write",
+        )
+        .turn_timeout(Duration::from_secs(120));
+    let failures = run_all(&subject).await;
+    hub.shutdown();
+    embedded.shutdown().await;
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// 流程作业：触发一次就启动一次运行，触发记录指着那次运行。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_flow_job_starts_a_run_when_it_fires() {
+    let lv = Live::new();
+    install(&lv, &[("live-echo", ONE_STATION)]);
+    let mut c = lv.start().await;
+    c.answering(Answering::Auto);
+    let job = port::Job {
+        id: port::JobId(String::new()),
+        name: "flow-job".into(),
+        cron: "0 4 * * *".into(),
+        kind: port::JobKind::Flow {
+            flow: "live-echo".into(),
+            subject: "say the word OK".into(),
+            inputs: serde_json::Value::Null,
+        },
+        enabled: true,
+        catch_up: false,
+        next_fire_ms: None,
+        last: None,
+    };
+    let Reply::Job(job) = c.ok(Command::SaveJob { job }).await else {
+        panic!("save_job")
+    };
+    c.ok(Command::RunJobNow {
+        job: job.id.clone(),
+    })
+    .await;
+    let jid = job.id.clone();
+    let entry = c
+        .wait_event("触发记录", QUICK, |e| match e {
+            Event::JobFired { job, entry } if *job == jid => Some(entry.clone()),
+            _ => None,
+        })
+        .await;
+    let Some(port::JobTarget::Run { id, subject }) = entry.target.clone() else {
+        panic!("{entry:?}")
+    };
+    assert_eq!(subject, "say the word OK");
+    assert_eq!(entry.outcome, port::JobOutcome::Done);
+    c.wait_event("那次运行跑完", RUN, |e| {
+        matches!(e, Event::RunUpserted(s) if s.id == id && s.status == RunStatus::Finished)
+            .then_some(())
+    })
+    .await;
+}

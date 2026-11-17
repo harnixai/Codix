@@ -388,14 +388,15 @@ pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
             let r = s.run_summary(&flow, &id);
             (r.map(|r| r.subject.clone()), r.map(progress))
         }
-        Some(FlowRow::Flow(name)) => (
-            s.domain
-                .flows
-                .iter()
-                .find(|f| f.name == name)
-                .map(|f| i18n::t!("flows.design_of", title = f.title)),
-            None,
-        ),
+        Some(FlowRow::Flow(name)) => {
+            let f = s.domain.flows.iter().find(|f| f.name == name);
+            (
+                f.map(|f| i18n::t!("flows.design_of", title = f.title)),
+                // 有没结束的运行时改不了这个流程（实例拒绝），右边先说明白。
+                f.filter(|f| f.active_runs > 0)
+                    .map(|f| i18n::t!("flows.locked", n = f.active_runs)),
+            )
+        }
         None => (None, None),
     }
 }

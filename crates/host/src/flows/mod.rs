@@ -5,6 +5,8 @@
 mod frames;
 mod map;
 pub(crate) mod session_host;
+#[cfg(test)]
+mod tests;
 mod tools;
 
 use std::collections::BTreeSet;
@@ -69,6 +71,11 @@ pub struct Flows {
     engine: Arc<Engine>,
     runner: Arc<Runner>,
     project: String,
+}
+
+/// 派工器看到的会话宿主，单独拿出来给一致性套件查（`live_flows.rs`）。
+pub fn session_host(hub: &Hub) -> Arc<dyn harnix_flow::runner::SessionHost> {
+    CodixSessionHost::new(hub.downgrade())
 }
 
 /// 装好流程、接到 Hub 上、起派工器（它把上次没做完的活接着做）。

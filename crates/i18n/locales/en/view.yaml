@@ -32,6 +32,7 @@ view:
   badge:
     job: "Job \"{name}\""
     flow_station: "Flow \"{flow_title}\" › {subject} › {station_title}"
+    flow_main: "Flow \"{flow_title}\" › {subject} › main session"
     sub_agent: "Sub-agent ← {parent_title}"
     fork: "⑂ Forked from {from_title}"
     held: "⚠ Held by instance {holder}"
@@ -58,7 +59,7 @@ view:
     filter: "Nothing matches \"{filter}\" · Esc to clear filter"
     sessions: "No sessions yet · pick the row above to create one, or just type on the left"
     flows: "No flows yet · n to describe one in the chat on the left"
-    flows_unavailable: "Flows are not wired in yet: they arrive once Harnix ships its split-out flow core"
+    flows_unavailable: "Flows are not available in this instance (see its host.log)"
     jobs: "No jobs yet · n to say what to do and when in the chat on the left"
   job_detail: "{name} details"
   confirm:

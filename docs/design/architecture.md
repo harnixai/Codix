@@ -21,7 +21,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
                           │ 消息 = port 的 Command / Reply / Event，编码为 NDJSON
 ┌─────────────────────────▼──── codix host（实例进程，常驻）───────┐
 │  会话代理 ── Agix 客户端 ──► agix::embed（同进程，data_root = ~/.codix）│
-│  流程（暂缓，§8.6；之后是 harnix-flow，FlowEngine 由 Agix 实现）│
+│  流程（harnix-flow 的内核与派工器，会话经会话代理开在 Agix 上）  │
 │  作业调度                                                         │
 │  单一接入：占用、强制接入、空闲脱离、心跳；状态落盘在实例目录     │
 └──────────────────────────────────────────────────────────────────┘
@@ -46,7 +46,7 @@ Codix 采用 **"常驻实例 + 可接入的 TUI"** 两进程结构，和 tmux �
 | `i18n` | 2 | 界面文字的语言资源与 `t!` 宏（§6.1） | serde_yaml |
 | `app` | 2 | 二进制 `codix`：命令行解析、终端生命周期（尺寸协商、鼠标捕获）、事件循环、实例选择列表 | 以上全部 |
 | `wire` | 3 | Agix 协议的 JSON-RPC 客户端与 Codix 用到的 serde 类型（§8.2）。遇到不认识的 `kind` 一律跳过 | serde, tokio |
-| `host` | 3 | 实例进程：嵌入 Agix、把 Agix 帧翻译成领域事件、作业调度、socket 服务与单一接入（占用、强制接入、心跳）、实例锁与发现文件；流程暂缓（§8.6） | port, wire, agix |
+| `host` | 3 | 实例进程：嵌入 Agix、把 Agix 帧翻译成领域事件、作业调度、socket 服务与单一接入（占用、强制接入、心跳）、实例锁与发现文件；流程（§8.6，harnix-flow） | port, wire, agix |
 | `client` | 3 | `SocketInstances` 与 `SocketBackend`：扫描实例、拉起实例、通过 socket 接入 | port |
 
 **依赖边界**（阶段 2 起用测试守住）：
@@ -256,7 +256,7 @@ loop {
 ├── scenes/  daemon/  …           ┘ 模型、provider、权限等配置都沿用这里的 settings.json
 ├── codix.yaml                    Codix 自己的配置（YAML）：界面、实例（空闲超时）；不存在时写一份带注释的缺省配置
 ├── keybindings.json              快捷键覆盖
-├── flows/                        流程包，所有实例共用（流程接入后才用）
+├── flows/                        全局流程包（可写层），所有实例共用：flows/、skills/、rules/、policies/…
 └── instances/<名字>/             目录 0700
     ├── instance.json             发现文件：名字、pid、项目、启动时刻、版本、当前接入者；实例退出时删掉
     ├── meta.json                 实例自己的设定（项目）；停了也留着，`codix start` 照它重新拉起
@@ -266,6 +266,9 @@ loop {
     ├── sessions.json             Codix 记的会话归属（§8.4）
     ├── jobs.json                 作业定义
     ├── jobs/<作业 id>.jsonl      触发记录，一次一行
+    ├── flow-runs/                流程运行的记录（harnix-flow 的 FileStore）
+    ├── worktrees/<运行>/         `workspace: worktree` 的运行的 worktree，分支 `codix/flow/<运行>`
+    ├── workspaces/<运行>/        没有项目的运行的工作目录
     └── host.log                  实例进程的日志（stderr 也重定向到这里）
 ```
 
@@ -361,27 +364,62 @@ codix（一个二进制）
   （只补一次，不按错过的次数补）。
 - 简单作业一次触发：新建一个会话（归属 `Job{job, name, fired_ms}`），把提示词作为第一轮提交；作业里列了
   skills 的，附加进这个会话的系统提示词。触发记录先写 `Running`，那一轮结束时补上结局、耗时、用量。
-- 流程作业：流程接入之前记一条 `Skipped`。
+- 流程作业：启动一次运行（触发方式记为 `Schedule`），触发记录指着那次运行；运行自己有结局，触发记录只记启动成没成。
 - 作业没有自己的会话：新建、修改、清理都在用户会话里说，由宿主工具执行（下面）。界面不另开表单（§4.4）。
 
 **宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、
-`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程接入后再加 `flow_*`。
+`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程的 `flow_*`（`flows/tools.rs`）：
+`flow_list`、`flow_show`、`flow_schema`、`flow_guide`、`flow_validate`、`flow_dry_run`、`flow_runs`、`flow_run`（只读），
+`flow_create`、`flow_update`、`flow_delete`、`flow_start`，运行上的 `flow_pause`、`flow_resume`、`flow_cancel`、
+`flow_confirm`、`flow_force`、`flow_rework`、`flow_retry`、`flow_release`。名字与参数照 Harnix 的 flow-author 场景，
+但作用于流程或运行的都要显式给目标（流程 `#n` 或名字，运行给 ID）：Codix 没有"当前流程"。
 
 - 经 `daemon.setHostTools` 挂在实例与引擎的连接上，**每个会话都有**，子 Agent 也有。只对此后建起来的
   引擎生效：老会话在下一次恢复或重建时拿到。
 - **能动什么由发起调用的会话决定**，`Hub` 执行前查（子 Agent 的调用以根会话回答，算根会话的）：
   用户会话（新建、分叉）什么都能动；作业触发出来的会话只能动触发它的那个作业和它自己；流程运行里的
-  会话只能动它的运行和它自己；不是本实例的会话什么都不给。提示词只说明，不当约束。
+  会话只能看流程、只能操作它自己所在的运行（不能改定义、不能启新运行），会话只动它自己；作业触发出来的
+  会话对流程只能看；不是本实例的会话什么都不给。提示词只说明，不当约束。
+- **有运行不许改**：`flow_update` / `flow_delete` 在这个流程还有没结束（`Active`）的运行时拒绝，回答里列出
+  那些运行的 ID，要先取消或等它们跑完。运行启动时库会把定义钉住，改定义本不会弄坏在跑的运行；这是 Codix
+  自己的规矩，免得"改了的流程"和"正在跑的流程"对不上。
 - 目标用 `#n` 或 ID：`#n` 是右栏列表此刻的位置，两边都用 `port::order` 排，所以说的是同一个；
   改东西的工具回显名字与 ID，号对错了一眼看得出。
 - 查看类的工具建会话时给 allow 规则，不用每次问；改东西的走 Agix 正常的权限询问。
 - 执行走和端口命令同一条路（`dispatch`），所以 TUI 照常收到 `JobUpserted`、`SessionUpserted` 这些事件。
 
-### 8.6 流程（暂缓）
+### 8.6 流程
 
-Harnix 正在把 flow 拆出来，流程等它发布后再接：拷贝到 `3rds/harnix-flow/`，实例用 Agix 实现
-`FlowEngine`，站的权限询问按站的策略代答，策略为 `ask` 的才转给人。在那之前实例的 `Hello` 回
-`flows: false`，流程命令回 `Unsupported`，流程标签显示"流程尚未接入"。
+流程用 Harnix 拆出来的库 `harnix-flow`（`3rds/harnix-flow/`，原样拷入，`scripts/fetch-3rds.sh`）：内核、
+存储、流程包、派工器（runner）都是库的，实例只做装配与宿主的那一半（`host/src/flows/`）。
+
+- **装配**（`flows::start`，实例起来时一次）：
+  - 运行记录：`FileStore`，`instances/<名>/flow-runs/`。
+  - 流程包三层：`~/.codix/flows/`（`DirPacks` 的可写层，`flow_create` 存到这里）；垫在下面的内置包
+    （库的示例包 `example-review`，编进二进制）；项目自己的 `<项目>/.codix/flows/`，**项目受信才读**，
+    信任取 Agix 的 `project.status`。
+  - `ProjectLayout`：项目层目录 `.codix`（与 Agix 的同一个），worktree 在 `instances/<名>/worktrees/`、分支
+    `codix/flow/<运行>`，会话可以当自己的来写的子目录 `scratchpad`、`memory`、`worktrees`（同 Agix 的布局）。
+  - 场景（定义里的 profile）就是 Agix 的场景名，目前只开 `code`，交付走 `flow_submit`。
+- **会话宿主**（`SessionHost`，`flows/session_host.rs`）经 `Hub` 开会话，`Hub` 仍是引擎唯一的客户端：
+  - `open`：会话 id 由派工器的键算出（键的 v5 UUID，照引擎的写法写成 BASE58），`session.create` 带
+    `session_id`——同一个键再开，实例重启之后也一样，是同一个会话；`options` 只由 spec 定（权限模式
+    `acceptEdits`、spec 的 `asks` 变成 `ask` 规则、模型、effort、`output_schema`、流程自己的三个工具
+    `flow_state` / `flow_submit` / `flow_propose` 作为这个会话的 `host_tools`）。归属记作
+    `Origin::FlowStation`，主会话的站记作 `@main`。实例只有一个，站里写的 `instance` / `template` /
+    `space` 拒开。
+  - `watch`：`Hub` 把看着的会话的帧原样再分一路（`Hub::tap`），翻成派工器的 `Frame`（`flows/frames.rs`）：
+    一轮的开始带起它的那句话（`Hub` 记着经 `run_turn` 发出的每一句，按轮 id 认，认不出取最早的一句）；
+    `run_turn` 回的错误也补成那一轮的开始与结束，**每一轮都结束**；只有权限问句给派工器答，模型的提问照常
+    进 TUI 的提问框。
+  - `send` = `run_turn` 排队；`answer` = `respondToPrompt`；`note` = `session.appendEntry`（命名空间
+    `codix.flow`）；`close` 之后看着它的流结束，Codix 里关掉的会话不会被再带回来。
+  - 库的一致性套件（`conformance::run_all`）对着它跑，见 testing.md §8。
+- **端口**：`ListFlows` / `GetFlow` / `ListRuns` / `GetRun` / `StartRun` / `RunOp` 是库的读取与运行操作；派工器
+  每改一次运行（`Runner::changes`）推 `RunUpserted` + `RunDetail` 与那个流程的 `FlowUpserted`（在跑的个数）；
+  定义经工具存了推 `FlowUpserted` + `FlowDetail`，删了推 `FlowRemoved`。状态与库一致，"等待 / 暂停中 /
+  已暂停"取库算出的 `Phase`。`Hello` 的 `flows` 为真。
+- 实例停时派工器的任务不再等，运行不取消；下次启动 `Runner::start` 接着做上次派出去还没答复的活。
 
 ### 8.7 实例进程的进程级工作
 

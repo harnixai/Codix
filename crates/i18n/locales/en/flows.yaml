@@ -22,6 +22,7 @@ flows:
   sep: ", "
   waits_for: "← waits for {names}"
   design_of: "Flow design: {title}"
+  locked: "🔒 {n} run(s) not finished, locked"
   prefill_run: "Start flow #{n} \"{title}\", subject: "
   prefill_edit: "Change flow #{n} \"{title}\": "
   prefill_delete: "Delete flow #{n} \"{title}\""

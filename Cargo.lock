@@ -610,6 +610,7 @@ dependencies = [
  "crossterm",
  "engine",
  "futures",
+ "harnix-flow",
  "host",
  "i18n",
  "keys",

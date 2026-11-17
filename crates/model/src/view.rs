@@ -338,6 +338,17 @@ fn badge_text(sum: &port::SessionSummary) -> String {
     let origin = match &sum.provenance.origin {
         port::Origin::User => None,
         port::Origin::Job { name, .. } => Some(i18n::t!("view.badge.job", name = name)),
+        // 运行的主会话没有站（实例记作 `@main`）。
+        port::Origin::FlowStation {
+            flow_title,
+            subject,
+            station,
+            ..
+        } if station.0 == "@main" => Some(i18n::t!(
+            "view.badge.flow_main",
+            flow_title = flow_title,
+            subject = subject
+        )),
         port::Origin::FlowStation {
             flow_title,
             subject,

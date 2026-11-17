@@ -32,7 +32,7 @@ async fn hello_reports_the_instance_its_capabilities_and_the_holder() {
         instance.project.as_deref(),
         Some(lv.project_path().as_str())
     );
-    assert!(!flows, "流程还没接入");
+    assert!(flows, "流程接上了");
     assert!(jobs);
     assert_eq!(
         instance.holder.map(|h| h.pid),

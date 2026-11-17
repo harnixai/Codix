@@ -321,9 +321,13 @@ impl Hub {
     }
 
     /// 会话在不在：内存里没有就问引擎，在盘上就带回来、订阅上。
+    /// 在 Codix 里关掉的不算在：引擎的存储里还有它，但它不该被谁再带回来。
     pub(crate) async fn bring_back(&self, id: &str) -> Result<bool, RpcError> {
         if self.0.st.lock().unwrap().sessions.contains_key(id) {
             return Ok(true);
+        }
+        if self.0.reg.lock().unwrap().get(id).is_some_and(|r| r.closed) {
+            return Ok(false);
         }
         match self.call("session.get", json!({"session_id": id})).await {
             Ok(_) => {}

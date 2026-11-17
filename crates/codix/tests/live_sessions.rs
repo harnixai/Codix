@@ -1,6 +1,6 @@
 //! LIVE：会话代理里 Codix 自己做的部分（architecture §8.4）——只列本项目的会话、第一句话做
 //! 名字、改名与关闭记在 `sessions.json` 里并跨重启保留、换模型、命令表、Watch 快照的历史转换
-//! 与 todo、Codix 拒绝的逐轮权限模式与还没接入的流程。
+//! 与 todo、Codix 拒绝的逐轮权限模式。
 
 mod live;
 
@@ -182,7 +182,7 @@ async fn a_watch_snapshot_rebuilds_history_and_todos() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live"]
-async fn per_turn_permission_modes_and_flows_are_refused() {
+async fn per_turn_permission_modes_are_refused() {
     let lv = Live::new();
     let mut c = lv.start().await;
     let s = c.new_session().await;
@@ -209,19 +209,7 @@ async fn per_turn_permission_modes_and_flows_are_refused() {
     .await;
     c.finish_turn(&s).await.ended();
 
-    assert!(matches!(c.ok(Command::ListFlows).await, Reply::Flows(v) if v.is_empty()));
-    for cmd in [
-        Command::GetFlow { name: "x".into() },
-        Command::StartRun {
-            flow: "x".into(),
-            subject: "y".into(),
-            inputs: serde_json::Value::Null,
-        },
-    ] {
-        let r = c.call(cmd).await;
-        assert!(
-            matches!(&r, Err(PortError::Unsupported(w)) if w == "flows"),
-            "{r:?}"
-        );
-    }
+    // 流程接上了：不认识的流程是普通的失败，不再是"不支持"。
+    let r = c.call(Command::GetFlow { name: "x".into() }).await;
+    assert!(matches!(&r, Err(PortError::Failed(_))), "{r:?}");
 }

@@ -20,7 +20,7 @@
 │                        │ 前一站: 设计                                                                                               │                        │
 │                        │ 下一站: 代码评审、文档评审                                                                                 │                        │
 │                        │   定义: - id: impl                                                                                         │                        │
-│                        │           title: 实现                                                                                      │────────────────────────┤
+│                        │           title: 实现                                                                                      │2 个运行未结束，不能改 ─┤
 │                        │           needs: [design]                                                                                  │ 档评审 → 评审汇总 →    │
 │                        │           tasks:                                                                                           │                        │
 │                        │             - {id: backend, executor: {kind: agent}, skill: implement}                                     │equirements  出口 outp… │

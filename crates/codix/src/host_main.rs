@@ -68,8 +68,15 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
             workspaces_dir: layout.flow_workspaces(&name),
         },
     )
-    .await
-    .context("start the flows")?;
+    .await;
+    // 流程起不来不拖累实例：会话与作业照常，流程标签说明没有接上。
+    let flows = match flows {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::error!("flows not started: {e:#}");
+            None
+        }
+    };
 
     let listener = claim.bind()?;
     let base = InstanceFile {
@@ -123,7 +130,9 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         ServeEnd::StopRequested => tracing::info!("stop requested by the attached client"),
         ServeEnd::Shutdown(why) => tracing::info!("shutting down: {why}"),
     }
-    flows.stop().await;
+    if let Some(f) = &flows {
+        f.stop().await;
+    }
     hub.shutdown();
     embedded.shutdown().await;
     claim.release()?;

@@ -23,6 +23,7 @@ flows:
   sep: "、"
   waits_for: "← 等 {names}"
   design_of: "流程设计：{title}"
+  locked: "🔒 {n} 个运行未结束，不能改"
   prefill_run: "启动流程 #{n}「{title}」，主题："
   prefill_edit: "修改流程 #{n}「{title}」："
   prefill_delete: "删除流程 #{n}「{title}」"
