@@ -6,6 +6,7 @@ chat_update:
   cmd_model: "Switch model"
   cmd_goal: "Set goal"
   cmd_btw: "Side question"
+  cmd_trust: "Trust this project (/trust off to undo): its own settings and flows are read, and flows can be saved in it"
   cmd_doctor: "Diagnose"
   cmd_quit: "Detach (instance keeps running)"
   cmd_exit: "Detach (instance keeps running)"
@@ -20,3 +21,5 @@ chat_update:
   current_model: "Current model: {m} (/model <name> to switch)"
   doctor_todo: "Diagnose: available once stage 3 wires in daemon.doctor"
   steer_missed: "Your message missed this turn and was put back in the input box"
+  trusted: "This project is trusted now: its own settings and flows apply from the next turn"
+  untrusted: "This project is no longer trusted"

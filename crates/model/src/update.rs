@@ -98,6 +98,8 @@ pub(crate) enum Pending {
         follow: bool,
     },
     JobHistory(port::JobId),
+    /// `/trust`：信任（`true`）或不再信任实例的项目。
+    Trusted(bool),
 }
 
 const RATIO_MIN: u16 = 40;

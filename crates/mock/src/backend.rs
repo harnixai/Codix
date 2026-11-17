@@ -338,6 +338,7 @@ impl ScriptedBackend {
                 }
                 Ok(Reply::Ok)
             }
+            TrustProject { .. } => Ok(Reply::Ok),
             SetModel { session, model } => {
                 if effects && let Some(mut s) = self.summary(session) {
                     s.provenance.model = model.clone();

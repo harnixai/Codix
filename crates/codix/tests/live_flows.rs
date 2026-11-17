@@ -117,11 +117,32 @@ async fn the_builtin_example_flow_is_offered() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live"]
-async fn a_user_session_validates_and_creates_a_flow_with_flow_tools() {
+async fn a_user_session_validates_and_creates_a_flow_once_the_project_is_trusted() {
     let lv = Live::new();
     install(&lv, &[]);
     let mut c = lv.start().await;
     c.answering(Answering::Auto);
+    // 没信任的项目：流程存不进去，工具照实说。
+    let t = ask(
+        &mut c,
+        &format!(
+            "Call flow_create once with exactly this YAML:\n{ONE_STATION}\nDo not ask me to confirm. \
+             Report the tool's answer in one line."
+        ),
+    )
+    .await;
+    t.ended();
+    assert!(
+        t.results
+            .iter()
+            .any(|(r, err)| *err && r.contains("not trusted")),
+        "{:?}",
+        t.results
+    );
+    assert!(!flows(&c).await.iter().any(|f| f.name == "live-echo"));
+
+    // /trust 之后：校验报错的不存，对的存进项目自己的流程包。
+    c.ok(Command::TrustProject { trusted: true }).await;
     let bad = "name: broken\nstations:\n  - id: a\n    exit: [{kind: nope}]\n";
     let t = ask(
         &mut c,
@@ -149,10 +170,12 @@ async fn a_user_session_validates_and_creates_a_flow_with_flow_tools() {
         .into_iter()
         .find(|f| f.name == "live-echo")
         .expect("建出来了");
-    assert_eq!(made.origin, FlowOrigin::Global, "存在 ~/.codix/flows");
+    assert_eq!(made.origin, FlowOrigin::Project, "存进项目自己的流程包");
     assert!(
-        lv.home.path().join("flows/flows/live-echo.yaml").exists(),
-        "全局流程包的 flows/ 里"
+        std::path::Path::new(&lv.project_path())
+            .join(".codix/flows/live-echo.yaml")
+            .exists(),
+        "项目的 .codix/flows/ 里"
     );
     assert!(
         c.events()
@@ -221,6 +244,7 @@ async fn a_flow_with_runs_not_finished_cannot_be_changed_until_they_are_cancelle
     install(&lv, &[("live-wait", WAITS), ("live-echo", ONE_STATION)]);
     let mut c = lv.start().await;
     c.answering(Answering::Auto);
+    c.ok(Command::TrustProject { trusted: true }).await;
     let run = start(&c, "live-wait", "say the word OK").await;
     let id = run.id.clone();
     let waiting = c
@@ -238,7 +262,7 @@ async fn a_flow_with_runs_not_finished_cannot_be_changed_until_they_are_cancelle
     let t = ask(
         &mut c,
         &format!(
-            "Call flow_update once with target \"live-wait\" and exactly this YAML:\n{}\nDo not ask me \
+            "Call flow_update once with flow \"live-wait\" and exactly this YAML:\n{}\nDo not ask me \
              to confirm. Report the tool's answer in one line.",
             WAITS.replace("Live wait", "Live wait 2")
         ),
@@ -259,7 +283,7 @@ async fn a_flow_with_runs_not_finished_cannot_be_changed_until_they_are_cancelle
     let t = c
         .turn(
             &main,
-            "Call flow_delete once with target \"live-echo\". Do not ask me to confirm. Report the \
+            "Call flow_delete once with flow \"live-echo\". Do not ask me to confirm. Report the \
              tool's answer in one line.",
         )
         .await;
@@ -287,7 +311,7 @@ async fn a_flow_with_runs_not_finished_cannot_be_changed_until_they_are_cancelle
     let t = ask(
         &mut c,
         &format!(
-            "Call flow_update once with target \"live-wait\" and exactly this YAML:\n{}\nDo not ask me \
+            "Call flow_update once with flow \"live-wait\" and exactly this YAML:\n{}\nDo not ask me \
              to confirm. Reply with only the word DONE.",
             WAITS.replace("Live wait", "Live wait 2")
         ),

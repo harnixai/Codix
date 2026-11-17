@@ -7,13 +7,15 @@ mod map;
 pub(crate) mod session_host;
 #[cfg(test)]
 mod tests;
-mod tools;
+pub(crate) mod tools;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use harnix_flow::author::AuthorTools;
+use harnix_flow::dryrun::{Sandbox, SandboxConfig};
 use harnix_flow::runner::{CatalogPacks, Runner, RunnerConfig};
 use harnix_flow::{
     Actor, CreateIn, DirPacks, Engine, FileStore, MemPacks, Packs, ProjectLayout, RunQuery,
@@ -29,31 +31,12 @@ use session_host::CodixSessionHost;
 /// 运行的 worktree 分支：`codix/flow/<运行>`，与引擎自己的 worktree 分开。
 const BRANCH_PREFIX: &str = "codix/flow";
 
-/// 项目层目录（`.codix`）里引擎的沙箱让会话写的子目录：任务自己的；其余归应用。与 Agix 的
-/// 布局一致（Harnix 对着同一个引擎用的也是这三个）。
-const AGENT_DIRS: [&str; 3] = ["scratchpad", "memory", "worktrees"];
+/// 项目层目录（`.codix`）里引擎的沙箱让任务会话写的子目录（Agix 0.3.18 起引擎的 worktree 在仓库根的
+/// `.wkts/`，不在这里）；其余归应用。Harnix 对着同一个引擎用的也是这两个。
+const AGENT_DIRS: [&str; 2] = ["scratchpad", "memory"];
 
 /// 定义里写的场景就是 Agix 的场景名；Codix 只开 `code`。
 const SCENE: &str = "code";
-
-/// 随 Codix 发布的流程包：Harnix flow 的示例包，编进二进制。
-fn builtin() -> MemPacks {
-    MemPacks::new()
-        .flow(include_str!(
-            "../../../../3rds/harnix-flow/packs/examples/flows/example-review.yaml"
-        ))
-        .skill(
-            "review",
-            include_str!("../../../../3rds/harnix-flow/packs/examples/skills/review/SKILL.md"),
-        )
-        .rule(
-            "review-honest",
-            include_str!("../../../../3rds/harnix-flow/packs/examples/rules/review-honest.md"),
-        )
-        .policy(include_str!(
-            "../../../../3rds/harnix-flow/packs/examples/policies/read-only.yaml"
-        ))
-}
 
 pub struct FlowsConfig {
     /// 全局流程包（可写层）：`~/.codix/flows/`。
@@ -71,6 +54,11 @@ pub struct Flows {
     engine: Arc<Engine>,
     runner: Arc<Runner>,
     project: String,
+    /// 流程库的编写与运行工具；派工器起来之后才有。
+    author: std::sync::OnceLock<AuthorTools>,
+    author_host: Arc<tools::CodixAuthorHost>,
+    /// 推给过界面的流程名：流程包变了时据此推 `FlowRemoved`。
+    published: std::sync::Mutex<BTreeSet<String>>,
 }
 
 /// 派工器看到的会话宿主，单独拿出来给一致性套件查（`live_flows.rs`）。
@@ -90,7 +78,8 @@ pub async fn start(hub: &Hub, cfg: FlowsConfig) -> anyhow::Result<Arc<Flows>> {
     };
     let layout =
         ProjectLayout::new(".codix", cfg.worktrees_dir, BRANCH_PREFIX).with_agent_dirs(AGENT_DIRS);
-    let dir = DirPacks::writable(cfg.flows_dir).with_builtin(builtin());
+    // 随 Codix 发布的流程包：库自带的示例包。
+    let dir = DirPacks::writable(cfg.flows_dir).with_builtin(MemPacks::examples());
     let packs = Arc::new(CatalogPacks::over(&rcfg, vec![], Arc::new(dir)));
     packs.set_layout(layout.clone());
     let packs: Arc<dyn Packs> = packs;
@@ -110,13 +99,29 @@ pub async fn start(hub: &Hub, cfg: FlowsConfig) -> anyhow::Result<Arc<Flows>> {
     }
     let host = CodixSessionHost::new(hub.downgrade());
     let _ = host.engine.set(engine.clone());
+    let sandbox = Arc::new(Sandbox::new(
+        engine.packs().clone(),
+        SandboxConfig {
+            guarded: rcfg.guarded.clone(),
+            submit_scenes: rcfg.profiles.clone(),
+            main_scene: Some(SCENE.into()),
+        },
+    ));
     let runner = Runner::new(engine.clone(), host, rcfg);
-    let flows = Arc::new(Flows {
+    let flows = Arc::new_cyclic(|me| Flows {
         hub: hub.downgrade(),
         engine,
         runner: runner.clone(),
         project,
+        author: std::sync::OnceLock::new(),
+        published: Default::default(),
+        author_host: Arc::new(tools::CodixAuthorHost::new(me.clone())),
     });
+    let _ = flows.author.set(AuthorTools::new(
+        &runner,
+        sandbox,
+        flows.author_host.clone() as Arc<dyn harnix_flow::author::AuthorHost>,
+    ));
     tokio::spawn(follow(flows.clone(), runner.changes()));
     hub.set_flows(flows.clone()).await;
     runner.start().await;
@@ -260,6 +265,22 @@ impl Flows {
         self.runner.settle(r).await.map(|_| ()).map_err(flow_err)
     }
 
+    /// 流程包变了（存、删了流程或件）：每个流程的摘要重推一遍，没了的推 `FlowRemoved`。
+    pub(crate) async fn flows_changed(&self) {
+        let Some(hub) = self.hub.upgrade() else {
+            return;
+        };
+        let now = self.summaries().await;
+        let mut events: Vec<Event> = now.iter().cloned().map(Event::FlowUpserted).collect();
+        let mut known = self.published.lock().unwrap();
+        for gone in known.iter().filter(|n| !now.iter().any(|f| &f.name == *n)) {
+            events.push(Event::FlowRemoved { name: gone.clone() });
+        }
+        *known = now.iter().map(|f| f.name.clone()).collect();
+        drop(known);
+        hub.emit_events(events);
+    }
+
     /// 定义变了（存、删）：列表与设计卡跟着刷新。
     pub(crate) async fn flow_changed(&self, name: &str) {
         let Some(hub) = self.hub.upgrade() else {
@@ -377,5 +398,11 @@ impl FlowPort for Flows {
 
     fn tool_declarations(&self) -> Vec<Value> {
         tools::declarations()
+    }
+
+    async fn trust_changed(&self) {
+        // hear 问的是引擎此刻的答案，并记进派工器与流程包共用的信任表。
+        self.runner.hear(&self.project).await;
+        self.flows_changed().await;
     }
 }

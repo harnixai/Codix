@@ -16,7 +16,8 @@ const DETACH_ARM_MS: u64 = 800;
 
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
 const LOCAL: &[&str] = &[
-    "help", "new", "rename", "sessions", "model", "goal", "btw", "doctor", "quit", "exit", "stop",
+    "help", "new", "rename", "sessions", "model", "goal", "btw", "trust", "doctor", "quit", "exit",
+    "stop",
 ];
 
 impl State {
@@ -593,6 +594,10 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             s.notice(i18n::t!("chat_update.current_model", m = m), false);
             vec![]
         }
+        "trust" => {
+            let trusted = !matches!(arg.as_str(), "off" | "no" | "false");
+            vec![s.call(Pending::Trusted(trusted), Command::TrustProject { trusted })]
+        }
         "model" => vec![s.call(
             Pending::Ignore,
             Command::SetModel {
@@ -682,6 +687,17 @@ pub(crate) fn chat_event(s: &mut State, ev: &Event) -> Vec<Effect> {
 
 pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effect> {
     match (what, reply) {
+        (Pending::Trusted(t), Reply::Ok) => {
+            s.notice(
+                if t {
+                    i18n::t!("chat_update.trusted")
+                } else {
+                    i18n::t!("chat_update.untrusted")
+                },
+                false,
+            );
+            vec![]
+        }
         (Pending::Watch(id), Reply::Watched(w)) => {
             s.ui.watching.remove(&id);
             let buffered = s.ui.watch_buffer.remove(&id).unwrap_or_default();

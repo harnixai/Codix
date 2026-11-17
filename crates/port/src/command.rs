@@ -70,6 +70,11 @@ pub enum Command {
         session: SessionId,
         model: String,
     },
+    /// 信任 / 不再信任实例的项目（Agix 的 `project.trust`）：受信的项目才读它自己的设置、
+    /// 流程包，才能往它里面存流程。只由人发（`/trust`），模型的工具做不了这件事。
+    TrustProject {
+        trusted: bool,
+    },
     Commands {
         session: SessionId,
     },
@@ -161,6 +166,7 @@ impl Command {
             Command::Interrupt { .. } => "interrupt",
             Command::Answer { .. } => "answer",
             Command::SetModel { .. } => "set_model",
+            Command::TrustProject { .. } => "trust_project",
             Command::Commands { .. } => "commands",
             Command::SideQuestion { .. } => "side_question",
             Command::SetGoal { .. } => "set_goal",

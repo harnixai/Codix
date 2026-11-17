@@ -53,6 +53,8 @@ pub(crate) trait FlowPort: Send + Sync {
     ) -> Result<(port::RunId, String), String>;
     /// 挂在连接上的流程工具的声明。
     fn tool_declarations(&self) -> Vec<Value>;
+    /// 实例项目的信任变了：重新问引擎，项目自己的流程跟着出现或消失。
+    async fn trust_changed(&self);
 }
 
 /// 一个会话的帧，原样分给看着它的流程派工器（`Hub::tap`）。
@@ -315,6 +317,11 @@ impl Hub {
     }
 
     /// 这个会话此刻在不在跑一轮、在哪个项目里；不认识就是 `None`。
+    pub(crate) fn origin_of(&self, id: &str) -> Option<Origin> {
+        let st = self.0.st.lock().unwrap();
+        st.sessions.get(id).map(|s| s.origin.clone())
+    }
+
     pub(crate) fn session_state(&self, id: &str) -> Option<(bool, Option<String>)> {
         let st = self.0.st.lock().unwrap();
         st.sessions.get(id).map(|s| (s.running, s.project.clone()))
@@ -1512,6 +1519,18 @@ impl Hub {
                     )
                     .await
                     .map_err(rpc_err)?;
+                }
+                Ok(Reply::Ok)
+            }
+            C::TrustProject { trusted } => {
+                self.call(
+                    "project.trust",
+                    json!({"project_root": self.0.project, "trusted": trusted}),
+                )
+                .await
+                .map_err(rpc_err)?;
+                if let Some(f) = self.0.flows.get() {
+                    f.trust_changed().await;
                 }
                 Ok(Reply::Ok)
             }

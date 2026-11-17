@@ -368,11 +368,11 @@ codix（一个二进制）
 - 作业没有自己的会话：新建、修改、清理都在用户会话里说，由宿主工具执行（下面）。界面不另开表单（§4.4）。
 
 **宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、
-`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程的 `flow_*`（`flows/tools.rs`）：
-`flow_list`、`flow_show`、`flow_schema`、`flow_guide`、`flow_validate`、`flow_dry_run`、`flow_runs`、`flow_run`（只读），
-`flow_create`、`flow_update`、`flow_delete`、`flow_start`，运行上的 `flow_pause`、`flow_resume`、`flow_cancel`、
-`flow_confirm`、`flow_force`、`flow_rework`、`flow_retry`、`flow_release`。名字与参数照 Harnix 的 flow-author 场景，
-但作用于流程或运行的都要显式给目标（流程 `#n` 或名字，运行给 ID）：Codix 没有"当前流程"。
+`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程的 22 个 `flow_*` 是流程库的编写与
+运行工具（`harnix_flow::author`），声明与执行都在库里，`flows/tools.rs` 只在外面加 Codix 的三样：`flow` 参数收
+`#n`（换成名字再交给库）、按会话限作用域、有运行不许改。库要宿主答的（`AuthorHost`）：会话在实例的项目里；
+会话刚建的流程是它的"当前流程"，运行里的会话的当前流程与当前运行是它自己那个——别的会话没有"当前"，
+作用于流程或运行的工具要给出目标。
 
 - 经 `daemon.setHostTools` 挂在实例与引擎的连接上，**每个会话都有**，子 Agent 也有。只对此后建起来的
   引擎生效：老会话在下一次恢复或重建时拿到。
@@ -395,11 +395,12 @@ codix（一个二进制）
 
 - **装配**（`flows::start`，实例起来时一次）：
   - 运行记录：`FileStore`，`instances/<名>/flow-runs/`。
-  - 流程包三层：`~/.codix/flows/`（`DirPacks` 的可写层，`flow_create` 存到这里）；垫在下面的内置包
-    （库的示例包 `example-review`，编进二进制）；项目自己的 `<项目>/.codix/flows/`，**项目受信才读**，
-    信任取 Agix 的 `project.status`。
+  - 流程包三层：`~/.codix/flows/`（`DirPacks` 的可写层）；垫在下面的内置包（库的示例包，`MemPacks::examples()`）；
+    项目自己的 `<项目>/.codix/flows/`，**项目受信才读、才写**。会话都在实例的项目里，`flow_create` 存进项目自己的
+    流程包，所以项目没受信时存不进去，工具照实说。信任取 Agix 的 `project.status`；人用 `/trust`（端口
+    `TrustProject` → `project.trust`）信任或取消，之后派工器重新问一遍，项目的流程跟着出现或消失。
   - `ProjectLayout`：项目层目录 `.codix`（与 Agix 的同一个），worktree 在 `instances/<名>/worktrees/`、分支
-    `codix/flow/<运行>`，会话可以当自己的来写的子目录 `scratchpad`、`memory`、`worktrees`（同 Agix 的布局）。
+    `codix/flow/<运行>`，任务会话可以当自己的来写的子目录 `scratchpad`、`memory`（Agix 0.3.18 起引擎的 worktree 在仓库根的 `.wkts/`）。
   - 场景（定义里的 profile）就是 Agix 的场景名，目前只开 `code`，交付走 `flow_submit`。
 - **会话宿主**（`SessionHost`，`flows/session_host.rs`）经 `Hub` 开会话，`Hub` 仍是引擎唯一的客户端：
   - `open`：会话 id 由派工器的键算出（键的 v5 UUID，照引擎的写法写成 BASE58），`session.create` 带

@@ -6,6 +6,7 @@ chat_update:
   cmd_model: "切换模型"
   cmd_goal: "设定 goal"
   cmd_btw: "侧问"
+  cmd_trust: "信任这个项目（/trust off 取消）：读它自己的设置与流程，可以往里存流程"
   cmd_doctor: "诊断"
   cmd_quit: "脱离（实例继续运行）"
   cmd_exit: "脱离（实例继续运行）"
@@ -20,3 +21,5 @@ chat_update:
   current_model: "当前模型：{m}（/model <名字> 切换）"
   doctor_todo: "诊断：阶段 3 接入 daemon.doctor 后可用"
   steer_missed: "插话没赶上这一轮，已放回输入框"
+  trusted: "已信任这个项目：它自己的设置与流程从下一轮起生效"
+  untrusted: "已不再信任这个项目"

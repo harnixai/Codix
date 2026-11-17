@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# 按 3rds/INDEX.md 把第三方代码拷到 3rds/：原样整目录拷入，本地不改。
+# 按 3rds/INDEX.md 把第三方代码拷到 3rds/：原样整目录拷入，本地不改。从来源仓库的发布标签取
+# （git archive），与本地检出停在哪里无关。
 set -euo pipefail
 cd "$(dirname "$0")/.."
-HARNIX_DIR="${HARNIX_DIR:-../Harnix-next}"
-HARNIX_REV="4b7111b8"
+HARNIX_DIR="${HARNIX_DIR:-../Harnix}"
+HARNIX_TAG="Harnix-v0.4.6-2026111701"
 
-have=$(git -C "$HARNIX_DIR" rev-parse --short=8 HEAD)
-if ! git -C "$HARNIX_DIR" merge-base --is-ancestor "$HARNIX_REV" HEAD; then
-  echo "$HARNIX_DIR 在 ${have}，不含 ${HARNIX_REV}" >&2
-  exit 1
+if ! git -C "$HARNIX_DIR" rev-parse -q --verify "refs/tags/$HARNIX_TAG" >/dev/null; then
+  git -C "$HARNIX_DIR" fetch -q origin tag "$HARNIX_TAG" || {
+    echo "$HARNIX_DIR 里没有标签 ${HARNIX_TAG}，也取不到" >&2
+    exit 1
+  }
 fi
-if ! git -C "$HARNIX_DIR" diff --quiet "$HARNIX_REV" HEAD -- crates/flow \
-  || [ -n "$(git -C "$HARNIX_DIR" status --porcelain -- crates/flow)" ]; then
-  echo "$HARNIX_DIR 的 crates/flow 与 ${HARNIX_REV} 不同；先换到那个版本，或更新 INDEX.md 与本脚本" >&2
-  exit 1
-fi
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+git -C "$HARNIX_DIR" archive "$HARNIX_TAG" crates/flow | tar -x -C "$tmp"
 rm -rf 3rds/harnix-flow
-cp -R "$HARNIX_DIR/crates/flow" 3rds/harnix-flow
-rm -f 3rds/harnix-flow/Cargo.lock
-echo "3rds/harnix-flow ← $HARNIX_DIR@${have}（crates/flow 同 ${HARNIX_REV}）"
+mv "$tmp/crates/flow" 3rds/harnix-flow
+echo "3rds/harnix-flow ← ${HARNIX_TAG}:crates/flow"
