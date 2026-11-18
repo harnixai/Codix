@@ -433,6 +433,12 @@ codix（一个二进制）
 - 残留：`list` 时 pid 已不在、或者 socket 连不上的实例标为"残留"并删掉它的 socket 与发现文件；作业与
   会话归属留着，`start` 能再拉起来。
 
+### 8.8 插件
+
+插件就是 Agix 的插件包，Codix 加三样：`/plugin`（安装前摆出 Agix 与 Codix 两份披露）、给插件命令的宿主 JS 库
+`codix.*`、插件经 `[x-codix]` 带来的流程包（门禁与程序步骤经 `ext.run` 跑插件命令）。第一个插件是 `xforge`。
+设计见 `plugins.md`，依赖 Agix#90、#91、#92 与 Harnix#68。
+
 ## 9. 旧实现踩过的坑
 
 | 坑 | 本设计如何避开 |
