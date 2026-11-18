@@ -1,4 +1,4 @@
-//! 场景 m17（布局）、m24（底栏保底）与框架级的焦点、标签、鼠标。m23 的尺寸协商在 term.rs。
+//! 场景 m17（布局）与框架级的选中、鼠标、退出。键位（含 m24 底栏保底）在 keys.rs，m23 的尺寸协商在 term.rs。
 
 mod common;
 
@@ -63,40 +63,6 @@ async fn m17_too_small_still_has_footer() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn m24_footer_always_ends_with_toggle_and_help() {
-    for cols in [60u16, 80, 120, 160] {
-        let mut h = Harness::new("default", Size::new(cols, 30)).await;
-        let script = [
-            "", "Ctrl+O", "Ctrl+N", "Ctrl+N", "Ctrl+N", "Ctrl+G", "Tab", "F1", "Esc", "Ctrl+H",
-            "Esc", "Ctrl+C",
-        ];
-        for step in script {
-            if !step.is_empty() {
-                h.keys(step).await;
-            }
-            let last = h.last_line();
-            assert!(
-                last.ends_with("^G 切块 · ^N 标签 · ^B 切栏 · ^X 退出 · ^H 帮助"),
-                "{cols} 列、{step:?} 之后底栏是：{last:?}"
-            );
-        }
-    }
-}
-
-#[tokio::test(start_paused = true)]
-async fn tabs_by_key_and_by_mouse() {
-    let mut h = Harness::new("default", WIDE).await;
-    h.tab(model::Tab::Flows).await;
-    assert_eq!(h.core.state.ui.tab, Tab::Flows);
-    assert_eq!(h.core.state.ui.focus, Focus::SideUpper);
-    let (col, row) = h.find("作业").expect("作业标签");
-    h.click(col + 1, row);
-    assert_eq!(h.core.state.ui.tab, Tab::Jobs);
-    h.keys("Esc").await;
-    assert_eq!(h.core.state.ui.focus, Focus::Composer);
-}
-
-#[tokio::test(start_paused = true)]
 async fn side_selection_by_keys_click_and_wheel() {
     let mut h = Harness::new("default", WIDE).await;
     h.tab(model::Tab::Sessions).await;
@@ -111,23 +77,6 @@ async fn side_selection_by_keys_click_and_wheel() {
     assert_eq!(h.core.state.ui.upper().selected, 2, "第 0 行是新建会话");
     h.mouse(model::MouseKind::ScrollDown, col, row);
     assert_eq!(h.core.state.ui.upper().selected, 5);
-}
-
-#[tokio::test(start_paused = true)]
-async fn help_overlay_lists_the_focused_context() {
-    let mut h = Harness::new("default", WIDE).await;
-    h.tab(model::Tab::Sessions).await;
-    h.keys("F1").await;
-    let text = h.text();
-    assert!(text.contains("帮助"));
-    assert!(text.contains("会话"), "列出会话上下文的键位");
-    assert!(text.contains("重命名"));
-    assert!(text.contains("^H / F1"), "同一动作的几个键排一行\n{text}");
-    assert!(!text.contains("Alt+"), "兼容键不列\n{text}");
-    h.keys("Esc").await;
-    assert!(h.core.state.ui.overlay.is_none());
-    h.keys("Ctrl+H").await;
-    assert!(h.core.state.ui.overlay.is_some(), "^H 也是帮助");
 }
 
 #[tokio::test(start_paused = true)]

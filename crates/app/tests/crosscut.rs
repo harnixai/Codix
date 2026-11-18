@@ -10,7 +10,7 @@ use tui::Size;
 const SIZE: Size = Size::new(160, 45);
 
 #[tokio::test(start_paused = true)]
-async fn m14_ctrl_g_walks_every_waiting_place_across_tabs() {
+async fn m14_ctrl_r_walks_every_waiting_place_across_tabs() {
     let mut h = Harness::new("m14-attention", SIZE).await;
     h.advance(2_500).await;
     let items = h.core.state.attention();

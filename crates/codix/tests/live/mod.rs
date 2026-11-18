@@ -8,6 +8,8 @@
 
 #![allow(dead_code)]
 
+pub mod tui;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
