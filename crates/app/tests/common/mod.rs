@@ -100,7 +100,25 @@ impl Harness {
         }
     }
 
-    /// 空格分隔的按键：`"Ctrl+B F2 Down"`；字面空格写 `Space`。
+    /// 按 Ctrl+N 换到标签 `t`。已经在它上面就等于点一下标签头（会话标签会重新落点），不绕一圈。
+    pub async fn tab(&mut self, t: model::Tab) {
+        if self.core.state.ui.tab == t {
+            let a = match t {
+                model::Tab::Sessions => keys::Action::TabSessions,
+                model::Tab::Flows => keys::Action::TabFlows,
+                model::Tab::Jobs => keys::Action::TabJobs,
+            };
+            let s = self.core.handle(Msg::Action(a));
+            self.shell.extend(s);
+            self.settle().await;
+            return;
+        }
+        while self.core.state.ui.tab != t {
+            self.keys("Ctrl+N").await;
+        }
+    }
+
+    /// 空格分隔的按键：`"Ctrl+B Ctrl+N Down"`；字面空格写 `Space`。
     pub async fn keys(&mut self, seq: &str) {
         for k in seq.split_whitespace() {
             let key = keys::Key::parse(k).unwrap_or_else(|| panic!("按键写错了：{k}"));
@@ -165,7 +183,7 @@ impl Harness {
 
     /// 在会话标签里选中标题为 `title` 的主 Agent 并打开它。
     pub async fn open_session(&mut self, title: &str) {
-        self.keys("F2").await;
+        self.tab(model::Tab::Sessions).await;
         let i = self
             .core
             .state
@@ -191,7 +209,7 @@ impl Harness {
 
     /// 会话标签上半选中标题为 `title` 的主 Agent（不打开）。
     pub async fn select_session(&mut self, title: &str) {
-        self.keys("F2").await;
+        self.tab(model::Tab::Sessions).await;
         let target = self
             .core
             .state

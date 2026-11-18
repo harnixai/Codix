@@ -140,7 +140,7 @@ async fn m21_idle_warns_then_detaches_then_any_key_reattaches() {
         "{}",
         h.last_line()
     );
-    h.keys("F2").await;
+    h.tab(model::Tab::Sessions).await;
     h.advance(4 * 60_000 + 30_000).await;
     assert_eq!(
         h.core.state.ui.screen,

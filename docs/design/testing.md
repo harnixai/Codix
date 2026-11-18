@@ -32,7 +32,7 @@ L3 驱动的是 `Core`：
 ```rust
 let mut h = Harness::new(Scenario::load("m04-prompts"), Size::new(120, 40));
 h.advance(ms(300));                     // 让场景时间线走 300ms
-h.keys("Ctrl+G");                       // 进入提问框
+h.keys("Ctrl+R");                       // 进入提问框
 h.snapshot("m04-ask-open");             // 与 tests/snapshots/m04-ask-open.txt 比较
 h.keys("2 Enter");
 assert_eq!(h.backend().calls().last(), Some(&Command::Answer { .. }));
@@ -103,7 +103,7 @@ codix --mock m11-flow-run --speed 4  # 时间线加速 4 倍
 codix --mock default                 # 只加载种子，不跑时间线
 ```
 
-只有 mock 模式下，F12 才会打开**事件日志浮层**：滚动显示后端推来的每个事件和发出的每条命令，人工验收时用来对照"界面是不是如实反映了后端"。
+只有 mock 模式下，`/events` 才会打开**事件日志浮层**：滚动显示后端推来的每个事件和发出的每条命令，人工验收时用来对照"界面是不是如实反映了后端"。
 
 ## 4. 场景清单
 
@@ -124,7 +124,7 @@ codix --mock default                 # 只加载种子，不跑时间线
 | m11-flow-run | 一次运行走完：并行的站、搁置后放行、等确认、未达标后返工、暂停后恢复、取消 | F-02 F-03 F-04 F-05 · 交互 §5.3 |
 | m12-flow-author | 选中流程定义左边不动、右下是流程设计；在用户会话里说着改流程，设计跟着变；`R` 起话头启动运行；查看定义 | F-07 F-08 · 交互 §4.1 §5.3 |
 | m13-jobs | 简单作业和流程作业按时触发、失败、立即运行、启用和停用、从历史跳转 | J-01 至 J-04 · 交互 §5.4 |
-| m14-attention | 多处同时等人（会话、站、受阻的 goal、失败的作业），用 Ctrl+G 依次处理，角标随之变化 | L-04 L-05 |
+| m14-attention | 多处同时等人（会话、站、受阻的 goal、失败的作业），用 ^R 依次处理，角标随之变化 | L-04 L-05 |
 | m15-reconnect | 与实例断线 → 重连中 → 恢复（`Resynced` + 快照），列表变灰后恢复；实例被停止后回到实例选择 | I-09 · 交互 §9 |
 | m16-storm | 每秒 1000 个 `TextDelta`，同时 50 个任务在更新：用计数断言重排和画帧的次数 | N-02 |
 | m17-layout | 在 200 / 120 / 100 / 80 / 60 列之间切换；收起右栏；调整比例；单栏下来回切换 | L-02 L-03 N-01 · 交互 §2 |

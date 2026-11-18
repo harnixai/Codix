@@ -11,7 +11,7 @@ const SIZE: Size = Size::new(160, 45);
 
 async fn flows(scenario: &str) -> Harness {
     let mut h = Harness::new(scenario, SIZE).await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     h.settle().await;
     h
 }
@@ -188,7 +188,12 @@ async fn m12_change_the_flow_by_talking_and_the_design_updates() {
     h.settle().await;
     assert!(!h.lower().contains("安全评审"));
     // 在用户会话里说（草稿：第一句话建出会话），右下的流程设计跟着变。
-    h.keys("F6").await;
+    h.keys("Ctrl+G Ctrl+G").await;
+    assert_eq!(
+        h.core.state.ui.focus,
+        model::Focus::Composer,
+        "右上 → 右下 → 输入框"
+    );
     h.type_str("加一个安全评审站").await;
     h.keys("Enter").await;
     h.advance(3_000).await;
@@ -196,7 +201,8 @@ async fn m12_change_the_flow_by_talking_and_the_design_updates() {
     assert!(t.contains("安全评审"), "流程设计跟着变\n{t}");
     assert!(t.contains("← 等 代码评审、文档评审、安全评审"));
     let talked = h.core.state.ui.chat.clone().expect("建出了会话");
-    h.keys("F3 R").await;
+    h.tab(model::Tab::Flows).await;
+    h.keys("R").await;
     assert_eq!(
         h.core.state.ui.composer.text, "启动流程 #1「需求到上线」，主题：",
         "R 在当前的用户会话里起个话头"
@@ -216,7 +222,7 @@ async fn m12_change_the_flow_by_talking_and_the_design_updates() {
 #[tokio::test(start_paused = true)]
 async fn jobs_list_details_history_and_follow() {
     let mut h = Harness::new("default", SIZE).await;
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     h.settle().await;
     h.pick_upper(0).await;
     h.settle().await;
@@ -255,13 +261,15 @@ async fn jobs_list_details_history_and_follow() {
             .iter()
             .any(|c| matches!(c, Command::RunJobNow { .. }))
     );
-    h.keys("F4 e").await;
+    h.tab(model::Tab::Jobs).await;
+    h.keys("e").await;
     assert_eq!(
         h.core.state.ui.composer.text, "修改作业 #1「每日巡检」：",
         "修改在用户会话里说"
     );
     assert!(h.core.state.chat_is_user_session(), "回到了用户会话");
-    h.keys("F4 v").await;
+    h.tab(model::Tab::Jobs).await;
+    h.keys("v").await;
     let text = h.text();
     assert!(
         text.contains("作业 #1「每日巡检」") && text.contains("触发记录（3 次）"),
@@ -272,7 +280,7 @@ async fn jobs_list_details_history_and_follow() {
 #[tokio::test(start_paused = true)]
 async fn m13_jobs_fire_and_fail() {
     let mut h = Harness::new("m13-jobs", SIZE).await;
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     h.advance(7_000).await;
     let j4 = h
         .core
@@ -377,7 +385,7 @@ async fn global_flows_are_marked_and_flow_jobs_jump_to_their_flow() {
     let text = h.text();
     assert!(text.contains("◎ 需求到上线"), "全局流程标 ◎\n{text}");
     assert!(!text.contains("◎ 周报"), "项目级的不标");
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     let weekly = h
         .core
         .state

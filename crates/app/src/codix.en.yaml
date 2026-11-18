@@ -9,7 +9,7 @@ ui:
   initial_size: 160x45
   # Percentage of the width the left pane (chat) takes on wide screens, 40-75.
   ratio: 60
-  # How many lines of a tool result to show in brief mode; the rest is folded (Ctrl+O shows all).
+  # How many lines of a tool result to show in brief mode; the rest is folded (^O shows all).
   compact_tool_lines: 3
   # Syntax highlighting theme for code blocks. Options: base16-ocean.dark, base16-eighties.dark, base16-mocha.dark,
   # base16-ocean.light, InspiredGitHub, Solarized (dark), Solarized (light)

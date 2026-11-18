@@ -55,7 +55,7 @@ view:
     model_question: "Model question"
     from: "  From {label}"
     keys_active: "Esc to deny · ↑↓ / number to select · Enter to confirm"
-    keys_idle: "Ctrl+G or click here to answer"
+    keys_idle: "^R or click here to answer"
   load_failed: "✗ Failed to load: {error} · r to retry"
   empty:
     filter: "Nothing matches \"{filter}\" · Esc to clear filter"
@@ -87,7 +87,7 @@ view:
     keys: "↑↓ / number to select · Enter to confirm · Esc to go back"
     title: "Exit"
   help:
-    mouse: "Mouse: click to select · double-click to open · drag divider to resize · wheel scrolls hovered area · F8 releases the terminal"
+    mouse: "Mouse: click to select · double-click to open · drag divider to resize · wheel scrolls hovered area · click the panel title line to show/hide · /mouse releases the terminal"
     title: "Help"
   picker:
     local: "local"

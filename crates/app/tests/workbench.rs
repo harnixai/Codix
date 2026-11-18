@@ -22,7 +22,9 @@ async fn m17_collapse_and_ratio() {
     h.keys("Ctrl+B").await;
     assert!(h.core.state.ui.side_collapsed);
     assert!(h.find("会话 ②").is_none(), "右栏收起后标签头不在");
-    h.keys("Ctrl+B F2 > > > > > > >").await;
+    h.keys("Ctrl+B").await;
+    h.tab(Tab::Sessions).await;
+    h.keys("> > > > > > >").await;
     assert_eq!(h.core.state.ui.ratio_pct, 75, "上限 75%");
     h.keys("< < < < < < < < < <").await;
     assert_eq!(h.core.state.ui.ratio_pct, 40, "下限 40%");
@@ -56,7 +58,7 @@ async fn m17_too_small_still_has_footer() {
     assert!(text.contains("终端太小"), "{text}");
     assert!(
         h.last_line()
-            .ends_with("Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助")
+            .ends_with("^G 切块 · ^N 标签 · ^B 切栏 · ^X 退出 · ^H 帮助")
     );
 }
 
@@ -65,7 +67,8 @@ async fn m24_footer_always_ends_with_toggle_and_help() {
     for cols in [60u16, 80, 120, 160] {
         let mut h = Harness::new("default", Size::new(cols, 30)).await;
         let script = [
-            "", "Ctrl+Up", "F2", "F3", "F4", "Tab", "F1", "Esc", "Ctrl+C",
+            "", "Ctrl+O", "Ctrl+N", "Ctrl+N", "Ctrl+N", "Ctrl+G", "Tab", "F1", "Esc", "Ctrl+H",
+            "Esc", "Ctrl+C",
         ];
         for step in script {
             if !step.is_empty() {
@@ -73,7 +76,7 @@ async fn m24_footer_always_ends_with_toggle_and_help() {
             }
             let last = h.last_line();
             assert!(
-                last.ends_with("Ctrl+B 切栏 · Ctrl+X 退出 · F1 帮助"),
+                last.ends_with("^G 切块 · ^N 标签 · ^B 切栏 · ^X 退出 · ^H 帮助"),
                 "{cols} 列、{step:?} 之后底栏是：{last:?}"
             );
         }
@@ -83,7 +86,7 @@ async fn m24_footer_always_ends_with_toggle_and_help() {
 #[tokio::test(start_paused = true)]
 async fn tabs_by_key_and_by_mouse() {
     let mut h = Harness::new("default", WIDE).await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     assert_eq!(h.core.state.ui.tab, Tab::Flows);
     assert_eq!(h.core.state.ui.focus, Focus::SideUpper);
     let (col, row) = h.find("作业").expect("作业标签");
@@ -96,7 +99,8 @@ async fn tabs_by_key_and_by_mouse() {
 #[tokio::test(start_paused = true)]
 async fn side_selection_by_keys_click_and_wheel() {
     let mut h = Harness::new("default", WIDE).await;
-    h.keys("F2 Down Down").await;
+    h.tab(model::Tab::Sessions).await;
+    h.keys("Down Down").await;
     assert_eq!(h.core.state.ui.upper().selected, 2);
     let n = h.core.state.session_rows().len();
     h.keys("PageDown").await;
@@ -112,19 +116,25 @@ async fn side_selection_by_keys_click_and_wheel() {
 #[tokio::test(start_paused = true)]
 async fn help_overlay_lists_the_focused_context() {
     let mut h = Harness::new("default", WIDE).await;
-    h.keys("F2 F1").await;
+    h.tab(model::Tab::Sessions).await;
+    h.keys("F1").await;
     let text = h.text();
     assert!(text.contains("帮助"));
     assert!(text.contains("会话"), "列出会话上下文的键位");
     assert!(text.contains("重命名"));
+    assert!(text.contains("^H / F1"), "同一动作的几个键排一行\n{text}");
+    assert!(!text.contains("Alt+"), "兼容键不列\n{text}");
     h.keys("Esc").await;
     assert!(h.core.state.ui.overlay.is_none());
+    h.keys("Ctrl+H").await;
+    assert!(h.core.state.ui.overlay.is_some(), "^H 也是帮助");
 }
 
 #[tokio::test(start_paused = true)]
-async fn ctrl_c_twice_detaches_and_f8_releases_the_mouse() {
+async fn ctrl_c_twice_detaches_and_mouse_command_releases_the_mouse() {
     let mut h = Harness::new("default", WIDE).await;
-    h.keys("F8").await;
+    h.type_str("/mouse").await;
+    h.keys("Enter").await;
     assert!(
         h.shell
             .contains(&app::core::ShellEffect::SetMouseCapture(false))

@@ -707,7 +707,8 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
         }
     }
     match a {
-        Action::Help => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
+        Action::Help | Action::HelpOrErase => s.ui.overlay = Some(Overlay::Help { scroll: 0 }),
+        Action::ReadTranscript => read_transcript(s),
         Action::ToggleDetail => s.ui.detail = !s.ui.detail,
         Action::NextAttention => return crate::follow::next_attention(s),
         Action::EventLog => s.ui.overlay = Some(Overlay::EventLog { scroll: 0 }),
@@ -715,30 +716,27 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             s.ui.filtering = true;
             s.ui.focus = Focus::SideUpper;
         }
-        Action::TogglePanel => s.toggle_panel(),
+        Action::TogglePanel => {
+            s.toggle_panel();
+            s.show_chat();
+            s.ui.focus = Focus::Composer;
+        }
         Action::LineUp | Action::LineDown => {
             let d = if a == Action::LineUp { -1 } else { 1 };
             scroll_focused(s, d);
         }
-        Action::FocusPanel => {
-            if s.panel_open() {
-                s.ui.focus = Focus::Panel;
-            } else {
-                s.notice(i18n::t!("update.no_panel"), false);
-            }
-        }
         Action::TabSessions => return switch_tab(s, Tab::Sessions),
         Action::TabFlows => return switch_tab(s, Tab::Flows),
         Action::TabJobs => return switch_tab(s, Tab::Jobs),
-        Action::FocusToggle => {
-            if s.ui.focus.in_side() {
-                s.show_chat();
-                s.ui.focus = Focus::Composer;
-            } else {
-                s.show_side(Focus::SideUpper);
-                crate::follow::mark_seen(s);
-            }
+        Action::NextTab => {
+            let next = match s.ui.tab {
+                Tab::Sessions => Tab::Flows,
+                Tab::Flows => Tab::Jobs,
+                Tab::Jobs => Tab::Sessions,
+            };
+            return switch_tab(s, next);
         }
+        Action::FocusCycle => focus_cycle(s),
         Action::PaneToggle => {
             if s.wide() {
                 s.ui.side_collapsed = !s.ui.side_collapsed;
@@ -758,14 +756,6 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 _ => Focus::SideUpper,
             }
         }
-        Action::PageUp | Action::PageDown if s.ui.focus == Focus::Panel => {
-            let room = s
-                .chat_regions()
-                .chat
-                .and_then(|c| c.panel)
-                .map_or(1, |p| p.h.saturating_sub(2).max(1)) as isize;
-            s.scroll_panel(if a == Action::PageUp { -room } else { room });
-        }
         Action::Up | Action::Down | Action::PageUp | Action::PageDown if s.ui.focus.in_side() => {
             let delta: isize = match a {
                 Action::Up => -1,
@@ -779,7 +769,6 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             s.ui.ratio_pct = s.ui.ratio_pct.saturating_sub(RATIO_STEP).max(RATIO_MIN)
         }
         Action::RatioInc => s.ui.ratio_pct = (s.ui.ratio_pct + RATIO_STEP).min(RATIO_MAX),
-        Action::FocusTranscript => s.ui.focus = Focus::Transcript,
         Action::Back => {
             if s.ui.notice.is_some() {
                 s.ui.notice = None;
@@ -788,16 +777,7 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
                 s.ui.focus = Focus::Composer;
             }
         }
-        Action::MouseToggle => {
-            s.ui.mouse_captured = !s.ui.mouse_captured;
-            let text = if s.ui.mouse_captured {
-                i18n::t!("update.mouse_codix")
-            } else {
-                i18n::t!("update.mouse_terminal")
-            };
-            s.notice(text, false);
-            return vec![Effect::SetMouseCapture(s.ui.mouse_captured)];
-        }
+        Action::MouseToggle => return toggle_mouse(s),
         Action::Interrupt => {
             let now = s.ui.now_ms;
             if s.ui
@@ -821,6 +801,48 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
         _ => {}
     }
     vec![]
+}
+
+/// Ctrl+G（交互 §7）：输入框 → 右上 → 右下 → 输入框。左上的面板只是摘要，不进焦点；转录用
+/// Ctrl+O 进，不进这一圈，不然一圈太长。回到左边时有提问在等就直接进提问框。
+fn focus_cycle(s: &mut State) {
+    match s.ui.focus {
+        Focus::SideUpper => s.ui.focus = Focus::SideLower,
+        Focus::SideLower => {
+            s.show_chat();
+            s.ui.focus = Focus::Composer;
+            if s.ask_visible() {
+                s.ui.ask_active = true;
+            }
+        }
+        Focus::Composer | Focus::Transcript => {
+            s.show_side(Focus::SideUpper);
+            crate::follow::mark_seen(s);
+        }
+    }
+}
+
+/// Ctrl+O（交互 §4.3）：看转录就是焦点进转录、整段展开成详细；在转录里再按一次（或 Esc）回输入框，
+/// 收回精简（`follow::after_update`）。转录里 `o` 在精简与详细之间切。
+fn read_transcript(s: &mut State) {
+    if s.ui.focus == Focus::Transcript {
+        s.ui.focus = Focus::Composer;
+    } else {
+        s.show_chat();
+        s.ui.focus = Focus::Transcript;
+        s.ui.detail = true;
+    }
+}
+
+pub(crate) fn toggle_mouse(s: &mut State) -> Vec<Effect> {
+    s.ui.mouse_captured = !s.ui.mouse_captured;
+    let text = if s.ui.mouse_captured {
+        i18n::t!("update.mouse_codix")
+    } else {
+        i18n::t!("update.mouse_terminal")
+    };
+    s.notice(text, false);
+    vec![Effect::SetMouseCapture(s.ui.mouse_captured)]
 }
 
 /// 切标签（交互 §5）：会话标签落在左边那个用户会话上（不是就换到最近活跃的，或草稿）；
@@ -862,7 +884,6 @@ fn fix_scroll(s: &mut State) {
 /// 没超出就滚转录——边打字边往回翻对话最常见。
 pub(crate) fn scroll_focused(s: &mut State, lines: isize) {
     match s.ui.focus {
-        Focus::Panel => s.scroll_panel(lines),
         Focus::Composer if s.composer_overflow().is_some() => s.scroll_composer(lines),
         Focus::Composer | Focus::Transcript => crate::chat_update::scroll(s, lines),
         Focus::SideUpper | Focus::SideLower => move_selection(s, s.ui.focus, lines),
@@ -934,8 +955,11 @@ fn mouse(s: &mut State, m: Mouse) -> Vec<Effect> {
                 }
             }
             if let Some(chat) = &r.chat {
-                if chat.panel.is_some_and(|p| p.contains(col, row)) && s.panel_open() {
-                    s.ui.focus = Focus::Panel;
+                // 面板不拿焦点（只是摘要，交互 §4.2）：点它的标题线或下沿就是收放，点内容不动。
+                if let Some(p) = chat.panel.filter(|p| p.contains(col, row)) {
+                    if row == p.y || row + 1 == p.bottom() {
+                        s.toggle_panel();
+                    }
                     return vec![];
                 }
                 if chat.composer.contains(col, row) {

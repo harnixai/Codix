@@ -17,34 +17,30 @@ pub(crate) fn bindings() -> Vec<Binding> {
     use Action as A;
     use Context as C;
     let mut v = vec![
-        // 全局（交互 §7）
+        // 全局（交互 §7）。命令键只用 Ctrl+字母：F 键在笔记本上要按 Fn，Alt 在 macOS 要终端设成
+        // Meta 才收得到，Ctrl+字母在哪个终端、ssh、tmux 里都一样。F1 是例外，人人都知道它是帮助。
+        // Ctrl+H 写在 F1 前面：底栏和帮助取第一个绑定。
+        b(C::Global, "Ctrl+H", A::Help),
         b(C::Global, "F1", A::Help),
-        b(C::Global, "F2", A::TabSessions),
-        b(C::Global, "Alt+1", A::TabSessions),
-        b(C::Global, "F3", A::TabFlows),
-        b(C::Global, "Alt+2", A::TabFlows),
-        b(C::Global, "F4", A::TabJobs),
-        b(C::Global, "Alt+3", A::TabJobs),
-        b(C::Global, "F6", A::FocusToggle),
-        b(C::Global, "Alt+O", A::FocusToggle),
-        b(C::Global, "Ctrl+O", A::ToggleDetail),
+        b(C::Global, "Ctrl+G", A::FocusCycle),
+        b(C::Global, "Ctrl+N", A::NextTab),
         b(C::Global, "Ctrl+T", A::TogglePanel),
+        b(C::Global, "Ctrl+O", A::ReadTranscript),
+        b(C::Global, "Ctrl+R", A::NextAttention),
+        b(C::Global, "Ctrl+B", A::PaneToggle),
         // 滚动：哪一块有焦点滚哪一块（交互 §7）。PageUp / PageDown 一页，Shift+↑↓ 一行。
         b(C::Global, "Shift+Up", A::LineUp),
         b(C::Global, "Shift+Down", A::LineDown),
-        b(C::Global, "Ctrl+B", A::PaneToggle),
-        b(C::Global, "Ctrl+G", A::NextAttention),
-        b(C::Global, "F8", A::MouseToggle),
-        b(C::Global, "Alt+M", A::MouseToggle),
         b(C::Global, "Ctrl+C", A::Interrupt),
         b(C::Global, "Ctrl+D", A::Detach),
         b(C::Global, "Ctrl+X", A::Exit),
         b(C::Global, "Ctrl+L", A::Redraw),
         b(C::Global, "Esc", A::Back),
-        b(C::Global, "F12", A::EventLog),
         // 输入框
         b(C::Composer, "Enter", A::Submit),
         b(C::Composer, "Shift+Enter", A::Newline),
+        // Alt+Enter、Alt+←→、Alt+B/F、Ctrl+←→ 只为兼容留着，不进底栏和文档：它们是各家终端按
+        // Option+← 之类时自己发出来的编辑键（macOS 终端发的是 Esc b / Esc f），不是 Codix 的快捷键。
         b(C::Composer, "Alt+Enter", A::Newline),
         b(C::Composer, "Ctrl+J", A::Newline),
         b(C::Composer, "Tab", A::Complete),
@@ -53,6 +49,8 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Composer, "Right", A::CursorRight),
         b(C::Composer, "Alt+Left", A::WordLeft),
         b(C::Composer, "Alt+Right", A::WordRight),
+        b(C::Composer, "Alt+B", A::WordLeft),
+        b(C::Composer, "Alt+F", A::WordRight),
         b(C::Composer, "Home", A::LineStart),
         b(C::Composer, "Ctrl+A", A::LineStart),
         b(C::Composer, "End", A::LineEnd),
@@ -61,6 +59,8 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Composer, "Ctrl+W", A::DeleteWord),
         b(C::Composer, "Ctrl+K", A::KillToEnd),
         b(C::Composer, "Backspace", A::Backspace),
+        // 有的终端退格键发的就是 Ctrl+H：输入框有字时它得是退格。
+        b(C::Composer, "Ctrl+H", A::HelpOrErase),
         b(C::Composer, "Delete", A::DeleteForward),
         b(C::Composer, "Ctrl+Left", A::WordLeft),
         b(C::Composer, "Ctrl+Right", A::WordRight),
@@ -68,7 +68,6 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Composer, "Down", A::Down),
         b(C::Composer, "PageUp", A::PageUp),
         b(C::Composer, "PageDown", A::PageDown),
-        b(C::Composer, "Ctrl+Up", A::FocusTranscript),
         // 转录
         b(C::Transcript, "Up", A::Up),
         b(C::Transcript, "k", A::Up),
@@ -78,18 +77,11 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Transcript, "PageDown", A::PageDown),
         b(C::Transcript, "Home", A::Top),
         b(C::Transcript, "End", A::Bottom),
-        b(C::Transcript, "Alt+Up", A::BlockPrev),
-        b(C::Transcript, "Alt+Down", A::BlockNext),
+        b(C::Transcript, "[", A::BlockPrev),
+        b(C::Transcript, "]", A::BlockNext),
         b(C::Transcript, "Enter", A::Open),
-        b(C::Transcript, "Ctrl+Up", A::FocusPanel),
-        // 顶部面板
-        b(C::Panel, "Up", A::LineUp),
-        b(C::Panel, "k", A::LineUp),
-        b(C::Panel, "Down", A::LineDown),
-        b(C::Panel, "j", A::LineDown),
-        b(C::Panel, "PageUp", A::PageUp),
-        b(C::Panel, "PageDown", A::PageDown),
-        b(C::Panel, "Ctrl+Down", A::FocusTranscript),
+        // 详细时整段都展开，单个块的 Enter 就没用了：o 收回精简再一块一块看。
+        b(C::Transcript, "o", A::ToggleDetail),
         // 补全列表
         b(C::Picker, "Up", A::Up),
         b(C::Picker, "Down", A::Down),
@@ -188,20 +180,16 @@ pub(crate) fn bindings() -> Vec<Binding> {
     v
 }
 
-/// 底栏左侧按上下文提示哪些动作（交互 §2.3 示意图）。切栏与帮助另由 `Keymap::essential` 给出。
+/// 底栏左侧按上下文提示哪些动作（交互 §2.3 示意图）。切块、换标签、切栏、退出、帮助另由
+/// `Keymap::essential` 给出。
 pub(crate) fn footer(ctx: Context) -> &'static [Action] {
     use Action as A;
     match ctx {
-        Context::Global | Context::Composer => &[
-            A::TabSessions,
-            A::FocusToggle,
-            A::NextAttention,
-            A::ToggleDetail,
-            A::MouseToggle,
-        ],
-        Context::Transcript => &[A::BlockPrev, A::Open, A::Bottom, A::FocusPanel, A::Back],
-        Context::Panel => &[A::LineDown, A::PageDown, A::TogglePanel, A::Back],
-        Context::Sessions => &[A::Open, A::New, A::Rename, A::Stop, A::SwitchSection],
+        Context::Global | Context::Composer => {
+            &[A::NextAttention, A::ReadTranscript, A::TogglePanel]
+        }
+        Context::Transcript => &[A::BlockPrev, A::Open, A::ToggleDetail, A::ReadTranscript],
+        Context::Sessions => &[A::Open, A::New, A::Rename, A::Stop],
         Context::Flows => &[A::New, A::Edit, A::RunNow, A::Confirm, A::View],
         Context::Jobs => &[A::New, A::Edit, A::ToggleEnabled, A::RunNow, A::View],
         Context::Dialog => &[A::Confirm, A::Yes, A::No, A::Back],

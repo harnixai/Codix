@@ -195,8 +195,8 @@ pub struct Section {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Footer {
     pub hints: Vec<Hint>,
-    /// 永远在最右边的两项：切栏、帮助（需求 L-07）。
-    pub essential: [Hint; 3],
+    /// 永远在最右边的几项：切块、换标签、切栏、退出、帮助（需求 L-07）。
+    pub essential: Vec<Hint>,
     /// 通知、错误或二次确认；有它时它占据提示区，`essential` 照样在。
     pub message: Option<Line>,
 }

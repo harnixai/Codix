@@ -156,10 +156,7 @@ fn header(s: &State) -> Header {
 
 fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
     let width = r.transcript.w as usize;
-    let focused = matches!(
-        s.ui.focus,
-        Focus::Composer | Focus::Transcript | Focus::Panel
-    );
+    let focused = matches!(s.ui.focus, Focus::Composer | Focus::Transcript);
     let conv = s.conv();
     let mut trail: Vec<String> = s.ui.ctx_parents.iter().map(|(_, t)| t.clone()).collect();
     let task_label =
@@ -640,10 +637,12 @@ fn footer(s: &State) -> tui::Footer {
             key,
         })
         .collect();
-    let essential = s.keymap.essential().map(|(key, label)| Hint {
-        key,
-        label: label.to_string(),
-    });
+    let essential = s
+        .keymap
+        .essential()
+        .into_iter()
+        .map(|(key, label)| Hint { key, label })
+        .collect();
     let confirm = s.ui.confirm.as_ref().map(|c| {
         let text = match c {
             Confirm::ForceAttach(n) => i18n::t!("view.confirm.force_attach", name = n),
@@ -751,17 +750,24 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
             let mut lines = vec![];
             for ctx in ctxs {
                 lines.push(Line::toned(ctx.label(), Tone::Strong));
+                // 同一个动作的几个键排在一行（`^H / F1`）；兼容键不列。
+                let mut rows: Vec<(keys::Action, Vec<String>)> = vec![];
                 for b in s.keymap.bindings().iter().filter(|b| b.context == ctx) {
-                    let key = b
-                        .keys
-                        .iter()
-                        .map(|k| k.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    if b.keys.iter().any(|k| k.is_compat()) {
+                        continue;
+                    }
+                    let key = keys::chord_label(&b.keys);
+                    match rows.iter_mut().find(|(a, _)| *a == b.action) {
+                        Some((_, ks)) => ks.push(key),
+                        None => rows.push((b.action, vec![key])),
+                    }
+                }
+                for (action, ks) in rows {
+                    let key = ks.join(" / ");
                     let pad = 14usize.saturating_sub(tui::display_width(&key));
                     lines.push(
                         Line::toned(format!("  {key}{}", " ".repeat(pad)), Tone::Accent)
-                            .push(b.action.help(), Tone::Normal),
+                            .push(action.help(), Tone::Normal),
                     );
                 }
                 lines.push(Line::default());

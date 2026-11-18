@@ -91,10 +91,18 @@ mod tests {
         for b in km.bindings() {
             assert!(!b.action.help().is_empty());
         }
-        let [toggle, exit, help] = km.essential();
-        assert_eq!(toggle.0, "Ctrl+B");
-        assert_eq!(exit.0, "Ctrl+X");
-        assert_eq!(help.0, "F1");
+        let keys: Vec<String> = km.essential().into_iter().map(|(k, _)| k).collect();
+        assert_eq!(keys, ["^G", "^N", "^B", "^X", "^H"]);
+        for b in km.bindings() {
+            let k = b.keys[0];
+            assert!(
+                !k.mods.alt && !matches!(k.code, crate::KeyCode::F(n) if n != 1)
+                    || b.context == Context::Composer,
+                "命令键只用 Ctrl+字母（F1 除外）：{:?} {}",
+                b.context,
+                k
+            );
+        }
     }
 
     #[test]
@@ -112,6 +120,14 @@ mod tests {
         assert_eq!(
             r.resolve(&km, &[Context::Composer], k("Ctrl+B"), 0),
             Resolution::Action(Action::PaneToggle)
+        );
+        assert_eq!(
+            r.resolve(&km, &[Context::Composer], k("Ctrl+H"), 0),
+            Resolution::Action(Action::HelpOrErase)
+        );
+        assert_eq!(
+            r.resolve(&km, &[Context::Sessions], k("Ctrl+H"), 0),
+            Resolution::Action(Action::Help)
         );
     }
 

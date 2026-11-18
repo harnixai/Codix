@@ -28,7 +28,7 @@ async fn m14_ctrl_g_walks_every_waiting_place_across_tabs() {
     );
     let mut tabs = std::collections::HashSet::new();
     for _ in 0..items.len() {
-        h.keys("Ctrl+G").await;
+        h.keys("Ctrl+R").await;
         tabs.insert(format!("{:?}", h.core.state.ui.tab));
         assert!(h.core.state.ui.focus.in_side());
     }
@@ -56,7 +56,7 @@ async fn m15_reconnect_shows_state_and_refreshes() {
 #[tokio::test(start_paused = true)]
 async fn m18_errors_show_where_they_happen_and_can_retry() {
     let mut h = Harness::new("m18-errors", SIZE).await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     assert!(h.text().contains("✗ 加载失败：流程服务暂时不可用 · r 重试"));
     h.keys("r").await;
     h.settle().await;
@@ -84,7 +84,8 @@ async fn m19_long_lists_scroll_and_filter() {
         None,
     )
     .await;
-    h.keys("F2 PageDown PageDown PageDown").await;
+    h.tab(Tab::Sessions).await;
+    h.keys("PageDown PageDown PageDown").await;
     let sel = h.core.state.ui.upper().selected;
     assert!(sel >= 30, "{sel}");
     assert!(h.core.state.ui.upper().scroll > 0, "滚动了");
@@ -107,9 +108,9 @@ async fn m20_first_run_has_guiding_empty_states() {
         "没有 goal / todo 的会话没有面板，连标题线也没有"
     );
     assert!(text.contains("还没有会话"), "{text}");
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     assert!(h.text().contains("还没有流程"));
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     assert!(h.text().contains("还没有作业"));
 }
 
@@ -159,13 +160,14 @@ async fn mouse_click_ask_option_answers() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn f12_event_log_lists_events_and_commands() {
+async fn events_command_lists_events_and_commands() {
     let mut h = Harness::new("m01-chat-basic", SIZE).await;
     h.open_session("昨天的调研").await;
     h.type_str("你好").await;
     h.keys("Enter").await;
     h.advance(2_000).await;
-    h.keys("F12").await;
+    h.type_str("/events").await;
+    h.keys("Enter").await;
     let text = h.text();
     assert!(text.contains("事件日志"));
     assert!(
@@ -211,10 +213,10 @@ async fn the_one_demo_plays_through_every_tab() {
             "演示里有 {kind} 类待处理：{items:?}"
         );
     }
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     h.settle().await;
     assert!(h.text().contains("需求到上线"));
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     h.settle().await;
     assert!(h.text().contains("依赖巡检"));
     h.select_session("Codix 展示").await;
@@ -228,9 +230,9 @@ async fn the_one_demo_plays_through_every_tab() {
 #[tokio::test(start_paused = true)]
 async fn flows_and_jobs_have_no_sessions_of_their_own() {
     let mut h = Harness::new("default", SIZE).await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     h.pick_upper(0).await;
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     h.pick_upper(0).await;
     h.keys("n").await;
     h.settle().await;
@@ -245,7 +247,7 @@ async fn flows_and_jobs_have_no_sessions_of_their_own() {
             .any(|c| matches!(c, port::Command::CreateSession { .. })),
         "不预先建会话"
     );
-    h.keys("F2").await;
+    h.tab(model::Tab::Sessions).await;
     for r in h.core.state.session_rows() {
         if let Some(id) = r.session() {
             let x = h
@@ -268,9 +270,9 @@ async fn flows_and_jobs_have_no_sessions_of_their_own() {
 #[tokio::test(start_paused = true)]
 async fn tabs_with_waiting_items_get_a_mark_not_the_selected_color() {
     let mut h = Harness::new("default", SIZE).await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     h.settle().await;
-    h.keys("F2").await;
+    h.tab(model::Tab::Sessions).await;
     let line = h.text().lines().nth(1).unwrap().to_string();
     assert!(line.contains(" 流程 ◐ "), "有待处理的标签后面跟 ◐\n{line}");
 }

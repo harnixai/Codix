@@ -10,8 +10,6 @@ pub enum Context {
     Global,
     Composer,
     Transcript,
-    /// 对话区顶部面板（有焦点时滚动它）。
-    Panel,
     Sessions,
     Flows,
     Jobs,
@@ -22,11 +20,10 @@ pub enum Context {
 }
 
 impl Context {
-    pub const ALL: [Context; 11] = [
+    pub const ALL: [Context; 10] = [
         Context::Global,
         Context::Composer,
         Context::Transcript,
-        Context::Panel,
         Context::Sessions,
         Context::Flows,
         Context::Jobs,
@@ -41,7 +38,6 @@ impl Context {
             Context::Global => i18n::t!("keys.context.global"),
             Context::Composer => i18n::t!("keys.context.composer"),
             Context::Transcript => i18n::t!("keys.context.transcript"),
-            Context::Panel => i18n::t!("keys.context.panel"),
             Context::Sessions => i18n::t!("keys.context.sessions"),
             Context::Flows => i18n::t!("keys.context.flows"),
             Context::Jobs => i18n::t!("keys.context.jobs"),
@@ -185,17 +181,24 @@ impl Keymap {
             .collect()
     }
 
-    /// 底栏最右边永远在的三项：切栏、退出、帮助（需求 L-07）。取实际绑定，用户改了键也跟着变。
-    pub fn essential(&self) -> [(String, String); 3] {
-        let k = |a: Action| {
-            self.key_for(Context::Global, a)
-                .unwrap_or_else(|| "?".into())
-        };
+    /// 底栏最右边永远在的几项（需求 L-07）：切块、换标签、切栏、退出、帮助——最基本的走动与离开。
+    /// 取实际绑定，用户改了键也跟着变。
+    pub fn essential(&self) -> Vec<(String, String)> {
         [
-            (k(Action::PaneToggle), Action::PaneToggle.help()),
-            (k(Action::Exit), Action::Exit.help()),
-            (k(Action::Help), Action::Help.help()),
+            Action::FocusCycle,
+            Action::NextTab,
+            Action::PaneToggle,
+            Action::Exit,
+            Action::Help,
         ]
+        .into_iter()
+        .map(|a| {
+            let key = self
+                .key_for(Context::Global, a)
+                .unwrap_or_else(|| "?".into());
+            (key, a.help())
+        })
+        .collect()
     }
 
     /// 帮助浮层：某上下文与全局的全部绑定。

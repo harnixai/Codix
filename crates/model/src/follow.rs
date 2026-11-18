@@ -1,5 +1,5 @@
 //! 右栏与左边对话区的对应（交互 §5）：右栏的选中按对象记；选中带会话的东西，左边跟着切过去；
-//! 左边从别处换了会话，右栏的选中挪到它（看得见的话）。另有按需加载、全局待处理与 Ctrl+G
+//! 左边从别处换了会话，右栏的选中挪到它（看得见的话）。另有按需加载、全局待处理与 Ctrl+R
 //! （需求 L-04、L-05）。每次 update 之后跑一遍。
 
 use port::{Command, JobOutcome, RunStatus, SessionId, SessionState, StationStatus};
@@ -89,9 +89,9 @@ pub(crate) fn after_update(s: &mut State) -> Vec<Effect> {
     if s.ui.screen != Screen::Workbench {
         return vec![];
     }
-    // 面板收起或换到没有面板的上下文，焦点回输入框。
-    if s.ui.focus == Focus::Panel && !s.panel_open() {
-        s.ui.focus = Focus::Composer;
+    // 详细是"看转录"的一部分：焦点不管怎么离开转录（Esc、Ctrl+G、点别处、跳去待处理），都收回精简。
+    if s.ui.focus != Focus::Transcript {
+        s.ui.detail = false;
     }
     // 选中流程即展开它的运行；人收起过的同一个流程不再自动展开。先于取数据，好让运行列表
     // 在同一轮里就去取。
@@ -239,7 +239,7 @@ pub(crate) fn mark_seen(s: &mut State) {
     s.ui.last_follow = Some(follow_key(s));
 }
 
-/// 左边从别处换了会话（草稿、面包屑退回、Ctrl+G、转录里进子 Agent……）：它在当前标签里
+/// 左边从别处换了会话（草稿、面包屑退回、Ctrl+R、转录里进子 Agent……）：它在当前标签里
 /// 看得见就把右栏的选中挪到它。返回 true 表示已对上（或这个标签里本来就不该有它）。
 fn reveal(s: &mut State) -> bool {
     let tab = s.ui.tab;
@@ -298,7 +298,7 @@ fn set_quiet(s: &mut State, tab: Tab, upper: bool, at: usize) {
     s.ui.anchors[tab.index()][usize::from(!upper)] = None;
 }
 
-/// F2：左边是草稿或某个用户会话（含它的子 Agent、任务输出）就留着；否则换到最近活跃的用户
+/// 落到会话标签（Ctrl+N 换到它、点标签头）：左边是草稿或某个用户会话（含它的子 Agent、任务输出）就留着；否则换到最近活跃的用户
 /// 会话，一个都没有就是草稿。右栏选中对上左边，之后的"选中即切换"从这里算起。
 pub(crate) fn land_on_sessions(s: &mut State) -> Vec<Effect> {
     let keep = match &s.ui.chat {
@@ -586,7 +586,7 @@ impl State {
     }
 }
 
-/// Ctrl+G：跳到下一处待处理（需求 L-05）。
+/// Ctrl+R：跳到下一处待处理（需求 L-05）。
 pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
     let items = s.attention();
     if items.is_empty() {

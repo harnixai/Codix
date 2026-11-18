@@ -55,7 +55,7 @@ view:
     model_question: "模型提问"
     from: "  来自 {label}"
     keys_active: "Esc 拒绝 · ↑↓ / 数字选择 · Enter 确认"
-    keys_idle: "Ctrl+G 或点这里作答"
+    keys_idle: "^R 或点这里作答"
   load_failed: "✗ 加载失败：{error} · r 重试"
   empty:
     filter: "没有匹配「{filter}」的 · Esc 清除过滤"
@@ -87,7 +87,7 @@ view:
     keys: "↑↓ / 数字选择 · Enter 确认 · Esc 返回"
     title: "退出"
   help:
-    mouse: "鼠标：单击选中 · 双击打开 · 拖动分隔线调比例 · 滚轮滚动所在区域 · F8 交还终端"
+    mouse: "鼠标：单击选中 · 双击打开 · 拖动分隔线调比例 · 滚轮滚动所在区域 · 点面板标题线收放 · /mouse 交还终端"
     title: "帮助"
   picker:
     local: "本机"

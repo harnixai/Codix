@@ -7,8 +7,9 @@ panel:
   phase:
     paused: "已暂停"
     complete: "已完成"
-  collapse: " Ctrl+T 收起 "
-  expand: " Ctrl+T 展开 "
+  collapse: " ^T 收起 "
+  expand: " ^T 展开 "
+  wheel: "滚轮滚动"
   goal_round: "第 {n}/{max} 轮"
   goal_blocked: "受阻：{reason}"
   unmet: "：{reason}"

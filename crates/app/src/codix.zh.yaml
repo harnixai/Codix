@@ -9,7 +9,7 @@ ui:
   initial_size: 160x45
   # 宽屏时左栏（对话区）占的百分比，40–75。
   ratio: 60
-  # 精简模式下工具结果显示几行，其余折起来（Ctrl+O 看全部）。
+  # 精简模式下工具结果显示几行，其余折起来（^O 看全部）。
   compact_tool_lines: 3
   # 代码块的语法高亮主题。可选：base16-ocean.dark、base16-eighties.dark、base16-mocha.dark、
   # base16-ocean.light、InspiredGitHub、Solarized (dark)、Solarized (light)

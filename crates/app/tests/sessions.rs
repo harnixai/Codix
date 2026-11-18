@@ -248,7 +248,7 @@ async fn m25_ownership_line_for_every_origin() {
     }
     // 流程与作业开出来的会话不在会话列表里，从流程、作业标签进去。
     let mut h = wb("default").await;
-    h.keys("F3").await;
+    h.tab(model::Tab::Flows).await;
     let r1 = h
         .core
         .state
@@ -258,7 +258,7 @@ async fn m25_ownership_line_for_every_origin() {
         .unwrap();
     h.pick_upper(r1).await;
     assert!(h.text().contains("流程「需求到上线」› 支付重试 › 实现"));
-    h.keys("F4").await;
+    h.tab(model::Tab::Jobs).await;
     h.pick_upper(0).await;
     let entry = h
         .core
@@ -275,7 +275,7 @@ async fn m25_ownership_line_for_every_origin() {
 async fn new_session_row_opens_a_draft_and_the_first_words_create_it() {
     let mut h = wb("default").await;
     h.open_session("重构认证模块").await;
-    h.keys("F2").await;
+    h.tab(model::Tab::Sessions).await;
     h.pick_upper(0).await;
     h.keys("Enter").await;
     h.settle().await;
@@ -298,9 +298,8 @@ async fn new_session_row_opens_a_draft_and_the_first_words_create_it() {
         model::SessRow::Session(id),
         "右栏选中跟到新会话"
     );
-    for keys in ["F2 n", "F6"] {
-        h.keys(keys).await;
-    }
+    h.tab(model::Tab::Sessions).await;
+    h.keys("n").await;
     assert!(h.core.state.ui.chat.is_none(), "n 也是回到草稿");
     h.open_session("重构认证模块").await;
     h.type_str("/new").await;
@@ -342,19 +341,25 @@ async fn tree_rows_end_with_time_and_tokens_not_status_words() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_long_panel_scrolls_when_it_has_the_focus() {
+async fn a_long_panel_scrolls_under_the_wheel_and_never_takes_the_focus() {
     // 矮一点的终端：面板最多占对话区的 1/3，goal + 7 条 todo 放不下，要滚。
     let mut h = Harness::new("default", Size::new(160, 24)).await;
     h.open_session("重构认证模块").await;
-    assert!(h.text().contains("Shift+↑↓"), "放不下时下沿标出可以滚动");
-    h.keys("Esc Ctrl+Up Ctrl+Up").await;
+    assert!(h.text().contains("滚轮滚动"), "放不下时下沿标出可以滚动");
+    let (col, row) = h.find("实现 provider").unwrap();
+    h.click(col, row);
     assert_eq!(
         h.core.state.ui.focus,
-        model::Focus::Panel,
-        "转录里 Ctrl+↑ 到面板"
+        model::Focus::Composer,
+        "点面板内容不拿焦点"
     );
     let before = h.text();
-    h.keys("Shift+Down Down").await;
-    assert_ne!(before, h.text(), "面板有焦点时滚面板");
+    h.mouse(model::MouseKind::ScrollDown, col, row);
+    h.mouse(model::MouseKind::ScrollDown, col, row);
+    h.settle().await;
+    assert_ne!(before, h.text(), "滚轮滚面板");
     assert!(h.text().contains("↑2 "));
+    let (col, row) = h.find("^T 收起").unwrap();
+    h.click(col, row);
+    assert!(!h.core.state.panel_open(), "点下沿收起");
 }

@@ -6,8 +6,9 @@ panel:
   phase:
     paused: "paused"
     complete: "complete"
-  collapse: " Ctrl+T collapse "
-  expand: " Ctrl+T expand "
+  collapse: " ^T collapse "
+  expand: " ^T expand "
+  wheel: "wheel to scroll"
   goal_round: "round {n}/{max}"
   goal_blocked: "blocked: {reason}"
   unmet: ": {reason}"

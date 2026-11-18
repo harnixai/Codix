@@ -58,6 +58,12 @@ impl Key {
         Key::new(code, Mods::NONE)
     }
 
+    /// 只为兼容留着的键（Alt 组合、Ctrl+方向键）：认它，但不在帮助和底栏里列出来。Alt 要终端
+    /// 设成 Meta 才收得到，Ctrl+方向键在 macOS 上默认被调度中心、切换桌面拿走（交互 §7）。
+    pub fn is_compat(self) -> bool {
+        self.mods.alt || (self.mods.ctrl && !matches!(self.code, KeyCode::Char(_)))
+    }
+
     /// 无修饰（或只有 Shift）的可打印字符：在输入框里它就是输入。
     pub fn as_text(self) -> Option<char> {
         match self.code {
@@ -66,8 +72,11 @@ impl Key {
         }
     }
 
-    /// `Ctrl+B`、`Alt+Enter`、`F1`、`<` 这种写法；大小写不敏感，`Shift+x` 等于 `X`。
+    /// `Ctrl+B`（也可以写 `^B`）、`Alt+Enter`、`F1`、`<` 这种写法；大小写不敏感，`Shift+x` 等于 `X`。
     pub fn parse(s: &str) -> Option<Key> {
+        if let Some(rest) = s.strip_prefix('^').filter(|r| !r.is_empty()) {
+            return Key::parse(&format!("Ctrl+{rest}"));
+        }
         let mut mods = Mods::NONE;
         let parts: Vec<&str> = if s == "+" {
             vec!["+"]
@@ -164,6 +173,17 @@ impl Key {
 
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Ctrl+字母写成 `^G`：nano、终端手册都这么写，底栏也省地方。带别的修饰或不是字母的照常写全。
+        if let KeyCode::Char(c) = self.code
+            && self.mods
+                == (Mods {
+                    ctrl: true,
+                    ..Mods::NONE
+                })
+            && c.is_ascii_alphabetic()
+        {
+            return write!(f, "^{}", c.to_ascii_uppercase());
+        }
         if self.mods.ctrl {
             f.write_str("Ctrl+")?;
         }
@@ -207,6 +227,7 @@ mod tests {
     fn parse_round_trips_through_display() {
         for s in [
             "Ctrl+B",
+            "^G",
             "F1",
             "Alt+1",
             "Esc",
@@ -222,6 +243,10 @@ mod tests {
         }
         assert_eq!(Key::parse("shift+r"), Key::parse("R"));
         assert_eq!(Key::parse("ctrl+b"), Key::parse("Ctrl+B"));
+        assert_eq!(Key::parse("^g"), Key::parse("Ctrl+G"));
+        assert_eq!(Key::parse("^"), Some(Key::plain(KeyCode::Char('^'))));
+        assert_eq!(Key::parse("Ctrl+X").unwrap().to_string(), "^X");
+        assert_eq!(Key::parse("Ctrl+Left").unwrap().to_string(), "Ctrl+←");
     }
 
     #[test]

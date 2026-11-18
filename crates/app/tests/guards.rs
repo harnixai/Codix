@@ -99,7 +99,7 @@ async fn every_optional_frame_field_is_produced_somewhere() {
     h.keys("Ctrl+T BackTab").await;
     h.type_str("/he").await;
     mark(&mut seen, &h.core.frame());
-    h.keys("Ctrl+U Ctrl+Up PageUp").await;
+    h.keys("Ctrl+U Ctrl+O PageUp").await;
     mark(&mut seen, &h.core.frame());
     h.keys("Ctrl+X").await;
     mark(&mut seen, &h.core.frame());
@@ -119,7 +119,7 @@ async fn every_optional_frame_field_is_produced_somewhere() {
     h.type_str("改一下").await;
     h.keys("Enter").await;
     h.advance(200).await;
-    h.keys("Ctrl+Up PageUp").await;
+    h.keys("Ctrl+O PageUp").await;
     h.advance(3_000).await;
     mark(&mut seen, &h.core.frame());
 
@@ -135,7 +135,7 @@ async fn every_optional_frame_field_is_produced_somewhere() {
     h.type_str("开始").await;
     h.keys("Enter").await;
     h.advance(300).await;
-    h.keys("Ctrl+Up Up Up Up").await;
+    h.keys("Ctrl+O Up Up Up").await;
     h.advance(400).await;
     mark(&mut seen, &h.core.frame());
 

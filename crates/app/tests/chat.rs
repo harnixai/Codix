@@ -85,6 +85,7 @@ async fn m03_tools_render_like_claude_code_and_ctrl_o_expands() {
     }
     let compact = h.core.state.conv().unwrap().total_lines();
     h.keys("Ctrl+O").await;
+    assert_eq!(h.core.state.ui.focus, model::Focus::Transcript, "看转录");
     let detail = h.core.state.conv().unwrap().total_lines();
     assert!(
         detail > compact + 30,
@@ -92,6 +93,12 @@ async fn m03_tools_render_like_claude_code_and_ctrl_o_expands() {
     );
     assert!(!h.transcript().contains("读取了 42 行"));
     h.keys("Ctrl+O").await;
+    assert_eq!(h.core.state.ui.focus, model::Focus::Composer, "回输入框");
+    assert_eq!(
+        h.core.state.conv().unwrap().total_lines(),
+        compact,
+        "收回精简"
+    );
     h.snapshot("m03-tools");
 }
 
@@ -101,7 +108,7 @@ async fn m03_select_block_and_toggle_with_enter() {
     ask(&mut h, "改一下校验").await;
     h.advance(5_000).await;
     let before = h.core.state.conv().unwrap().total_lines();
-    h.keys("Ctrl+Up Alt+Up Alt+Up Enter").await;
+    h.keys("Ctrl+O o [ [ Enter").await;
     let after = h.core.state.conv().unwrap().total_lines();
     assert!(after > before, "展开了一个块");
     h.keys("Enter").await;
@@ -171,7 +178,7 @@ async fn m04_ask_does_not_steal_focus_while_typing() {
             .iter()
             .any(|c| matches!(c, Command::Answer { .. }))
     );
-    h.keys("Ctrl+G Esc").await;
+    h.keys("Ctrl+R Esc").await;
     assert!(
         h.calls("dev").iter().any(|c| matches!(
             c,
@@ -256,7 +263,7 @@ async fn m08_composer_picker_modes_and_keys() {
     assert!(h.text().contains("计划模式"));
     h.keys("BackTab").await;
     h.type_str("第一行").await;
-    h.keys("Alt+Enter").await;
+    h.keys("Ctrl+J").await;
     h.type_str("第二行").await;
     assert_eq!(h.core.state.ui.composer.text, "第一行\n第二行");
     h.keys("Esc Esc").await;

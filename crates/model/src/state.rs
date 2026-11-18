@@ -54,8 +54,6 @@ impl Tab {
 pub enum Focus {
     Composer,
     Transcript,
-    /// 对话区顶部面板（只为滚动它）。
-    Panel,
     SideUpper,
     SideLower,
 }
@@ -121,7 +119,7 @@ pub enum Overlay {
         lines: Vec<String>,
         scroll: usize,
     },
-    /// F12：最近的事件与命令。
+    /// `/events`：最近的事件与命令。
     EventLog {
         scroll: usize,
     },
@@ -201,7 +199,7 @@ pub struct Ui {
     /// 对话区当前显示的会话。
     pub chat: Option<SessionId>,
     pub composer: ComposerState,
-    /// Ctrl+O：转录精简 / 详细。
+    /// 转录详细（Ctrl+O 看转录时打开，回输入框时关上）。
     pub detail: bool,
     /// Ctrl+T 收放过的对话区顶部面板（按会话记）；没记的按有没有内容决定。
     pub panel: std::collections::HashMap<SessionId, bool>,
@@ -214,7 +212,7 @@ pub struct Ui {
     /// 上一次 Shift+Tab 请求的模式被设置夹窄了：下一次从请求的那个往后轮，不然缺省设置下
     /// default → acceptEdits（夹回 default）→ acceptEdits……永远轮不到 plan。
     pub permission_asked: Option<(SessionId, PermissionMode)>,
-    /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+G / 点它）。
+    /// 提问框拿着键盘（交互 §3：输入框为空时提问来了直接拿，否则按 Ctrl+R / 点它）。
     pub ask_active: bool,
     pub ask_selected: usize,
     /// 正在用输入框自由回答的提问。
@@ -260,9 +258,9 @@ pub struct Ui {
     pub filtering: bool,
     /// 已发出、还没回来的加载（避免重复请求）。
     pub loading: std::collections::HashSet<String>,
-    /// 最近的事件与命令（F12 事件日志）。
+    /// 最近的事件与命令（`/events` 事件日志）。
     pub event_log: std::collections::VecDeque<String>,
-    /// Ctrl+G 上次跳到第几处。
+    /// Ctrl+R 上次跳到第几处。
     pub attention_cursor: usize,
 }
 
@@ -405,7 +403,6 @@ impl State {
             }
             Focus::Composer => vec![Context::Composer],
             Focus::Transcript => vec![Context::Transcript],
-            Focus::Panel => vec![Context::Panel],
             Focus::SideUpper | Focus::SideLower => vec![self.ui.tab.context()],
         }
     }
@@ -467,7 +464,7 @@ impl State {
         port::order::sessions(&self.domain.sessions)
     }
 
-    /// 最近活跃的用户会话（F2 的落点、流程 / 作业标签的 `n` `e` `d` 回到哪里）。
+    /// 最近活跃的用户会话（会话标签的落点、流程 / 作业标签的 `n` `e` `d` 回到哪里）。
     pub fn recent_user_session(&self) -> Option<SessionId> {
         self.user_sessions()
             .into_iter()

@@ -168,13 +168,12 @@ impl State {
         }
         let open = self.panel_open();
         let title = self.panel_title(&kind);
-        let focused = self.ui.focus == crate::state::Focus::Panel;
         // 标题靠右；收放的快捷键在下沿右边。收起时只剩一条线，快捷键（灰）就跟在标题右边。
         if !open || height < 3 {
             let right = title.push(format!("  {}", i18n::t!("panel.expand").trim()), Tone::Dim);
-            return vec![rule(None, Some(right), width, focused)];
+            return vec![rule(None, Some(right), width)];
         }
-        let mut out = vec![rule(None, Some(title), width, focused)];
+        let mut out = vec![rule(None, Some(title), width)];
         let room = height - 2;
         let content = self.panel_content(width);
         let off = self.panel_offset().min(content.len().saturating_sub(room));
@@ -188,14 +187,9 @@ impl State {
         let below = content.len().saturating_sub(off + room);
         let mut hint = i18n::t!("panel.collapse").trim().to_string();
         if off > 0 || below > 0 {
-            hint = format!("↑{off} ↓{below} · Shift+↑↓ · {hint}");
+            hint = format!("↑{off} ↓{below} · {} · {hint}", i18n::t!("panel.wheel"));
         }
-        out.push(rule(
-            None,
-            Some(Line::toned(hint, Tone::Dim)),
-            width,
-            focused,
-        ));
+        out.push(rule(None, Some(Line::toned(hint, Tone::Dim)), width));
         out
     }
 }
@@ -204,8 +198,8 @@ impl State {
 const PANEL_MAX: usize = 10;
 
 /// `─ 左边 ─────── 右边 ─`：两头各自可空；放不下先截左边，右边总在。面板有焦点时线是亮的。
-fn rule(left: Option<Line>, right: Option<Line>, width: usize, focused: bool) -> Line {
-    let line_tone = if focused { Tone::Strong } else { Tone::Dim };
+fn rule(left: Option<Line>, right: Option<Line>, width: usize) -> Line {
+    let line_tone = Tone::Dim;
     let fit = |t: Line, room: usize| {
         if t.width() > room {
             let tone = t.spans.first().map_or(Tone::Normal, |s| s.tone);

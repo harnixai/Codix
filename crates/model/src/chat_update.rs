@@ -17,7 +17,7 @@ const DETACH_ARM_MS: u64 = 800;
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
 const LOCAL: &[&str] = &[
     "help", "new", "rename", "sessions", "model", "goal", "btw", "trust", "doctor", "quit", "exit",
-    "stop",
+    "stop", "mouse", "events",
 ];
 
 impl State {
@@ -263,6 +263,7 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         Action::DeleteWord => c.delete_word(),
         Action::KillToEnd => c.kill_to_end(),
         Action::Backspace => c.backspace(),
+        Action::HelpOrErase if !c.is_empty() => c.backspace(),
         Action::DeleteForward => c.delete(),
         Action::Up => c.up(),
         Action::Down => c.down(),
@@ -558,6 +559,12 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
         }
         "quit" | "exit" => {
             s.ui.overlay = Some(Overlay::Exit { selected: 0 });
+            vec![]
+        }
+        // 这两个用得少，不占快捷键（交互 §7）。
+        "mouse" => crate::update::toggle_mouse(s),
+        "events" => {
+            s.ui.overlay = Some(Overlay::EventLog { scroll: 0 });
             vec![]
         }
         "new" => {
