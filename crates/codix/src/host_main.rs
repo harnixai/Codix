@@ -151,6 +151,23 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     claim.write_discovery(&base)?;
     tracing::info!(instance = %name, "serving");
 
+    // 常驻实例的日志只追加：每小时看一次，超了就轮转，并把 stdout / stderr 换到新文件上
+    // （它们是拉起方接好的 fd，换了文件名还写在旧文件里）。
+    let log_path = layout.log(&name);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            tick.tick().await;
+            if let Ok(true) = client::layout::rotate_log(
+                &log_path,
+                client::layout::LOG_MAX_BYTES,
+                client::layout::LOG_KEEP,
+            ) {
+                reopen_log(&log_path);
+            }
+        }
+    });
+
     let (stop_tx, stop_rx) = watch::channel(None);
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
@@ -198,4 +215,18 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     claim.release()?;
     drop(project_claim);
     Ok(())
+}
+
+fn reopen_log(path: &std::path::Path) {
+    use std::os::fd::AsRawFd;
+    let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    for fd in [1, 2] {
+        let _ = nix::unistd::dup2(f.as_raw_fd(), fd);
+    }
 }

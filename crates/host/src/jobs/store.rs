@@ -367,6 +367,34 @@ impl JobStore {
     }
 
     pub fn append(&self, id: &str, entry: &JobEntry) -> Result<(), String> {
+        self.append_line(id, entry)?;
+        self.compact_if_big(id)
+    }
+
+    /// 行数到了 `HISTORY_KEEP` 的两倍就只留最近 `HISTORY_KEEP` 次（同一次的多行先合成一行），整份
+    /// 重写再改名。追加之后才看：触发记录只追加，崩溃时才安全；压缩是另起一份文件换上去，同样不会写坏。
+    /// 按行数而不是字节数：一次的记录可长可短，按字节会在一份正常大小的历史上反复压缩。
+    fn compact_if_big(&self, id: &str) -> Result<(), String> {
+        let path = self.history_path(id);
+        let lines = fs::read(&path)
+            .map(|b| b.iter().filter(|c| **c == b'\n').count())
+            .unwrap_or(0);
+        if lines <= 2 * HISTORY_KEEP {
+            return Ok(());
+        }
+        let mut keep = self.history(id, HISTORY_KEEP);
+        keep.reverse();
+        let mut text = String::new();
+        for e in &keep {
+            text.push_str(&serde_json::to_string(e).map_err(|e| e.to_string())?);
+            text.push('\n');
+        }
+        let tmp = path.with_extension("jsonl.tmp");
+        fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+
+    fn append_line(&self, id: &str, entry: &JobEntry) -> Result<(), String> {
         fs::create_dir_all(&self.history_dir).map_err(|e| e.to_string())?;
         let mut line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
         line.push('\n');
@@ -438,6 +466,9 @@ impl JobStore {
         out
     }
 }
+
+/// 每个作业留多少次触发记录。
+const HISTORY_KEEP: usize = 500;
 
 /// 随机的短 ID：定义进 git，几个人各自新建，按序号编的会撞。
 fn new_id() -> JobId {
@@ -658,5 +689,26 @@ mod tests {
         )
         .unwrap();
         assert!(open(d.path()).list(0).is_empty());
+    }
+
+    /// 触发记录不会一直长：文件大了就压回最近 500 次。
+    #[test]
+    fn history_is_capped_when_the_file_grows() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = open(d.path());
+        s.upsert(job("a", "* * * * *"), 0).unwrap();
+        let mut e = entry(0, JobOutcome::Done);
+        e.target = Some(port::JobTarget::Session {
+            id: port::SessionId("x".repeat(200)),
+            title: "y".repeat(200),
+        });
+        for i in 0..1_100 {
+            e.fired_ms = i;
+            s.append("a", &e).unwrap();
+        }
+        let h = s.history("a", usize::MAX);
+        assert!(h.len() <= 2 * HISTORY_KEEP, "压过：{}", h.len());
+        assert!(h.len() >= HISTORY_KEEP);
+        assert_eq!(h[0].fired_ms, 1_099, "留的是最近的");
     }
 }

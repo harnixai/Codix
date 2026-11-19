@@ -112,6 +112,11 @@ impl SocketInstances {
             .create(self.layout.instance(name))
             .map_err(failed)?;
         let log_path = self.layout.log(name);
+        let _ = crate::layout::rotate_log(
+            &log_path,
+            crate::layout::LOG_MAX_BYTES,
+            crate::layout::LOG_KEEP,
+        );
         let log = fs::OpenOptions::new()
             .create(true)
             .append(true)

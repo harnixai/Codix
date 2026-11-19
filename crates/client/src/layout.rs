@@ -167,6 +167,32 @@ impl ProjectState {
     }
 }
 
+/// `host.log` 至多多大就轮转（只追加不轮转的话常驻实例的日志会一直长）。
+pub const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+/// 轮转留几份旧的：`host.log.1` … `host.log.3`。
+pub const LOG_KEEP: usize = 3;
+
+/// 超过 `max_bytes` 就把 `log` 挪成 `log.1`，原来的 `.1` 挪成 `.2`……至多留 `keep` 份。回有没有轮转。
+pub fn rotate_log(log: &Path, max_bytes: u64, keep: usize) -> std::io::Result<bool> {
+    match std::fs::metadata(log) {
+        Ok(m) if m.len() > max_bytes => {}
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    }
+    let nth = |n: usize| {
+        let mut p = log.as_os_str().to_owned();
+        p.push(format!(".{n}"));
+        PathBuf::from(p)
+    };
+    let _ = std::fs::remove_file(nth(keep));
+    for n in (1..keep).rev() {
+        let _ = std::fs::rename(nth(n), nth(n + 1));
+    }
+    std::fs::rename(log, nth(1))?;
+    Ok(true)
+}
+
 /// 先写同目录的临时文件再改名：读的一方（另一个进程的 `list`）不会读到写了一半的 JSON。
 pub fn write_json_atomic(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
@@ -179,4 +205,31 @@ pub fn write_json_atomic(path: &Path, value: &impl Serialize) -> std::io::Result
 /// 文件不在或解析不了都当没有：发现文件随时可能被实例进程删掉。
 pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_big_log_is_rotated_keeping_a_few() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("host.log");
+        std::fs::write(&log, "small").unwrap();
+        assert!(!rotate_log(&log, 10, 2).unwrap(), "没超不动");
+        for i in 0..4 {
+            std::fs::write(&log, format!("big log number {i}")).unwrap();
+            assert!(rotate_log(&log, 10, 2).unwrap());
+        }
+        assert!(!log.exists());
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("host.log.1")).unwrap(),
+            "big log number 3"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("host.log.2")).unwrap(),
+            "big log number 2"
+        );
+        assert!(!d.path().join("host.log.3").exists(), "至多留两份");
+    }
 }
