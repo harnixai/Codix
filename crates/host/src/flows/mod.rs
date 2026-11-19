@@ -96,6 +96,9 @@ pub struct Flows {
     author_host: Arc<tools::CodixAuthorHost>,
     /// 推给过界面的流程名：流程包变了时据此推 `FlowRemoved`。
     published: std::sync::Mutex<BTreeSet<String>>,
+    /// 已结束的运行的摘要：第一次要时把运行记录扫一遍，之后跟着派工器的变化更新，
+    /// 免得「已结束」每取一页都把所有运行记录读一遍。
+    ended: std::sync::Mutex<Option<Vec<port::RunSummary>>>,
 }
 
 /// 派工器看到的会话宿主，单独拿出来给一致性套件查（`live_flows.rs`）。
@@ -153,6 +156,7 @@ pub async fn start(hub: &Hub, cfg: FlowsConfig) -> anyhow::Result<Arc<Flows>> {
         project,
         author: std::sync::OnceLock::new(),
         published: Default::default(),
+        ended: Default::default(),
         author_host: Arc::new(tools::CodixAuthorHost::new(me.clone())),
     });
     let _ = flows.author.set(AuthorTools::new(
@@ -250,25 +254,50 @@ impl Flows {
         Ok(view)
     }
 
-    /// 已结束的运行，结束时刻新的在前。库的列表摘要不带结束时刻与站数，要从运行记录算。
+    /// 已结束的运行，结束时刻新的在前。库的列表摘要不带结束时刻与站数，要从运行记录算：第一次
+    /// 扫一遍记下来，之后由 `follow` 跟着派工器的变化补（`note_ended`）。
     async fn ended_runs(
         &self,
         limit: u32,
         before_ms: Option<u64>,
     ) -> Result<Vec<port::RunSummary>, PortError> {
-        let mut out = vec![];
-        for s in self.runs(None, None).await.map_err(flow_err)? {
-            if s.status == RunStatus::Active {
-                continue;
+        if self.ended.locked().is_none() {
+            let mut all = vec![];
+            for s in self.runs(None, None).await.map_err(flow_err)? {
+                if s.status == RunStatus::Active {
+                    continue;
+                }
+                if let Ok(v) = self.view(&s.id).await {
+                    all.push(v.summary);
+                }
             }
-            if let Ok(v) = self.view(&s.id).await {
-                out.push(v.summary);
-            }
+            all.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
+            *self.ended.locked() = Some(all);
         }
-        out.retain(|r| before_ms.is_none_or(|b| r.ended_ms.unwrap_or(0) < b));
-        out.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
-        out.truncate(limit as usize);
-        Ok(out)
+        let ended = self.ended.locked();
+        Ok(ended
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| before_ms.is_none_or(|b| r.ended_ms.unwrap_or(0) < b))
+            .take(limit as usize)
+            .cloned()
+            .collect())
+    }
+
+    /// 一个运行变了：结束了就记进「已结束」（还没扫过就等第一次要时再扫）。
+    fn note_ended(&self, r: &port::RunSummary) {
+        let done = matches!(
+            r.status,
+            port::RunStatus::Finished | port::RunStatus::Cancelled
+        );
+        let mut ended = self.ended.locked();
+        let Some(list) = ended.as_mut() else { return };
+        list.retain(|x| x.id != r.id);
+        if done {
+            list.push(r.clone());
+            list.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
+        }
     }
 
     pub(crate) async fn start_run(
@@ -387,6 +416,7 @@ async fn follow(flows: Arc<Flows>, mut rx: broadcast::Receiver<harnix_flow::runn
                 continue;
             };
             seen_flows.insert(v.summary.flow.clone());
+            flows.note_ended(&v.summary);
             hub.emit_events(vec![
                 Event::RunUpserted(v.summary.clone()),
                 Event::RunDetail(Box::new(v)),

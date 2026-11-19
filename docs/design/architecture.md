@@ -488,7 +488,8 @@ schema；`job_validate` 不落盘，回下 5 次触发时刻与护栏的实际�
     `codix.flow`）；`close` 之后看着它的流结束，Codix 里关掉的会话不会被再带回来。
   - 库的一致性套件（`conformance::run_all`）对着它跑，见 testing.md §8。
 - **端口**：`ListFlows` / `GetFlow` / `ListRuns` / `ListEndedRuns` / `GetRun` / `StartRun` / `RunOp` 是库的读取与运行操作
-  （`ListEndedRuns` 要结束时刻与站数，逐个读运行记录；`GetRun` 拿钉住的定义的摘要与流程包里现在的比）；派工器
+  （`ListEndedRuns` 要结束时刻与站数：第一次要时把运行记录扫一遍记在内存里，之后跟着派工器的变化更新；`GetRun` 拿
+  钉住的定义的摘要与流程包里现在的比）；派工器
   每改一次运行（`Runner::changes`）推 `RunUpserted` + `RunDetail` 与那个流程的 `FlowUpserted`（在跑的个数）；
   定义经工具存了推 `FlowUpserted` + `FlowDetail`，删了推 `FlowRemoved`。状态与库一致，"等待 / 暂停中 /
   已暂停"取库算出的 `Phase`。`Hello` 的 `flows` 为真。
