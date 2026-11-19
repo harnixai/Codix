@@ -176,6 +176,8 @@ pub struct Domain {
     /// 每个流程的运行（展开流程时取）。
     pub runs: Map<String, Vec<port::RunSummary>>,
     pub run_views: Map<port::RunId, port::RunView>,
+    /// 项目里的文件（`@` 提及的补全）；`None` 是还没取。
+    pub project_files: Option<Vec<String>>,
     /// 在 Codix 里关掉的会话（会话标签末尾的「已关闭」）。
     pub closed_sessions: Vec<SessionSummary>,
     pub closed_loaded: bool,

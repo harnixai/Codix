@@ -421,3 +421,34 @@ async fn slash_model_opens_a_picker_and_switches() {
         Command::SetModel { provider: Some(p), .. } if p == "anthropic"
     )));
 }
+
+/// 输入框里打 `@`：取一次项目文件，往下打就在本地筛，文件名里就有的排前面；Tab 换成路径（需求 C-21）。
+#[tokio::test(start_paused = true)]
+async fn at_completes_project_files() {
+    let mut h = Harness::new("default", Size::new(160, 45)).await;
+    h.open_session("重构认证模块").await;
+    h.type_str("看看 @").await;
+    h.settle().await;
+    h.type_str("oau").await;
+    h.settle().await;
+    let picker = h.core.state.picker_candidates();
+    assert_eq!(
+        picker.first().map(|c| c.name.as_str()),
+        Some("src/auth/oauth.rs"),
+        "{picker:?}"
+    );
+    assert_eq!(
+        h.calls("dev")
+            .iter()
+            .filter(|c| matches!(c, Command::ProjectFiles))
+            .count(),
+        1,
+        "只取一次"
+    );
+    h.keys("Tab").await;
+    assert_eq!(h.core.state.ui.composer.text, "看看 @src/auth/oauth.rs ");
+    assert!(
+        h.core.state.picker_candidates().is_empty(),
+        "空格之后不再补全"
+    );
+}

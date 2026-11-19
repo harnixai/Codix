@@ -75,6 +75,8 @@ pub enum Command {
     },
     /// 配置了的 provider 各自有哪些模型（`/model` 的选择框）。
     ListModels,
+    /// 项目里的文件（`@` 提及的补全）：跟着 `.gitignore`，至多一万个。
+    ProjectFiles,
     /// Shift+Tab：切这个会话的权限模式，立即生效、记在会话上（需求 C-20，Agix
     /// `session.setPermissionMode`）。回 `PermissionMode`，以其中实际生效的为准。
     SetPermissionMode {
@@ -222,6 +224,7 @@ impl Command {
             Command::Answer { .. } => "answer",
             Command::SetModel { .. } => "set_model",
             Command::ListModels => "list_models",
+            Command::ProjectFiles => "project_files",
             Command::SetPermissionMode { .. } => "set_permission_mode",
             Command::TrustProject { .. } => "trust_project",
             Command::Commands { .. } => "commands",
@@ -362,6 +365,7 @@ pub enum Reply {
     Notified(Vec<crate::SinkResult>),
     Doctor(Vec<crate::HealthCheck>),
     Models(Vec<ModelInfo>),
+    Files(Vec<String>),
 }
 
 /// 一个可选的模型：哪个 provider 的、叫什么。

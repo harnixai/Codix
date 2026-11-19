@@ -576,4 +576,22 @@ impl Hub {
         }
         out
     }
+
+    /// 项目里的文件，相对项目根：仓库里用 `git ls-files`（跟着 `.gitignore`，含没提交的新文件），
+    /// 不是仓库就没有（不去整个目录树里乱走）。至多一万个，`@` 补全够用。
+    pub(super) async fn project_files(&self) -> Vec<String> {
+        let out = tokio::process::Command::new("git")
+            .args(["ls-files", "-co", "--exclude-standard"])
+            .current_dir(&self.0.project)
+            .output()
+            .await;
+        let Some(o) = out.ok().filter(|o| o.status.success()) else {
+            return vec![];
+        };
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .take(10_000)
+            .map(str::to_string)
+            .collect()
+    }
 }

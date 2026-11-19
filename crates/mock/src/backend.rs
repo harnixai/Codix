@@ -360,6 +360,17 @@ impl ScriptedBackend {
                     clamped: false,
                 })
             }
+            ProjectFiles => Ok(Reply::Files(
+                [
+                    "src/auth/mod.rs",
+                    "src/auth/oauth.rs",
+                    "src/main.rs",
+                    "README.md",
+                ]
+                .iter()
+                .map(|f| f.to_string())
+                .collect(),
+            )),
             ListModels => Ok(Reply::Models(
                 ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
                     .iter()

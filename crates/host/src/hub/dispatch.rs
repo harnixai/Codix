@@ -223,6 +223,7 @@ impl Hub {
                 })
             }
             C::ListModels => Ok(Reply::Models(self.list_models().await)),
+            C::ProjectFiles => Ok(Reply::Files(self.project_files().await)),
             C::SetModel {
                 session,
                 model,

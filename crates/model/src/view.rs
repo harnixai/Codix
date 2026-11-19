@@ -296,6 +296,9 @@ fn chat_pane(s: &State, r: &tui::layout::ChatRegions) -> ChatPane {
         picker: picker
             .iter()
             .map(|c| {
+                if c.source == crate::chat_update::MENTION {
+                    return Line::toned(format!("  @{}", c.name), Tone::Accent);
+                }
                 Line::toned(format!("  /{:<14}", c.name), Tone::Accent)
                     .push(
                         truncate_to_width(&c.description, width.saturating_sub(30)),

@@ -114,6 +114,8 @@ pub(crate) enum Pending {
     Doctor,
     /// `/model` 不带参数：列出可选的模型。
     Models,
+    /// `@` 提及：项目里的文件。
+    Files,
     /// Shift+Tab 切了这个会话的权限模式（请求的是第二项），回复里是实际生效的。
     PermissionSet(port::SessionId, port::PermissionMode),
 }

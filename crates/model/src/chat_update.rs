@@ -20,9 +20,46 @@ const LOCAL: &[&str] = &[
     "stop", "mouse", "events", "notify", "copy",
 ];
 
+/// 补全候选的来源：项目里的文件（`@` 提及）。
+pub(crate) const MENTION: &str = "@file";
+
 impl State {
+    /// 输入框末尾正在打的 `@…`（`@` 前面是开头或空白）：回 `@` 后面的部分。
+    pub(crate) fn mention_query(&self) -> Option<&str> {
+        let c = &self.ui.composer;
+        if c.picker_closed || c.bash {
+            return None;
+        }
+        let at = c.text.rfind('@')?;
+        let tail = &c.text[at + 1..];
+        let before_ok = c.text[..at].chars().last().is_none_or(char::is_whitespace);
+        (before_ok && !tail.contains(char::is_whitespace)).then_some(tail)
+    }
+
     /// 补全列表的候选：以 `/` 开头、还没有空格时，按前缀过滤本地命令与后端命令。
     pub fn picker_candidates(&self) -> Vec<SlashCommand> {
+        if let Some(q) = self.mention_query() {
+            let q = q.to_lowercase();
+            let files = self.domain.project_files.as_deref().unwrap_or_default();
+            let mut hits: Vec<&String> = files
+                .iter()
+                .filter(|f| f.to_lowercase().contains(&q))
+                .collect();
+            // 文件名里就有的排前面：`@oauth` 先是 oauth.rs，再是路径里带它的。
+            hits.sort_by_key(|f| {
+                let name = f.rsplit('/').next().unwrap_or(f).to_lowercase();
+                (!name.contains(&q), f.len())
+            });
+            return hits
+                .into_iter()
+                .take(8)
+                .map(|f| SlashCommand {
+                    name: f.clone(),
+                    description: String::new(),
+                    source: MENTION.into(),
+                })
+                .collect();
+        }
         let c = &self.ui.composer;
         if c.picker_closed || c.bash || !c.text.starts_with('/') || c.text.contains([' ', '\n']) {
             return vec![];
@@ -259,6 +296,11 @@ pub(crate) fn text(s: &mut State, c: char) -> Vec<Effect> {
     }
     s.ui.composer.insert(c);
     s.ui.esc_armed_ms = None;
+    // 打出 `@` 就去取项目文件（一次，之后在本地筛）。
+    if c == '@' && s.domain.project_files.is_none() && s.mention_query().is_some() {
+        s.domain.project_files = Some(vec![]);
+        return vec![s.call(Pending::Files, Command::ProjectFiles)];
+    }
     vec![]
 }
 
@@ -281,6 +323,14 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     match a {
         Action::Up if !picker.is_empty() => c.picker = c.picker.saturating_sub(1),
         Action::Down if !picker.is_empty() => c.picker = (c.picker + 1).min(picker.len() - 1),
+        Action::Complete | Action::Submit if !picker.is_empty() && picker[0].source == MENTION => {
+            // 把正在打的 `@…` 换成选中的路径，后面留一个空格接着写。
+            let path = picker[c.picker.min(picker.len() - 1)].name.clone();
+            let keep = c.text.rfind('@').unwrap_or(c.text.len());
+            let head = c.text[..keep].to_string();
+            c.clear();
+            c.insert_str(&format!("{head}@{path} "));
+        }
         Action::Complete if !picker.is_empty() => {
             let name = &picker[c.picker.min(picker.len() - 1)].name;
             c.clear();
@@ -774,6 +824,10 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
                     true,
                 );
             }
+            vec![]
+        }
+        (Pending::Files, Reply::Files(files)) => {
+            s.domain.project_files = Some(files);
             vec![]
         }
         (Pending::Models, Reply::Models(models)) => {
