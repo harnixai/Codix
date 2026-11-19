@@ -710,6 +710,36 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
             }
             text(&i18n::t!("view.event_log.title"), lines, *scroll)
         }
+        Overlay::Models { models, selected } => {
+            let mut lines: Vec<Line> = models
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let mark = if i == *selected { "› " } else { "  " };
+                    let mut l = Line::plain(mark)
+                        .push(
+                            m.display_name.clone().unwrap_or_else(|| m.id.clone()),
+                            Tone::Normal,
+                        )
+                        .push(format!("  {} · {}", m.provider, m.id), Tone::Dim);
+                    if i == *selected {
+                        l = l.with_tone(Tone::Selected);
+                    }
+                    l
+                })
+                .collect();
+            let body = s.ui.size.rows.saturating_sub(8) as usize;
+            let skip = selected.saturating_sub(body.saturating_sub(1));
+            lines = lines.into_iter().skip(skip).take(body).collect();
+            lines.push(Line::default());
+            lines.push(Line::toned(i18n::t!("view.models.keys"), Tone::Dim));
+            tui::Overlay {
+                title: i18n::t!("view.models.title"),
+                height: lines.len() as u16 + 2,
+                lines,
+                width: (s.ui.size.cols.saturating_sub(10)).min(90),
+            }
+        }
         Overlay::Away {
             since_ms,
             alerts,

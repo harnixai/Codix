@@ -360,7 +360,17 @@ impl ScriptedBackend {
                     clamped: false,
                 })
             }
-            SetModel { session, model } => {
+            ListModels => Ok(Reply::Models(
+                ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
+                    .iter()
+                    .map(|m| port::ModelInfo {
+                        provider: "anthropic".into(),
+                        id: m.to_string(),
+                        display_name: None,
+                    })
+                    .collect(),
+            )),
+            SetModel { session, model, .. } => {
                 if effects && let Some(mut s) = self.summary(session) {
                     s.provenance.model = model.clone();
                     self.emit_now(Event::SessionUpserted(s));

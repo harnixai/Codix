@@ -112,6 +112,8 @@ pub(crate) enum Pending {
     Notified,
     /// `/doctor`：自检。
     Doctor,
+    /// `/model` 不带参数：列出可选的模型。
+    Models,
     /// Shift+Tab 切了这个会话的权限模式（请求的是第二项），回复里是实际生效的。
     PermissionSet(port::SessionId, port::PermissionMode),
 }
@@ -660,6 +662,29 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             Some(c) => exit_choice(s, c),
             None => vec![],
         };
+    }
+    if let Some(Overlay::Models { models, selected }) = &mut s.ui.overlay {
+        match a {
+            Action::Up => *selected = selected.saturating_sub(1),
+            Action::Down => *selected = (*selected + 1).min(models.len().saturating_sub(1)),
+            Action::Confirm | Action::Open | Action::Submit => {
+                let pick = models.get(*selected).cloned();
+                s.ui.overlay = None;
+                if let (Some(m), Some(session)) = (pick, s.ui.chat.clone()) {
+                    return vec![s.call(
+                        Pending::Ignore,
+                        Command::SetModel {
+                            session,
+                            model: m.id,
+                            provider: Some(m.provider),
+                        },
+                    )];
+                }
+            }
+            Action::Back | Action::No => s.ui.overlay = None,
+            _ => {}
+        }
+        return vec![];
     }
     if let Some(Overlay::Away {
         alerts, selected, ..

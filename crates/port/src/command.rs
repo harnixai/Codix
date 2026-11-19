@@ -69,7 +69,12 @@ pub enum Command {
     SetModel {
         session: SessionId,
         model: String,
+        /// 换到别的 provider 的模型时给它的 id；省略 = 照设置。
+        #[serde(default)]
+        provider: Option<String>,
     },
+    /// 配置了的 provider 各自有哪些模型（`/model` 的选择框）。
+    ListModels,
     /// Shift+Tab：切这个会话的权限模式，立即生效、记在会话上（需求 C-20，Agix
     /// `session.setPermissionMode`）。回 `PermissionMode`，以其中实际生效的为准。
     SetPermissionMode {
@@ -216,6 +221,7 @@ impl Command {
             Command::Interrupt { .. } => "interrupt",
             Command::Answer { .. } => "answer",
             Command::SetModel { .. } => "set_model",
+            Command::ListModels => "list_models",
             Command::SetPermissionMode { .. } => "set_permission_mode",
             Command::TrustProject { .. } => "trust_project",
             Command::Commands { .. } => "commands",
@@ -355,4 +361,14 @@ pub enum Reply {
     JobCheck(JobCheck),
     Notified(Vec<crate::SinkResult>),
     Doctor(Vec<crate::HealthCheck>),
+    Models(Vec<ModelInfo>),
+}
+
+/// 一个可选的模型：哪个 provider 的、叫什么。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub provider: String,
+    pub id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
 }

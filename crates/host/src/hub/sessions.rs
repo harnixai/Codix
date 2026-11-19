@@ -542,4 +542,38 @@ impl Hub {
         }
         self.upsert(id);
     }
+
+    /// 配置了的 provider 各自有哪些模型：经引擎问各自的端点（`config.listModels`），问不到的跳过。
+    pub(super) async fn list_models(&self) -> Vec<port::ModelInfo> {
+        let loc = json!({"scene": "code", "project_root": self.0.project, "tier": "effective"});
+        let Ok(cfg) = self.call("config.get", loc).await else {
+            return vec![];
+        };
+        let providers: Vec<String> = cfg["settings"]["providers"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        let mut out = vec![];
+        for p in providers {
+            let Ok(v) = self
+                .call(
+                    "config.listModels",
+                    json!({"provider": p, "scene": "code", "project_root": self.0.project}),
+                )
+                .await
+            else {
+                continue;
+            };
+            for m in v["models"].as_array().into_iter().flatten() {
+                if let Some(id) = m["id"].as_str() {
+                    out.push(port::ModelInfo {
+                        provider: p.clone(),
+                        id: id.to_string(),
+                        display_name: m["display_name"].as_str().map(str::to_string),
+                    });
+                }
+            }
+        }
+        out
+    }
 }

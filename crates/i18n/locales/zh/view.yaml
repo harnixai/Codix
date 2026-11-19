@@ -75,6 +75,9 @@ view:
     delete_session: "删掉会话「{title}」？转录、附属数据连同子 Agent 一起删，删了就没了 · y 确认 / 其他键放弃"
     force_station: "强制放行「{title}」？出口条件不再检查 · y 确认 / 其他键放弃"
     rework: "退回到「{title}」重做？它之后的站都要重来 · y 确认 / 其他键放弃"
+  models:
+    title: "选一个模型"
+    keys: "↑↓ 选择 · Enter 换到它（下一轮生效）· Esc 不换"
   away:
     title: "离开期间（{elapsed}）"
     keys: "↑↓ 选择 · Enter 去处理 · Esc 关掉"

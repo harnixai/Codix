@@ -20,7 +20,8 @@ mod task;
 pub use alert::{Alert, AlertKind, AlertTarget, HealthCheck, HealthStatus, SinkResult};
 pub use backend::{Backend, Instances, PortError};
 pub use command::{
-    Command, GoalAction, PermissionMode, Reply, SessionFilter, SlashCommand, SubmitMode, Watched,
+    Command, GoalAction, ModelInfo, PermissionMode, Reply, SessionFilter, SlashCommand, SubmitMode,
+    Watched,
 };
 pub use common::{Millis, Usage};
 pub use event::{ConnState, Event, NoticeLevel};

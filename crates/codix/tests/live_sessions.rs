@@ -103,6 +103,7 @@ async fn set_model_is_recorded_and_the_command_table_is_listed() {
     c.ok(Command::SetModel {
         session: s.clone(),
         model: other.clone(),
+        provider: None,
     })
     .await;
     let sum = c

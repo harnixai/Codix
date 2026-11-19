@@ -222,13 +222,17 @@ impl Hub {
                     clamped: r["clamped"].as_bool().unwrap_or(false),
                 })
             }
-            C::SetModel { session, model } => {
-                self.call(
-                    "session.setModel",
-                    json!({"session_id": session.0, "model": model}),
-                )
-                .await
-                .map_err(rpc_err)?;
+            C::ListModels => Ok(Reply::Models(self.list_models().await)),
+            C::SetModel {
+                session,
+                model,
+                provider,
+            } => {
+                let mut p = json!({"session_id": session.0, "model": model});
+                if let Some(pv) = provider {
+                    p["provider"] = json!(pv);
+                }
+                self.call("session.setModel", p).await.map_err(rpc_err)?;
                 self.0
                     .reg
                     .locked()

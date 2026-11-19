@@ -127,6 +127,11 @@ pub enum Overlay {
     EventLog {
         scroll: usize,
     },
+    /// `/model` 不带参数：选一个模型。
+    Models {
+        models: Vec<port::ModelInfo>,
+        selected: usize,
+    },
     /// 接入时：离开期间攒下的等人处理的事（交互 §5.5）。
     Away {
         since_ms: u64,

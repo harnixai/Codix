@@ -661,7 +661,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
                 .map(|c| c.summary.provenance.model.clone())
                 .unwrap_or_default();
             s.notice(i18n::t!("chat_update.current_model", m = m), false);
-            vec![]
+            vec![s.call(Pending::Models, Command::ListModels)]
         }
         "trust" => {
             let trusted = !matches!(arg.as_str(), "off" | "no" | "false");
@@ -672,6 +672,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             Command::SetModel {
                 session: session?,
                 model: arg,
+                provider: None,
             },
         )],
         "goal" if arg.is_empty() => {
@@ -772,6 +773,19 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
                     ),
                     true,
                 );
+            }
+            vec![]
+        }
+        (Pending::Models, Reply::Models(models)) => {
+            if models.is_empty() {
+                s.notice(i18n::t!("chat_update.no_models"), false);
+            } else {
+                let cur = s
+                    .conv()
+                    .map(|c| c.summary.provenance.model.clone())
+                    .unwrap_or_default();
+                let selected = models.iter().position(|m| m.id == cur).unwrap_or(0);
+                s.ui.overlay = Some(Overlay::Models { models, selected });
             }
             vec![]
         }

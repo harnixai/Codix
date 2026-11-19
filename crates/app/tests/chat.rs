@@ -398,3 +398,26 @@ async fn y_in_the_transcript_copies_the_last_reply() {
         "{fx:?}"
     );
 }
+
+/// `/model` 不带参数：列出各 provider 的模型，选一个就换（带上它的 provider，需求 C-13）。
+#[tokio::test(start_paused = true)]
+async fn slash_model_opens_a_picker_and_switches() {
+    let mut h = Harness::new("default", Size::new(160, 45)).await;
+    h.open_session("重构认证模块").await;
+    h.type_str("/model").await;
+    h.keys("Enter").await;
+    h.settle().await;
+    assert!(
+        matches!(h.core.state.ui.overlay, Some(model::Overlay::Models { ref models, .. }) if models.len() == 3),
+        "{:?}",
+        h.core.state.ui.overlay
+    );
+    assert!(h.text().contains("claude-opus-5-5"));
+    h.keys("Down Enter").await;
+    h.settle().await;
+    assert!(h.core.state.ui.overlay.is_none());
+    assert!(h.calls("dev").iter().any(|c| matches!(
+        c,
+        Command::SetModel { provider: Some(p), .. } if p == "anthropic"
+    )));
+}
