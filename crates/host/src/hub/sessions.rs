@@ -1,0 +1,483 @@
+//! 会话：从引擎认领、订阅、建、Watch 的快照、改名；流程派工器经它开的会话（architecture §8.4）。
+
+use super::*;
+
+impl Hub {
+    /// 这个会话此刻在不在跑一轮、在哪个项目里；不认识就是 `None`。
+    pub(crate) fn origin_of(&self, id: &str) -> Option<Origin> {
+        let st = self.0.st.lock().unwrap();
+        st.sessions.get(id).map(|s| s.origin.clone())
+    }
+
+    pub(crate) fn session_state(&self, id: &str) -> Option<(bool, Option<String>)> {
+        let st = self.0.st.lock().unwrap();
+        st.sessions.get(id).map(|s| (s.running, s.project.clone()))
+    }
+
+    /// 会话在不在：内存里没有就问引擎，在盘上就带回来、订阅上。
+    /// 在 Codix 里关掉的不算在：引擎的存储里还有它，但它不该被谁再带回来。
+    pub(crate) async fn bring_back(&self, id: &str) -> Result<bool, RpcError> {
+        if self.0.st.lock().unwrap().sessions.contains_key(id) {
+            return Ok(true);
+        }
+        if self.0.reg.lock().unwrap().get(id).is_some_and(|r| r.closed) {
+            return Ok(false);
+        }
+        match self.call("session.get", json!({"session_id": id})).await {
+            Ok(_) => {}
+            Err(RpcError::Remote { code, .. }) if code == SESSION_NOT_FOUND => return Ok(false),
+            Err(e) => return Err(e),
+        }
+        self.adopt(id).await;
+        let _ = self.subscribe(id, true).await;
+        Ok(self.0.st.lock().unwrap().sessions.contains_key(id))
+    }
+
+    /// 流程派工器开的会话：`session_id` 由键算出，同一个键总是同一个会话（跨重启也是）。
+    /// 回 `(会话, 原来就有)`。
+    pub(crate) async fn open_flow_session(
+        &self,
+        session_id: &str,
+        scene: &str,
+        project: Option<&str>,
+        options: Value,
+        origin: Origin,
+        title: Option<String>,
+    ) -> Result<(String, bool), RpcError> {
+        let mut params = json!({"session_id": session_id, "scene": scene, "options": options});
+        if let Some(p) = project {
+            params["project_root"] = json!(p);
+        }
+        let r = self.call("session.create", params).await?;
+        let id = str_field(&r, "session_id");
+        let existed = r["existing"].as_bool().unwrap_or(false);
+        let now = self.now();
+        let known = self.0.st.lock().unwrap().sessions.contains_key(&id);
+        if !existed || !known {
+            self.0.reg.lock().unwrap().update(&id, |rec| {
+                rec.origin = origin.clone();
+                if rec.title.is_none() {
+                    rec.title = title.clone();
+                }
+                if rec.created_ms == 0 {
+                    rec.created_ms = now;
+                }
+                rec.updated_ms = now;
+                rec.closed = false;
+            });
+        }
+        if !known {
+            let created = parse_rfc3339_ms(r["created_at"].as_str().unwrap_or("")).unwrap_or(now);
+            let title = self
+                .0
+                .reg
+                .lock()
+                .unwrap()
+                .get(&id)
+                .and_then(|r| r.title.clone())
+                .or(title);
+            let sess = Sess {
+                id: id.clone(),
+                title: title.unwrap_or_else(|| state::short(&id)),
+                project: project.map(str::to_string),
+                scene: r["scene"].as_str().unwrap_or(scene).to_string(),
+                model: self.0.default_model.lock().unwrap().clone(),
+                origin,
+                live: true,
+                updated_ms: now,
+                created_ms: created,
+                ..Sess::default()
+            };
+            self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
+        }
+        let _ = self.subscribe(&id, existed).await;
+        self.upsert(&id);
+        Ok((id, existed))
+    }
+
+    pub(crate) async fn interrupt(&self, id: &str) -> Result<(), RpcError> {
+        self.call("session.interrupt", json!({"session_id": id}))
+            .await
+            .map(|_| ())
+    }
+
+    /// 派工器关一个会话：看着它的流结束。
+    pub(crate) async fn close_session(&self, id: &str) -> Result<(), PortError> {
+        self.dispatch(Command::Close {
+            session: SessionId(id.to_string()),
+        })
+        .await?;
+        self.0.taps.lock().unwrap().remove(id);
+        Ok(())
+    }
+
+    /// 派工器答一个权限问句。
+    pub(crate) async fn answer_permission(
+        &self,
+        id: &str,
+        prompt: &str,
+        allow: bool,
+        reason: Option<String>,
+    ) -> Result<(), PortError> {
+        self.dispatch(Command::Answer {
+            session: SessionId(id.to_string()),
+            prompt: port::PromptId(prompt.to_string()),
+            answer: if allow {
+                port::Answer::Permit
+            } else {
+                port::Answer::Deny { reason }
+            },
+        })
+        .await
+        .map(|_| ())
+    }
+
+    pub(crate) async fn append_entry(
+        &self,
+        id: &str,
+        event: &str,
+        payload: Value,
+    ) -> Result<(), RpcError> {
+        self.call(
+            "session.appendEntry",
+            json!({"session_id": id, "ns": "codix.flow", "event": event, "payload": payload}),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub(crate) async fn project_trusted(&self, root: &str) -> Result<bool, RpcError> {
+        let v = self
+            .call("project.status", json!({"project_root": root}))
+            .await?;
+        Ok(v["trust"].as_str() == Some("trusted"))
+    }
+
+    pub(super) fn sess_from_info(&self, info: &SessionInfo) -> Sess {
+        let reg = self.0.reg.lock().unwrap();
+        let rec = reg.get(&info.session_id).cloned().unwrap_or_default();
+        let model = rec
+            .model
+            .clone()
+            .unwrap_or_else(|| self.0.default_model.lock().unwrap().clone());
+        Sess {
+            id: info.session_id.clone(),
+            title: rec
+                .title
+                .clone()
+                .or_else(|| info.name.clone())
+                .unwrap_or_else(|| state::short(&info.session_id)),
+            project: info.project_root.clone(),
+            scene: info.scene.clone().unwrap_or_else(|| "code".into()),
+            model,
+            origin: rec.origin.clone(),
+            parent: info.parent_session_id.clone(),
+            live: info.status == "active",
+            running: info.turn_state.as_deref() == Some("running"),
+            updated_ms: parse_rfc3339_ms(&info.last_active)
+                .or_else(|| parse_rfc3339_ms(&info.created_at))
+                .unwrap_or(rec.updated_ms),
+            created_ms: Some(rec.created_ms)
+                .filter(|ms| *ms > 0)
+                .or_else(|| parse_rfc3339_ms(&info.created_at))
+                .unwrap_or(rec.updated_ms),
+            ..Sess::default()
+        }
+    }
+
+    pub(super) async fn load_sessions(&self) -> Result<(), RpcError> {
+        let v = self.call("session.list", json!({})).await?;
+        let infos: Vec<SessionInfo> =
+            serde_json::from_value(v["sessions"].clone()).unwrap_or_default();
+        let mut live = vec![];
+        for info in infos
+            .iter()
+            .filter(|i| i.project_root.as_deref() == Some(self.0.project.as_str()))
+        {
+            if self
+                .0
+                .reg
+                .lock()
+                .unwrap()
+                .get(&info.session_id)
+                .is_some_and(|r| r.closed)
+            {
+                continue;
+            }
+            let s = self.sess_from_info(info);
+            if s.live {
+                live.push(s.id.clone());
+            }
+            self.0.st.lock().unwrap().sessions.insert(s.id.clone(), s);
+        }
+        for id in live {
+            let _ = self.subscribe(&id, false).await;
+        }
+        Ok(())
+    }
+
+    /// 不是这个实例建的会话出现在内存里（比如别的连接、或恢复）时，补一份摘要。
+    pub(super) async fn adopt(&self, id: &str) {
+        let Ok(v) = self.call("session.get", json!({"session_id": id})).await else {
+            return;
+        };
+        if let Ok(info) = serde_json::from_value::<SessionInfo>(v) {
+            let s = self.sess_from_info(&info);
+            // 和建会话赛跑时别把那边已有的状态（悬着的提问等）盖掉。
+            self.0
+                .st
+                .lock()
+                .unwrap()
+                .sessions
+                .entry(id.to_string())
+                .or_insert(s);
+            self.upsert(id);
+        }
+    }
+
+    /// 订阅一个会话；订阅时还悬着的提问照原样补进来。
+    pub(super) async fn subscribe(&self, id: &str, resume: bool) -> Result<(), RpcError> {
+        let v = self
+            .call(
+                "session.subscribe",
+                json!({"session_id": id, "resume": resume}),
+            )
+            .await?;
+        let now = self.now();
+        self.apply(|st, out| {
+            if let Some(s) = st.sessions.get_mut(id) {
+                s.live = true;
+            }
+            for p in v["pending_prompts"].as_array().into_iter().flatten() {
+                st.on_event(id, id, SessionEvent::parse(p), now, out);
+            }
+        });
+        self.refresh_permission(id).await;
+        Ok(())
+    }
+
+    /// 会话此刻的权限模式：订阅之后它一定在内存里，`session.resume` 只报状态（`already_active`）。
+    /// 订阅之前切的、设置夹过的、重建后按设置得到的，帧都不报，只能这样读。
+    pub(super) async fn refresh_permission(&self, id: &str) {
+        let Ok(r) = self.call("session.resume", json!({"session_id": id})).await else {
+            return;
+        };
+        let Some(m) = r["permission"]["mode"]
+            .as_str()
+            .and_then(state::permission_mode)
+        else {
+            return;
+        };
+        let changed = {
+            let mut st = self.0.st.lock().unwrap();
+            match st.sessions.get_mut(id) {
+                Some(s) if s.permission != m => {
+                    s.permission = m;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.upsert(id);
+        }
+    }
+
+    pub(super) async fn create_session(
+        &self,
+        origin: Origin,
+        title: Option<String>,
+        scene: Option<String>,
+        model: Option<String>,
+        extra: Value,
+    ) -> Result<String, PortError> {
+        let mut options = json!({
+            "prompt_types": ["permission", "question"],
+            "permission_rules": tools::read_only_rules(),
+        });
+        if let (Some(o), Some(e)) = (options.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        if let Some(m) = &model {
+            options["model"] = json!(m);
+        }
+        let mut params = json!({"project_root": self.0.project, "options": options});
+        if let Some(sc) = &scene {
+            params["scene"] = json!(sc);
+        }
+        let r = self.call("session.create", params).await.map_err(rpc_err)?;
+        let id = str_field(&r, "session_id");
+        let now = self.now();
+        self.0.reg.lock().unwrap().update(&id, |rec| {
+            rec.origin = origin.clone();
+            rec.title = title.clone();
+            rec.model = model.clone();
+            rec.updated_ms = now;
+            rec.created_ms = now;
+        });
+        let sess = Sess {
+            id: id.clone(),
+            title: title.unwrap_or_else(|| state::short(&id)),
+            project: Some(self.0.project.clone()),
+            scene: r["scene"]
+                .as_str()
+                .map(str::to_string)
+                .or(scene)
+                .unwrap_or_else(|| "code".into()),
+            model: model.unwrap_or_else(|| self.0.default_model.lock().unwrap().clone()),
+            origin,
+            live: true,
+            updated_ms: now,
+            created_ms: now,
+            ..Sess::default()
+        };
+        self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
+        let _ = self.subscribe(&id, false).await;
+        self.upsert(&id);
+        Ok(id)
+    }
+
+    pub(super) fn summary(&self, id: &str) -> Result<port::SessionSummary, PortError> {
+        self.0
+            .st
+            .lock()
+            .unwrap()
+            .summary(id)
+            .ok_or_else(|| PortError::Failed(format!("no session {id}")))
+    }
+
+    pub(super) async fn ensure_known(&self, id: &str) -> Result<(), PortError> {
+        if !self.0.st.lock().unwrap().sessions.contains_key(id) {
+            self.adopt(id).await;
+        }
+        if self.0.st.lock().unwrap().sessions.contains_key(id) {
+            Ok(())
+        } else {
+            Err(PortError::Failed(format!("no session {id}")))
+        }
+    }
+
+    pub(super) async fn history(&self, id: &str) -> Vec<HistoryMessage> {
+        let first = self
+            .call(
+                "session.history",
+                json!({"session_id": id, "offset": 0, "limit": HISTORY_TAIL}),
+            )
+            .await;
+        let Ok(first) = first else { return vec![] };
+        let total = first["total"].as_u64().unwrap_or(0);
+        let page = if total > HISTORY_TAIL {
+            self.call(
+                "session.history",
+                json!({"session_id": id, "offset": total - HISTORY_TAIL, "limit": HISTORY_TAIL}),
+            )
+            .await
+            .unwrap_or(first)
+        } else {
+            first
+        };
+        serde_json::from_value(page["messages"].clone()).unwrap_or_default()
+    }
+
+    pub(super) async fn watch(&self, id: &str) -> Result<Reply, PortError> {
+        self.ensure_known(id).await?;
+        let gone = || PortError::Failed(format!("no session {id}"));
+        let generation = self.0.link.lock().unwrap().generation(id);
+        let (parent, was_live) = {
+            let st = self.0.st.lock().unwrap();
+            let s = st.sessions.get(id).ok_or_else(gone)?;
+            (s.parent.clone(), s.live)
+        };
+        let mut running_hint = None;
+        match &parent {
+            None => {
+                self.subscribe(id, true).await.map_err(rpc_err)?;
+                if let Ok(g) = self.call("session.get", json!({"session_id": id})).await {
+                    running_hint = Some(g["turn_state"].as_str() == Some("running"));
+                }
+                if let Ok(g) = self.call("session.goal", json!({"session_id": id})).await {
+                    let goal = serde_json::from_value::<wire::frames::GoalView>(g["goal"].clone())
+                        .ok()
+                        .map(|g| state::goal_of(&g));
+                    if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(id) {
+                        s.goal = goal;
+                    }
+                }
+                if let Ok(t) = self.call("session.tasks", json!({"session_id": id})).await {
+                    let infos: Vec<wire::frames::TaskInfo> =
+                        serde_json::from_value(t["tasks"].clone()).unwrap_or_default();
+                    let now = self.now();
+                    self.apply(|st, out| {
+                        for i in infos {
+                            st.on_event(id, id, SessionEvent::TaskUpdated { task: i }, now, out);
+                        }
+                    });
+                }
+            }
+            // 侧链的帧经父会话来：父会话订阅着就够了。
+            Some(p) => {
+                let _ = self.subscribe(p, false).await;
+            }
+        }
+        let msgs = self.history(id).await;
+        let conv = history::convert(&msgs);
+        // 收尾在 st 与 link 两把锁里一次做完：之后的帧都作为事件发出，之前的都在快照里。
+        let mut st = self.0.st.lock().unwrap();
+        let s = st.sessions.get_mut(id).ok_or_else(gone)?;
+        // 实例早就订阅着的会话，它自己跟着帧记的状态比刚才那次 session.get 新。
+        if !was_live && let Some(r) = running_hint {
+            s.running = r;
+        }
+        if s.todos.is_empty()
+            && let Some(t) = conv.todos
+        {
+            s.todos = t;
+        }
+        let mut items = conv.items;
+        // 每一步在 step_end 时连同工具结果落盘；正在写的这一步还没进历史，补上已经到了的那段。
+        let pending = s.pending_step_text();
+        if s.running && !pending.is_empty() {
+            items.push(port::HistoryItem::Assistant { text: pending });
+        }
+        let s = &st.sessions[id];
+        let watched = Watched {
+            session: st.summary(id).ok_or_else(gone)?,
+            history: items,
+            running: s.running,
+            goal: s.goal.clone(),
+            todos: s.todos.clone(),
+            tasks: s.tasks.values().cloned().collect(),
+            prompts: s.prompts.clone(),
+        };
+        let mut link = self.0.link.lock().unwrap();
+        if link.generation(id) == generation {
+            link.watched.insert(id.to_string());
+        }
+        Ok(Reply::Watched(Box::new(watched)))
+    }
+
+    /// 起名：用户改的名字总算数；引擎首轮自动起的名字只替掉"第一句话"那种临时名字；
+    /// 第一句话只在还没有名字时用（Agix 不报冷会话的名字，没有它列表里只剩 id）。
+    pub(super) fn retitle(&self, id: &str, title: &str, by: Titler) {
+        {
+            let mut reg = self.0.reg.lock().unwrap();
+            let rec = reg.get(id).cloned().unwrap_or_default();
+            let keep = match by {
+                Titler::User => false,
+                Titler::Engine => rec.title.is_some() && !rec.title_from_text,
+                Titler::FirstText => rec.title.is_some(),
+            };
+            if keep {
+                return;
+            }
+            reg.update(id, |r| {
+                r.title = Some(title.to_string());
+                r.title_from_text = by == Titler::FirstText;
+            });
+        }
+        if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(id) {
+            s.title = title.to_string();
+        }
+        self.upsert(id);
+    }
+}
