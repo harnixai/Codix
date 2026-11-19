@@ -63,6 +63,27 @@ stations:
     exit: [{kind: confirm}]
 "#;
 
+/// 两站：说一个词，然后一站进站就搁置、出站要人确认——运行操作在它上面一样样试。
+const OPS: &str = r#"name: live-ops
+title: Live ops
+stations:
+  - id: say
+    title: Say
+    executor: {kind: session}
+    skill: say-word
+    output:
+      type: object
+      required: [word]
+      properties:
+        word: {type: string}
+    exit: [{kind: output}]
+  - id: gate
+    title: Gate
+    hold: true
+    rework_to: [say]
+    exit: [{kind: confirm}]
+"#;
+
 /// 全局流程包里放好这些流程，以及它们用的 skill。
 fn install(lv: &Live, flows: &[(&str, &str)]) {
     let root = lv.home.path().join("flows");
@@ -579,6 +600,127 @@ async fn a_user_session_creates_and_runs_a_flow_job_with_the_job_tools() {
             Some(())
         }
         _ => None,
+    })
+    .await;
+}
+
+/// 等到这次运行的详情满足 `want`。
+async fn until_run(
+    c: &mut live::Client,
+    what: &str,
+    id: &port::RunId,
+    want: impl Fn(&port::RunView) -> bool,
+) -> port::RunView {
+    let id = id.clone();
+    c.wait_event(what, RUN, |e| match e {
+        Event::RunDetail(v) if v.summary.id == id && want(v) => Some((**v).clone()),
+        _ => None,
+    })
+    .await
+}
+
+fn station(v: &port::RunView, id: &str) -> StationStatus {
+    v.stations
+        .iter()
+        .find(|s| s.id.as_str() == id)
+        .map(|s| s.status)
+        .unwrap()
+}
+
+/// 运行操作经端口落到真实的派工器：搁置的站放行、暂停与恢复、返工到前一站、强制放行、确认
+/// （取消在上面那条用例里）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn run_ops_release_pause_resume_rework_force_and_confirm() {
+    let lv = Live::new();
+    install(&lv, &[("live-ops", OPS)]);
+    let mut c = lv.start().await;
+    c.answering(Answering::Auto);
+    let gate = port::StationId("gate".into());
+    let op = |run: &port::RunId, op: RunOp| Command::RunOp {
+        run: run.clone(),
+        op,
+    };
+
+    let id = start(&c, "live-ops", "say the word OK").await.id;
+    until_run(&mut c, "进站搁置", &id, |v| {
+        station(v, "gate") == StationStatus::Held
+    })
+    .await;
+
+    c.ok(op(&id, RunOp::Pause)).await;
+    until_run(&mut c, "暂停", &id, |v| {
+        matches!(v.summary.status, RunStatus::Paused | RunStatus::Pausing)
+    })
+    .await;
+    c.ok(op(&id, RunOp::Resume)).await;
+    until_run(&mut c, "恢复", &id, |v| {
+        !matches!(v.summary.status, RunStatus::Paused | RunStatus::Pausing)
+    })
+    .await;
+
+    c.ok(op(
+        &id,
+        RunOp::Release {
+            station: gate.clone(),
+        },
+    ))
+    .await;
+    until_run(&mut c, "放行后等确认", &id, |v| {
+        station(v, "gate") == StationStatus::Working
+    })
+    .await;
+
+    c.ok(op(
+        &id,
+        RunOp::Rework {
+            to: port::StationId("say".into()),
+        },
+    ))
+    .await;
+    until_run(&mut c, "返工后重新到搁置", &id, |v| {
+        station(v, "say") == StationStatus::Passed && station(v, "gate") == StationStatus::Held
+    })
+    .await;
+    c.ok(op(
+        &id,
+        RunOp::Release {
+            station: gate.clone(),
+        },
+    ))
+    .await;
+    c.ok(op(
+        &id,
+        RunOp::Force {
+            station: gate.clone(),
+            reason: "live test".into(),
+        },
+    ))
+    .await;
+    until_run(&mut c, "强制放行后结束", &id, |v| {
+        v.summary.status == RunStatus::Finished
+    })
+    .await;
+
+    let id = start(&c, "live-ops", "say the word YES").await.id;
+    until_run(&mut c, "第二次进站搁置", &id, |v| {
+        station(v, "gate") == StationStatus::Held
+    })
+    .await;
+    c.ok(op(
+        &id,
+        RunOp::Release {
+            station: gate.clone(),
+        },
+    ))
+    .await;
+    until_run(&mut c, "等确认", &id, |v| {
+        station(v, "gate") == StationStatus::Working
+    })
+    .await;
+    c.ok(op(&id, RunOp::Confirm { station: gate })).await;
+    until_run(&mut c, "确认后结束", &id, |v| {
+        v.summary.status == RunStatus::Finished
     })
     .await;
 }
