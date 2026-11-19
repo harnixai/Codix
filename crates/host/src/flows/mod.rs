@@ -31,9 +31,9 @@ use session_host::CodixSessionHost;
 /// 运行的 worktree 分支：`codix/flow/<运行>`，与引擎自己的 worktree 分开。
 const BRANCH_PREFIX: &str = "codix/flow";
 
-/// 项目层目录（`.codix`）里引擎的沙箱让任务会话写的子目录（Agix 0.3.18 起引擎的 worktree 在仓库根的
-/// `.wkts/`，不在这里）；其余归应用。Harnix 对着同一个引擎用的也是这两个。
-const AGENT_DIRS: [&str; 2] = ["scratchpad", "memory"];
+/// 项目层目录（`.codix`）里引擎的沙箱让任务会话写的子目录：Agix 0.3.20 起只有 `state/` 下这两个
+/// （Agix#93），其余归应用。
+const AGENT_DIRS: [&str; 2] = ["state/scratchpad", "state/memory"];
 
 /// 定义里写的场景就是 Agix 的场景名；Codix 只开 `code`。
 const SCENE: &str = "code";

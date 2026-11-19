@@ -41,8 +41,8 @@ impl Embedded {
         // 一个实例都在 code 场景里；实例锁由 Codix 自己管（architecture §8.4）。
         c.instance = None;
         c.groups_file = Some(cfg.groups_file);
-        c.project_dir = PROJECT_DIR.into();
-        c.product_name = PRODUCT_NAME.into();
+        c.project_dir = Some(PROJECT_DIR.into());
+        c.product = PRODUCT_NAME.into();
         let engine = agix::embed::Embedded::start(c)
             .await
             .context("start the Agix engine")?;
