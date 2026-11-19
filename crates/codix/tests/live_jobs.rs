@@ -20,6 +20,7 @@ fn job(name: &str, cron: &str, prompt: &str, catch_up: bool) -> Job {
         },
         enabled: true,
         catch_up,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     }
@@ -58,7 +59,7 @@ async fn fired(
 #[ignore = "live"]
 async fn jobs_are_saved_listed_toggled_and_deleted() {
     let lv = Live::new();
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     let j = save(&c, job("nightly", "0 3 * * *", "say hi", false)).await;
     assert!(!j.id.0.is_empty(), "新作业分到 id");
     assert!(j.next_fire_ms.is_some_and(|t| t > live::now_ms()));
@@ -69,8 +70,13 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
     .await;
     assert_eq!(list(&c).await, vec![j.clone()]);
     let stored = lv.read_jobs();
-    assert_eq!(stored[0]["job"]["id"], j.id.0.as_str());
-    assert_eq!(stored[0]["job"]["cron"], "0 3 * * *");
+    assert_eq!(stored[0]["id"], j.id.0.as_str());
+    assert_eq!(stored[0]["cron"], "0 3 * * *");
+    assert!(
+        stored[0].get("enabled").is_none(),
+        "启停不进随项目提交的定义"
+    );
+    assert_eq!(lv.read_state("jobs-state.json")[&j.id.0]["enabled"], true);
 
     let bad = c
         .call(Command::SaveJob {
@@ -92,7 +98,7 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
         })
         .await;
     assert_eq!(off.next_fire_ms, None, "停用的作业没有下次触发");
-    assert_eq!(lv.read_jobs()[0]["job"]["enabled"], false);
+    assert_eq!(lv.read_state("jobs-state.json")[&j.id.0]["enabled"], false);
 
     c.ok(Command::DeleteJob { job: j.id.clone() }).await;
     let id = j.id.clone();
@@ -108,7 +114,7 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
 #[ignore = "live"]
 async fn run_now_fires_a_job_session_and_records_the_outcome() {
     let lv = Live::new();
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     // 停用的作业也能立即运行一次。
     let mut j = job("probe", "0 3 * * *", "Reply with exactly: JOB-OK", false);
     j.enabled = false;
@@ -171,7 +177,7 @@ async fn run_now_fires_a_job_session_and_records_the_outcome() {
 
 /// 一次触发跑到一半：起一个长的作业，等它的 `Running` 记录出来。
 async fn fire_long(lv: &Live) -> (live::Client, Job, port::JobEntry) {
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     let j = save(
         &c,
         job(
@@ -247,7 +253,7 @@ async fn a_firing_left_running_by_a_crash_is_marked_interrupted_on_start() {
 #[ignore = "live"]
 async fn a_missed_firing_is_caught_up_once_only_when_asked() {
     let lv = Live::new();
-    let c = lv.start().await;
+    let c = lv.start_trusted().await;
     let a = save(
         &c,
         job("catch", "0 * * * *", "Reply with exactly: CAUGHT-UP", true),
@@ -262,12 +268,12 @@ async fn a_missed_firing_is_caught_up_once_only_when_asked() {
     lv.stop().await;
 
     // 装作实例停了两个小时：把两个作业的基线挪到两小时前。
-    let path = lv.state().jobs();
+    let path = lv.state().jobs_state();
     let mut stored: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let past = live::now_ms() - 2 * 3_600_000;
-    for s in stored.as_array_mut().unwrap() {
-        s["created_ms"] = past.into();
+    for s in stored.as_object_mut().unwrap().values_mut() {
+        s["since_ms"] = past.into();
         s["last_fired_ms"] = past.into();
     }
     std::fs::write(&path, serde_json::to_string(&stored).unwrap()).unwrap();
@@ -285,7 +291,7 @@ async fn a_missed_firing_is_caught_up_once_only_when_asked() {
     );
     let stored: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    for s in stored.as_array().unwrap() {
+    for s in stored.as_object().unwrap().values() {
         assert!(
             s["last_fired_ms"].as_u64().unwrap() > past,
             "两个作业的基线都前移了：{s}"

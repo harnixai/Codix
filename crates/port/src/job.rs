@@ -12,6 +12,9 @@ pub struct Job {
     /// 实例没在跑时错过的触发要不要补跑。
     #[serde(default)]
     pub catch_up: bool,
+    /// 创建时刻：列表按它排（ID 是随机的）。
+    #[serde(default)]
+    pub created_ms: Millis,
     #[serde(default)]
     pub next_fire_ms: Option<Millis>,
     #[serde(default)]

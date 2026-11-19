@@ -402,7 +402,7 @@ async fn conformance_inside() {
 async fn a_flow_job_starts_a_run_when_it_fires() {
     let lv = Live::new();
     install(&lv, &[("live-echo", ONE_STATION)]);
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     c.answering(Answering::Auto);
     let job = port::Job {
         id: port::JobId(String::new()),
@@ -415,6 +415,7 @@ async fn a_flow_job_starts_a_run_when_it_fires() {
         },
         enabled: true,
         catch_up: false,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     };

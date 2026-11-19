@@ -234,18 +234,24 @@ impl Hub {
                 Hub(inner).on_notification(n).await;
             }
         });
-        if let Some(store) = cfg.jobs {
+        if let Some(mut store) = cfg.jobs {
+            // 作业定义随项目提交，项目受信才读（architecture §8.5）；先定下来再起调度，免得补跑按空列表算。
+            let project = hub.0.project.clone();
+            match hub.project_trusted(&project).await {
+                Ok(t) => store.set_trusted(t),
+                Err(e) => tracing::warn!("project.status: {e}"),
+            }
             let fire = Arc::new(Firer(Arc::downgrade(&hub.0)));
             let sched = Scheduler::start(Arc::new(Mutex::new(store)), hub.0.clock.clone(), fire);
-            // 上一次实例退出时还没跑完的触发：那一轮已经不会有结局了。
+            // 上一次实例退出时还没跑完的触发：那一轮已经不会有结局了。按触发记录找，定义读不到的也收拾。
             {
                 let store = sched.store();
                 let s = store.lock().unwrap();
-                for j in s.list(0) {
-                    for e in s.history(&j.id.0, 20) {
+                for id in s.history_ids() {
+                    for e in s.history(&id, 20) {
                         if e.outcome == JobOutcome::Running {
                             let _ = s.finish(
-                                &j.id.0,
+                                &id,
                                 e.fired_ms,
                                 JobOutcome::Failed {
                                     message: "interrupted: the instance stopped".into(),
@@ -1570,6 +1576,15 @@ impl Hub {
                 .map_err(rpc_err)?;
                 if let Some(f) = self.0.flows.get() {
                     f.trust_changed().await;
+                }
+                if let Ok(sched) = self.scheduler() {
+                    let gone = sched.set_trusted(trusted);
+                    let mut events: Vec<Event> = gone
+                        .into_iter()
+                        .map(|job| Event::JobRemoved { job })
+                        .collect();
+                    events.extend(sched.list().into_iter().map(Event::JobUpserted));
+                    self.emit_events(events);
                 }
                 Ok(Reply::Ok)
             }

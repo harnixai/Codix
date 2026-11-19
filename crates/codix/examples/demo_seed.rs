@@ -87,6 +87,7 @@ fn job(name: &str, cron: &str, prompt: &str, enabled: bool) -> Job {
         },
         enabled,
         catch_up: false,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     }

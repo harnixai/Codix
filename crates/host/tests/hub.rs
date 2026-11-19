@@ -46,6 +46,7 @@ fn default_handler(method: &str, p: &Value) -> Result<Value, RpcError> {
             {"role":"user","origin":"user","content":[{"type":"text","text":"你好"}]},
             {"role":"assistant","content":[{"type":"text","text":"在"}]}], "total": 2}),
         "session.get" => json!({"session_id": p["session_id"], "turn_state":"idle"}),
+        "project.status" => json!({"trust": "trusted"}),
         "session.goal" => json!({"goal": null}),
         "session.tasks" => json!({"tasks": []}),
         "session.run_turn" => {
@@ -70,7 +71,11 @@ async fn rig_with(handler: Handler) -> Rig {
     });
     let (notes, rx) = mpsc::unbounded_channel();
     let dir = tempfile::tempdir().unwrap();
-    let store = host::jobs::JobStore::open(dir.path().join("jobs.json"), dir.path().join("jobs"));
+    let store = host::jobs::JobStore::open(
+        dir.path().join("jobs.json"),
+        dir.path().join("jobs-state.json"),
+        dir.path().join("jobs"),
+    );
     let hub = Hub::start(
         fake.clone(),
         rx,
@@ -626,6 +631,7 @@ async fn a_job_fired_session_may_change_only_its_own_job() {
         },
         enabled: true,
         catch_up: false,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     };
@@ -721,4 +727,68 @@ async fn a_job_fired_session_may_change_only_its_own_job() {
         "按 #n 列：{list}"
     );
     assert!(list.contains("mine") && list.contains("other"));
+}
+
+/// 作业定义随项目提交，项目受信才读、才写；`/trust` 之后出现，取消信任就收起来（architecture §8.5）。
+#[tokio::test]
+async fn jobs_follow_the_projects_trust() {
+    let trusted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let t = trusted.clone();
+    let mut r = rig_with(Box::new(move |m, p| match m {
+        "project.status" => Ok(json!({"trust":
+            if t.load(std::sync::atomic::Ordering::SeqCst) { "trusted" } else { "untrusted" }})),
+        "project.trust" => {
+            t.store(
+                p["trusted"].as_bool().unwrap_or(false),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            Ok(json!({}))
+        }
+        _ => default_handler(m, p),
+    }))
+    .await;
+    let job = port::Job {
+        id: port::JobId(String::new()),
+        name: "nightly".into(),
+        cron: "0 2 * * *".into(),
+        kind: port::JobKind::Simple {
+            prompt: "跑测试".into(),
+            skills: vec![],
+            project: None,
+            scene: None,
+            model: None,
+        },
+        enabled: true,
+        catch_up: false,
+        created_ms: 0,
+        next_fire_ms: None,
+        last: None,
+    };
+    let refused = r.hub.handle(Command::SaveJob { job: job.clone() }).await;
+    assert!(refused.is_err(), "不受信的项目存不进作业：{refused:?}");
+
+    r.hub
+        .handle(Command::TrustProject { trusted: true })
+        .await
+        .unwrap();
+    let Reply::Job(saved) = r.hub.handle(Command::SaveJob { job }).await.unwrap() else {
+        panic!("SaveJob 回的不是作业");
+    };
+    assert_eq!(saved.created_ms, 1_000_000, "新建的作业记下创建时刻");
+    r.events().await;
+
+    r.hub
+        .handle(Command::TrustProject { trusted: false })
+        .await
+        .unwrap();
+    let ev = r.events().await;
+    assert!(
+        ev.iter()
+            .any(|e| matches!(e, Event::JobRemoved { job } if *job == saved.id)),
+        "{ev:?}"
+    );
+    let Reply::Jobs(left) = r.hub.handle(Command::ListJobs).await.unwrap() else {
+        panic!("ListJobs 回的不是作业列表");
+    };
+    assert!(left.is_empty());
 }

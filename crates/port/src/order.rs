@@ -4,7 +4,8 @@
 //!
 //! - 会话：只算用户会话（人新建的、分叉的），建会话的时刻新的在前；同一时刻的保持传入顺序。
 //! - 流程：按名字（流程的唯一标识）升序。
-//! - 作业：按 ID 升序。实例给的 ID 是 `job-<创建时的毫秒>-<序号>`，所以就是创建顺序，改名不跳。
+//! - 作业：按创建时刻升序，同一时刻按 ID。ID 是随机的（定义进 git，序号会撞），所以不能按 ID 排；
+//!   改名、改 cron 都不跳。
 
 use crate::{FlowSummary, Job, Origin, SessionSummary};
 
@@ -27,7 +28,7 @@ pub fn flows<'a>(all: impl IntoIterator<Item = &'a FlowSummary>) -> Vec<&'a Flow
 
 pub fn jobs<'a>(all: impl IntoIterator<Item = &'a Job>) -> Vec<&'a Job> {
     let mut v: Vec<&Job> = all.into_iter().collect();
-    v.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+    v.sort_by(|a, b| (a.created_ms, &a.id.0).cmp(&(b.created_ms, &b.id.0)));
     v
 }
 
@@ -102,7 +103,7 @@ mod tests {
         };
         let flows_in = [f("weekly"), f("deploy")];
         assert_eq!(flows(&flows_in)[0].name, "deploy");
-        let j = |id: &str, name: &str| Job {
+        let j = |id: &str, name: &str, created_ms: u64| Job {
             id: JobId(id.into()),
             name: name.into(),
             cron: "* * * * *".into(),
@@ -115,10 +116,11 @@ mod tests {
             },
             enabled: true,
             catch_up: false,
+            created_ms,
             next_fire_ms: None,
             last: None,
         };
-        let jobs_in = [j("job-1763280000002-0", "a"), j("job-1763280000001-0", "b")];
+        let jobs_in = [j("j00000001", "a", 2), j("jffffffff", "b", 1)];
         let names: Vec<&str> = jobs(&jobs_in).iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, ["b", "a"]);
     }

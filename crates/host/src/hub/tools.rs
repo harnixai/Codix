@@ -177,6 +177,7 @@ pub fn job_from_input(input: &Value, existing: Option<Job>) -> Result<Job, Strin
         },
         enabled: true,
         catch_up: false,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     });

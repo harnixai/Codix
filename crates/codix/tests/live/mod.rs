@@ -166,6 +166,14 @@ impl Live {
         self.create(NAME, &self.project_path()).await
     }
 
+    /// 起实例并信任它的项目：作业定义随项目提交，项目受信才读、才写（architecture §8.5）。
+    /// 信任由 Agix 记着，重启之后照旧。
+    pub async fn start_trusted(&self) -> Client {
+        let c = self.start().await;
+        c.ok(Command::TrustProject { trusted: true }).await;
+        c
+    }
+
     pub async fn create(&self, name: &str, project: &str) -> Client {
         let (_, b) = self
             .instances

@@ -20,6 +20,7 @@ fn job(name: &str, prompt: &str) -> Job {
         },
         enabled: true,
         catch_up: false,
+        created_ms: 0,
         next_fire_ms: None,
         last: None,
     }
@@ -42,7 +43,7 @@ fn asked_for(t: &live::TurnOutcome, tool: &str) -> bool {
 #[ignore = "live"]
 async fn a_user_session_manages_jobs_and_names_itself_with_host_tools() {
     let lv = Live::new();
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     c.answering(Answering::Auto);
     let s = c.new_session().await;
     c.watch(&s).await;
@@ -118,7 +119,7 @@ async fn a_user_session_manages_jobs_and_names_itself_with_host_tools() {
 #[ignore = "live"]
 async fn a_job_session_cannot_touch_another_job() {
     let lv = Live::new();
-    let mut c = lv.start().await;
+    let mut c = lv.start_trusted().await;
     c.answering(Answering::Auto);
     let other = match c
         .ok(Command::SaveJob {

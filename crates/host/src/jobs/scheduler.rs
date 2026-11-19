@@ -87,6 +87,23 @@ impl Scheduler {
         Ok(r)
     }
 
+    /// 项目的信任变了：重读作业定义。新读进来的作业按启动时的规矩处理到期的触发（`catch_up` 的补一次，
+    /// 其余只前移基线），否则信任一给，停着期间"错过"的触发会一下子全跑起来。返回此前有、现在没有的作业。
+    pub fn set_trusted(&self, trusted: bool) -> Vec<port::JobId> {
+        let before: Vec<port::JobId> = self.list().into_iter().map(|j| j.id).collect();
+        self.lock().set_trusted(trusted);
+        let now = self.now();
+        for job in self.take_due(now, true) {
+            self.spawn_fire(job, now);
+        }
+        self.wake.notify_one();
+        let after = self.list();
+        before
+            .into_iter()
+            .filter(|id| !after.iter().any(|j| j.id == *id))
+            .collect()
+    }
+
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool, String> {
         let r = self.lock().set_enabled(id, enabled, self.now())?;
         self.wake.notify_one();
@@ -201,6 +218,7 @@ mod tests {
             },
             enabled: true,
             catch_up,
+            created_ms: 0,
             next_fire_ms: None,
             last: None,
         }
@@ -214,7 +232,13 @@ mod tests {
     }
 
     fn store_at(dir: &std::path::Path) -> JobStore {
-        JobStore::open(dir.join("jobs.json"), dir.join("jobs"))
+        let mut s = JobStore::open(
+            dir.join("jobs.json"),
+            dir.join("jobs-state.json"),
+            dir.join("jobs"),
+        );
+        s.set_trusted(true);
+        s
     }
 
     async fn settle() {

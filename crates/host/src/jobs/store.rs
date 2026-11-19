@@ -1,32 +1,54 @@
-//! `jobs.json` 与 `jobs/<id>.jsonl`。
+//! 作业的存取（architecture §8.5）：定义在 `.codix/jobs.json`，随项目提交，项目受信才读、才写；
+//! 启用与否、调度基线在 `state/codix/jobs-state.json`，只属于这台机器；触发记录是
+//! `state/codix/jobs/<id>.jsonl`。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use client::ProjectState;
-use port::{Job, JobEntry, JobId, JobOutcome, Usage};
+use port::{Job, JobEntry, JobId, JobKind, JobOutcome, Usage};
 use serde::{Deserialize, Serialize};
 
 use super::cron;
 
-/// 落盘记录。`last_fired_ms` / `created_ms` 是补跑要用的基线；`Job` 里的
-/// `next_fire_ms` 与 `last` 是派生值，所以写盘时清掉、读盘后也不用。
+/// 随项目提交的那一份：团队共用，不带这台机器的启停与基线。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct JobDef {
+    id: JobId,
+    name: String,
+    cron: String,
+    kind: JobKind,
+    #[serde(default)]
+    catch_up: bool,
+    #[serde(default)]
+    created_ms: u64,
+}
+
+/// 这台机器上的状态。没有记录的作业是停用的：克隆下来的仓库带着作业，不能拉下代码就跑起来。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct Local {
+    enabled: bool,
+    #[serde(default)]
+    last_fired_ms: Option<u64>,
+    /// 没触发过时的基线：在这台机器上新建、改了 cron、恢复启用的时刻。
+    #[serde(default)]
+    since_ms: u64,
+}
+
+/// 内存里合起来的一条。`Job` 的 `next_fire_ms` 与 `last` 是派生值，这里不用。
+#[derive(Debug, Clone, PartialEq)]
 pub struct StoredJob {
     pub job: Job,
-    #[serde(default)]
     pub last_fired_ms: Option<u64>,
-    #[serde(default)]
-    pub created_ms: u64,
+    pub since_ms: u64,
 }
 
 impl StoredJob {
-    /// 调度基线：上次触发，没触发过就是创建时间。
+    /// 调度基线：上次触发，没触发过就是 `since_ms`。
     pub fn base_ms(&self) -> u64 {
-        self.last_fired_ms.unwrap_or(self.created_ms)
+        self.last_fired_ms.unwrap_or(self.since_ms)
     }
 
     /// 按基线算的下一次触发；已经到期（待触发或待补跑）时照实返回过去的时刻。
@@ -36,52 +58,113 @@ impl StoredJob {
         }
         cron::next_after(&self.job.cron, self.base_ms())
     }
+
+    fn def(&self) -> JobDef {
+        JobDef {
+            id: self.job.id.clone(),
+            name: self.job.name.clone(),
+            cron: self.job.cron.clone(),
+            kind: self.job.kind.clone(),
+            catch_up: self.job.catch_up,
+            created_ms: self.job.created_ms,
+        }
+    }
+
+    fn local(&self) -> Local {
+        Local {
+            enabled: self.job.enabled,
+            last_fired_ms: self.last_fired_ms,
+            since_ms: self.since_ms,
+        }
+    }
 }
 
+const UNTRUSTED: &str =
+    "the project is not trusted: its job definitions are not read or saved until it is (/trust)";
+
 pub struct JobStore {
-    path: PathBuf,
+    defs_path: PathBuf,
+    state_path: PathBuf,
     history_dir: PathBuf,
+    trusted: bool,
     jobs: Vec<StoredJob>,
 }
 
-static SEQ: AtomicU64 = AtomicU64::new(0);
-
 impl JobStore {
-    pub fn open(path: impl Into<PathBuf>, history_dir: impl Into<PathBuf>) -> JobStore {
-        let path = path.into();
-        let jobs = fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Vec<StoredJob>>(&b).ok())
-            .unwrap_or_default();
+    /// 起初当项目不受信、什么都不读：信任要问过引擎才知道（[`JobStore::set_trusted`]）。
+    pub fn open(
+        defs_path: impl Into<PathBuf>,
+        state_path: impl Into<PathBuf>,
+        history_dir: impl Into<PathBuf>,
+    ) -> JobStore {
         JobStore {
-            path,
+            defs_path: defs_path.into(),
+            state_path: state_path.into(),
             history_dir: history_dir.into(),
-            jobs,
+            trusted: false,
+            jobs: vec![],
         }
     }
 
     pub fn open_in(state: &ProjectState) -> JobStore {
-        JobStore::open(state.jobs(), state.job_history_dir())
+        JobStore::open(state.jobs(), state.jobs_state(), state.job_history_dir())
+    }
+
+    pub fn trusted(&self) -> bool {
+        self.trusted
+    }
+
+    /// 信任变了：受信就从盘上重读定义，不受信就一个都不留。
+    pub fn set_trusted(&mut self, trusted: bool) {
+        self.trusted = trusted;
+        self.jobs.clear();
+        if !trusted {
+            return;
+        }
+        let defs: Vec<JobDef> = fs::read(&self.defs_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        let mut local: BTreeMap<String, Local> = fs::read(&self.state_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        for d in defs.into_iter().filter(|d| valid_id(d.id.as_str())) {
+            let l = local.remove(d.id.as_str()).unwrap_or_default();
+            self.jobs.push(StoredJob {
+                job: Job {
+                    id: d.id,
+                    name: d.name,
+                    cron: d.cron,
+                    kind: d.kind,
+                    enabled: l.enabled,
+                    catch_up: d.catch_up,
+                    created_ms: d.created_ms,
+                    next_fire_ms: None,
+                    last: None,
+                },
+                last_fired_ms: l.last_fired_ms,
+                since_ms: l.since_ms,
+            });
+        }
     }
 
     fn history_path(&self, id: &str) -> PathBuf {
         self.history_dir.join(format!("{id}.jsonl"))
     }
 
-    fn save(&self) -> Result<(), String> {
-        let mut stored = self.jobs.clone();
-        for s in &mut stored {
-            s.job.next_fire_ms = None;
-            s.job.last = None;
-        }
-        let bytes = serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?;
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        // 先写临时文件再改名：写到一半崩了也不会留下截断的 jobs.json。
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-        fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+    fn save_defs(&self) -> Result<(), String> {
+        let defs: Vec<JobDef> = self.jobs.iter().map(StoredJob::def).collect();
+        write_atomic(&self.defs_path, &defs)
+    }
+
+    fn save_local(&self) -> Result<(), String> {
+        let local: BTreeMap<&str, Local> = self
+            .jobs
+            .iter()
+            .map(|s| (s.job.id.as_str(), s.local()))
+            .collect();
+        write_atomic(&self.state_path, &local)
     }
 
     fn decorate(&self, s: &StoredJob, now_ms: u64) -> Job {
@@ -115,15 +198,31 @@ impl JobStore {
         &self.jobs
     }
 
-    /// 新建或覆盖。`now_ms` 由调用方给：只在新建或改了 cron 时用作补跑基线，
+    /// 有触发记录的作业：定义读不到（项目不受信、作业被别人删了）时也要能收拾上次没跑完的触发。
+    pub fn history_ids(&self) -> Vec<String> {
+        fs::read_dir(&self.history_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".jsonl").map(str::to_owned)
+            })
+            .filter(|id| valid_id(id))
+            .collect()
+    }
+
+    /// 新建或覆盖。`now_ms` 由调用方给：新建时记作创建时刻；新建、改了 cron 或恢复启用时用作补跑基线，
     /// 存储层自己读时钟的话测试没法控制时间。
     pub fn upsert(&mut self, mut job: Job, now_ms: u64) -> Result<Job, String> {
+        if !self.trusted {
+            return Err(UNTRUSTED.into());
+        }
         cron::validate(&job.cron)?;
         if job.id.as_str().is_empty() {
-            let n = SEQ.fetch_add(1, Ordering::Relaxed);
-            job.id = JobId(format!("job-{now_ms}-{n}"));
-        } else if job.id.as_str().contains(['/', '\\']) || job.id.as_str().contains("..") {
-            return Err(format!("非法作业 id：{}", job.id));
+            job.id = new_id();
+        } else if !valid_id(job.id.as_str()) {
+            return Err(format!("invalid job id: {}", job.id));
         }
         job.next_fire_ms = None;
         job.last = None;
@@ -133,49 +232,61 @@ impl JobStore {
                 // 从停用恢复同理：停用期间的触发不算错过。
                 if s.job.cron != job.cron || (!s.job.enabled && job.enabled) {
                     s.last_fired_ms = None;
-                    s.created_ms = now_ms;
+                    s.since_ms = now_ms;
                 }
+                job.created_ms = s.job.created_ms;
                 s.job = job.clone();
             }
-            None => self.jobs.push(StoredJob {
-                job: job.clone(),
-                last_fired_ms: None,
-                created_ms: now_ms,
-            }),
+            None => {
+                job.created_ms = now_ms;
+                self.jobs.push(StoredJob {
+                    job: job.clone(),
+                    last_fired_ms: None,
+                    since_ms: now_ms,
+                })
+            }
         }
-        self.save()?;
+        self.save_defs()?;
+        self.save_local()?;
         let s = self.jobs.iter().find(|s| s.job.id == job.id).unwrap();
         Ok(self.decorate(s, now_ms))
     }
 
     pub fn delete(&mut self, id: &str) -> Result<bool, String> {
+        if !self.trusted {
+            return Err(UNTRUSTED.into());
+        }
         let before = self.jobs.len();
         self.jobs.retain(|s| s.job.id.as_str() != id);
         let removed = self.jobs.len() != before;
         if removed {
-            self.save()?;
+            self.save_defs()?;
+            self.save_local()?;
             let _ = fs::remove_file(self.history_path(id));
         }
         Ok(removed)
     }
 
     pub fn set_enabled(&mut self, id: &str, enabled: bool, now_ms: u64) -> Result<bool, String> {
+        if !self.trusted {
+            return Err(UNTRUSTED.into());
+        }
         let Some(s) = self.jobs.iter_mut().find(|s| s.job.id.as_str() == id) else {
             return Ok(false);
         };
         if enabled && !s.job.enabled {
             s.last_fired_ms = None;
-            s.created_ms = now_ms;
+            s.since_ms = now_ms;
         }
         s.job.enabled = enabled;
-        self.save()?;
+        self.save_local()?;
         Ok(true)
     }
 
     pub fn mark_fired(&mut self, id: &str, fired_ms: u64) -> Result<(), String> {
         if let Some(s) = self.jobs.iter_mut().find(|s| s.job.id.as_str() == id) {
             s.last_fired_ms = Some(fired_ms);
-            self.save()?;
+            self.save_local()?;
         }
         Ok(())
     }
@@ -237,6 +348,32 @@ impl JobStore {
     }
 }
 
+/// 随机的短 ID：定义进 git，几个人各自新建，按序号编的会撞。
+fn new_id() -> JobId {
+    let hex = uuid::Uuid::new_v4().simple().to_string();
+    JobId(format!("j{}", &hex[..8]))
+}
+
+/// ID 拼进触发记录的文件名：定义来自仓库，不能带路径。
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// 先写临时文件再改名：写到一半崩了也不会留下截断的文件。
+fn write_atomic(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +394,7 @@ mod tests {
             },
             enabled: true,
             catch_up: false,
+            created_ms: 0,
             next_fire_ms: None,
             last: None,
         }
@@ -272,8 +410,22 @@ mod tests {
         }
     }
 
+    fn open_untrusted(dir: &Path) -> JobStore {
+        JobStore::open(
+            dir.join("jobs.json"),
+            dir.join("state/jobs-state.json"),
+            dir.join("state/jobs"),
+        )
+    }
+
     fn open(dir: &Path) -> JobStore {
-        JobStore::open(dir.join("jobs.json"), dir.join("jobs"))
+        let mut s = open_untrusted(dir);
+        s.set_trusted(true);
+        s
+    }
+
+    fn read(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
     }
 
     #[test]
@@ -285,7 +437,8 @@ mod tests {
         s.mark_fired("a", 60_000).unwrap();
         let s2 = open(d.path());
         assert_eq!(s2.stored()[0].last_fired_ms, Some(60_000));
-        assert_eq!(s2.stored()[0].created_ms, 1_000);
+        assert_eq!(s2.stored()[0].since_ms, 1_000);
+        assert_eq!(s2.stored()[0].job.created_ms, 1_000);
         assert_eq!(s2.stored()[0].job.next_fire_ms, None);
         assert_eq!(s2.list(61_000)[0].next_fire_ms, Some(120_000));
         assert!(s2.get("a", 0).is_some());
@@ -300,8 +453,9 @@ mod tests {
         assert!(s.upsert(job("../x", "* * * * *"), 0).is_err());
         let j1 = s.upsert(job("", "* * * * *"), 5).unwrap();
         let j2 = s.upsert(job("", "* * * * *"), 5).unwrap();
-        assert!(j1.id.as_str().starts_with("job-5-"));
+        assert!(j1.id.as_str().starts_with('j') && j1.id.as_str().len() == 9);
         assert_ne!(j1.id, j2.id);
+        assert_eq!(j1.created_ms, 5);
     }
 
     #[test]
@@ -325,7 +479,7 @@ mod tests {
             .unwrap();
         let mut f = fs::OpenOptions::new()
             .append(true)
-            .open(d.path().join("jobs/a.jsonl"))
+            .open(d.path().join("state/jobs/a.jsonl"))
             .unwrap();
         f.write_all(b"{garbage\n").unwrap();
         let h = s.history("a", 10);
@@ -344,10 +498,69 @@ mod tests {
         let mut s = open(d.path());
         s.upsert(job("a", "* * * * *"), 0).unwrap();
         s.append("a", &entry(1, JobOutcome::Done)).unwrap();
-        assert!(d.path().join("jobs/a.jsonl").exists());
+        assert!(d.path().join("state/jobs/a.jsonl").exists());
         assert!(s.delete("a").unwrap());
-        assert!(!d.path().join("jobs/a.jsonl").exists());
+        assert!(!d.path().join("state/jobs/a.jsonl").exists());
         assert!(!s.delete("a").unwrap());
         assert!(open(d.path()).stored().is_empty());
+    }
+
+    /// 定义随项目提交，不带这台机器的启停与基线；那些在本机状态里。
+    #[test]
+    fn definitions_and_local_state_are_kept_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = open(d.path());
+        s.upsert(job("a", "* * * * *"), 1_000).unwrap();
+        s.mark_fired("a", 60_000).unwrap();
+        let defs = read(&d.path().join("jobs.json"));
+        assert_eq!(defs[0]["id"], "a");
+        assert_eq!(defs[0]["created_ms"], 1_000);
+        assert!(defs[0].get("enabled").is_none() && defs[0].get("last_fired_ms").is_none());
+        let local = read(&d.path().join("state/jobs-state.json"));
+        assert_eq!(local["a"]["enabled"], true);
+        assert_eq!(local["a"]["last_fired_ms"], 60_000);
+    }
+
+    /// 克隆下来的仓库带着作业：这台机器没有它们的状态，一律停用。
+    #[test]
+    fn jobs_without_local_state_are_disabled() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(
+            d.path().join("jobs.json"),
+            r#"[{"id":"x","name":"x","cron":"* * * * *","kind":{"simple":{"prompt":"hi"}}}]"#,
+        )
+        .unwrap();
+        let s = open(d.path());
+        let j = s.get("x", 0).unwrap();
+        assert!(!j.enabled);
+        assert_eq!(j.next_fire_ms, None);
+        assert!(s.stored()[0].due_ms().is_none());
+    }
+
+    #[test]
+    fn an_untrusted_project_has_no_jobs_and_saves_none() {
+        let d = tempfile::tempdir().unwrap();
+        open(d.path()).upsert(job("a", "* * * * *"), 0).unwrap();
+        let mut s = open_untrusted(d.path());
+        assert!(s.list(0).is_empty());
+        assert!(s.upsert(job("b", "* * * * *"), 0).is_err());
+        assert!(s.delete("a").is_err());
+        assert!(s.set_enabled("a", false, 0).is_err());
+        s.set_trusted(true);
+        assert_eq!(s.list(0).len(), 1);
+        s.set_trusted(false);
+        assert!(s.list(0).is_empty());
+    }
+
+    /// ID 来自仓库里的文件，拼进触发记录的文件名：带路径的不认。
+    #[test]
+    fn definitions_with_path_like_ids_are_ignored() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(
+            d.path().join("jobs.json"),
+            r#"[{"id":"../../x","name":"x","cron":"* * * * *","kind":{"simple":{"prompt":"hi"}}}]"#,
+        )
+        .unwrap();
+        assert!(open(d.path()).list(0).is_empty());
     }
 }
