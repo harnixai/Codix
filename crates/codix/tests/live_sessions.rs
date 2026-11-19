@@ -265,3 +265,41 @@ async fn flow_commands_are_wired() {
     let r = c.call(Command::GetFlow { name: "x".into() }).await;
     assert!(matches!(&r, Err(PortError::Failed(_))), "{r:?}");
 }
+
+/// 会话放在项目里（Agix#94）：受信项目的会话进 `.codix/state/history/<id>/`，全局只留索引；
+/// 不受信时照旧在全局。两种都跨重启列得出。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_trusted_projects_sessions_are_kept_in_the_project() {
+    let lv = Live::new();
+    let mut c = lv.start().await;
+    let before = c.new_session().await;
+    c.watch(&before).await;
+    c.turn(&before, OK).await.ended();
+    c.ok(Command::TrustProject { trusted: true }).await;
+    let after = c.new_session().await;
+    c.watch(&after).await;
+    c.turn(&after, OK).await.ended();
+
+    let history = lv.state().data_dir().join("state/history");
+    assert!(
+        history.join(&after.0).is_dir(),
+        "受信之后建的会话在项目里：{}",
+        history.display()
+    );
+    assert!(
+        !history.join(&before.0).exists(),
+        "受信之前建的会话照旧在全局"
+    );
+    assert!(
+        lv.layout().home().join("sessions").join(&after.0).is_dir(),
+        "全局留着它的索引"
+    );
+
+    drop(c);
+    let c = lv.restart().await;
+    let list = c.sessions().await;
+    for id in [&before, &after] {
+        assert!(list.iter().any(|s| s.id == *id), "{id} 跨重启还在");
+    }
+}
