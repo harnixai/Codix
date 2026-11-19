@@ -17,6 +17,7 @@ pub enum ShellEffect {
     SetMouseCapture(bool),
     Redraw,
     Bell,
+    Clipboard(String),
 }
 
 /// 启动后先做什么（需求 I-01、I-02、I-04）。
@@ -240,6 +241,7 @@ impl Core {
                 Effect::SetMouseCapture(on) => shell.push(ShellEffect::SetMouseCapture(on)),
                 Effect::Redraw => shell.push(ShellEffect::Redraw),
                 Effect::Bell => shell.push(ShellEffect::Bell),
+                Effect::Clipboard(t) => shell.push(ShellEffect::Clipboard(t)),
             }
         }
         shell

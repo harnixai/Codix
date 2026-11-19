@@ -372,3 +372,29 @@ async fn demo_history_renders_every_block_kind() {
     h.advance(5_000).await;
     assert!(!h.core.state.conv().unwrap().running);
 }
+
+/// 转录里按 y：没选中块就复制最近一次回复的原文，交给终端剪贴板（需求 M-07）。
+#[tokio::test(start_paused = true)]
+async fn y_in_the_transcript_copies_the_last_reply() {
+    let mut h = Harness::new("default", Size::new(160, 45)).await;
+    h.open_session("重构认证模块").await;
+    h.settle().await;
+    let last = h
+        .core
+        .state
+        .conv()
+        .and_then(|c| {
+            c.blocks.iter().rev().find_map(|b| match &b.kind {
+                model::BlockKind::Assistant { text } => Some(text.clone()),
+                _ => None,
+            })
+        })
+        .expect("这个会话里有回复");
+    h.core.state.ui.focus = model::Focus::Transcript;
+    let fx = h.core.handle(model::Msg::Action(keys::Action::Copy));
+    assert!(
+        fx.iter()
+            .any(|e| matches!(e, ShellEffect::Clipboard(t) if *t == last)),
+        "{fx:?}"
+    );
+}

@@ -80,6 +80,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Transcript, "[", A::BlockPrev),
         b(C::Transcript, "]", A::BlockNext),
         b(C::Transcript, "Enter", A::Open),
+        b(C::Transcript, "y", A::Copy),
         // 详细时整段都展开，单个块的 Enter 就没用了：o 收回精简再一块一块看。
         b(C::Transcript, "o", A::ToggleDetail),
         // 补全列表

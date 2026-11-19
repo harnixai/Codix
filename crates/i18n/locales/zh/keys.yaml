@@ -69,6 +69,7 @@ keys:
     run_now: "立即运行"
     delete: "删除"
     reopen: "重新打开"
+    copy: "复制"
     quit: "退出"
     yes: "是"
     no: "否"

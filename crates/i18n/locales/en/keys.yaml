@@ -69,6 +69,7 @@ keys:
     run_now: "Run now"
     delete: "Delete"
     reopen: "reopen"
+    copy: "copy"
     quit: "Quit"
     yes: "Yes"
     no: "No"

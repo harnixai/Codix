@@ -81,6 +81,8 @@ pub enum Action {
     Delete,
     /// 已关闭的会话重新打开。
     Reopen,
+    /// 复制转录里选中的那一块（没选中就是最近一次回复）。
+    Copy,
     Quit,
 
     // 对话框
@@ -171,6 +173,7 @@ impl Action {
             RunNow => i18n::t!("keys.action.run_now"),
             Delete => i18n::t!("keys.action.delete"),
             Reopen => i18n::t!("keys.action.reopen"),
+            Copy => i18n::t!("keys.action.copy"),
             Quit => i18n::t!("keys.action.quit"),
             Yes => i18n::t!("keys.action.yes"),
             No => i18n::t!("keys.action.no"),

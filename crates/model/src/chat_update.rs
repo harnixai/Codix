@@ -17,7 +17,7 @@ const DETACH_ARM_MS: u64 = 800;
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
 const LOCAL: &[&str] = &[
     "help", "new", "rename", "sessions", "model", "goal", "btw", "trust", "doctor", "quit", "exit",
-    "stop", "mouse", "events", "notify",
+    "stop", "mouse", "events", "notify", "copy",
 ];
 
 impl State {
@@ -207,9 +207,46 @@ pub(crate) fn transcript_action(s: &mut State, a: Action) -> Option<Vec<Effect>>
             let id = s.conv()?.selected?;
             toggle_block(s, id);
         }
+        Action::Copy => return Some(copy_block(s)),
         _ => return None,
     }
     Some(vec![])
+}
+
+/// 选中的那一块的原文（没选中就是最近一次回复）放进剪贴板：从块的原文取，不从排好的行拼，
+/// 折行处不会多出换行（需求 M-07）。
+pub(crate) fn copy_block(s: &mut State) -> Vec<Effect> {
+    let Some(c) = s.conv() else {
+        return vec![];
+    };
+    let block = match c.selected {
+        Some(id) => c.blocks.iter().find(|b| b.id == id),
+        None => c
+            .blocks
+            .iter()
+            .rev()
+            .find(|b| matches!(b.kind, crate::chat::BlockKind::Assistant { .. })),
+    };
+    let text = match block.map(|b| &b.kind) {
+        Some(crate::chat::BlockKind::User { text, .. })
+        | Some(crate::chat::BlockKind::Assistant { text })
+        | Some(crate::chat::BlockKind::Thinking { text, .. })
+        | Some(crate::chat::BlockKind::Notice { text, .. }) => text.clone(),
+        Some(crate::chat::BlockKind::Tool { input, content, .. }) => match content {
+            Some(out) => format!("{input}\n{out}"),
+            None => input.clone(),
+        },
+        _ => String::new(),
+    };
+    if text.is_empty() {
+        s.notice(i18n::t!("chat_update.copy_none"), false);
+        return vec![];
+    }
+    s.notice(
+        i18n::t!("chat_update.copied", n = text.chars().count()),
+        false,
+    );
+    vec![Effect::Clipboard(text)]
 }
 
 pub(crate) fn text(s: &mut State, c: char) -> Vec<Effect> {
@@ -658,6 +695,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             },
         )],
         "notify" => vec![s.call(Pending::Notified, Command::TestNotify)],
+        "copy" => copy_block(s),
         "doctor" => vec![s.call(Pending::Doctor, Command::Doctor)],
         _ => return None,
     })

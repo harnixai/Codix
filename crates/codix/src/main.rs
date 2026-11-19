@@ -304,6 +304,7 @@ async fn event_loop(
                 ShellEffect::SetMouseCapture(on) => t.set_mouse(on)?,
                 ShellEffect::Redraw => t.clear()?,
                 ShellEffect::Bell => print!("\x07"),
+                ShellEffect::Clipboard(text) => print!("{}", app::osc52(&text)),
             }
         }
         dirty |= core.take_dirty();

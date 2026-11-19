@@ -69,6 +69,8 @@ pub enum Effect {
     Instances(InstOp),
     /// 放下当前后端：被踢、空闲脱离、实例停了之后不再收它的事件。
     Release,
+    /// 放进终端的剪贴板（OSC 52）。
+    Clipboard(String),
 }
 
 /// 发出去还没回来的命令，回来时据此知道把结果放到哪里。
