@@ -1,6 +1,8 @@
 # 会话标签。
 sessions:
   new: "＋ 新建会话"
+  closed: "已关闭 ({n})"
+  closed_readonly: "已关闭 · o 重新打开 · d 删除"
   new_hint: "  Enter · 或在输入框里 /new"
   goal_round: "第 {n}/{max} 轮"
   goal_paused: "已暂停"

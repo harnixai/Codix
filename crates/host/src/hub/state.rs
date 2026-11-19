@@ -104,7 +104,11 @@ pub struct St {
 
 impl St {
     pub fn summary(&self, id: &str) -> Option<SessionSummary> {
-        let s = self.sessions.get(id)?;
+        Some(self.summary_of(self.sessions.get(id)?))
+    }
+
+    /// 不在会话表里的（已关闭的）也能拼一份摘要。
+    pub fn summary_of(&self, s: &Sess) -> SessionSummary {
         let blocked = s
             .goal
             .as_ref()
@@ -116,7 +120,7 @@ impl St {
         } else {
             SessionState::Idle
         };
-        Some(SessionSummary {
+        SessionSummary {
             id: SessionId(s.id.clone()),
             title: s.title.clone(),
             state,
@@ -134,7 +138,7 @@ impl St {
             created_ms: s.created_ms,
             permission: s.permission,
             held_by: None,
-        })
+        }
     }
 
     fn upsert(&self, id: &str, out: &mut Out) {

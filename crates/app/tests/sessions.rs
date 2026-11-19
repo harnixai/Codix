@@ -363,3 +363,51 @@ async fn a_long_panel_scrolls_under_the_wheel_and_never_takes_the_focus() {
     h.click(col, row);
     assert!(!h.core.state.panel_open(), "点下沿收起");
 }
+
+/// 关掉的会话在末尾的「已关闭」里，选中只读地看，`o` 重新打开回到上面（交互 §5.2）。
+#[tokio::test(start_paused = true)]
+async fn a_closed_session_waits_under_closed_and_can_be_reopened() {
+    let mut h = Harness::new("default", Size::new(160, 45)).await;
+    h.tab(model::Tab::Sessions).await;
+    h.settle().await;
+    let first = h.core.state.user_sessions()[0].clone();
+    let at = h
+        .core
+        .state
+        .session_rows()
+        .iter()
+        .position(|r| r == &model::SessRow::Session(first.id.clone()))
+        .unwrap();
+    h.pick_upper(at).await;
+    h.keys("x y").await;
+    h.settle().await;
+    let rows = h.core.state.session_rows();
+    let closed = rows
+        .iter()
+        .position(|r| r == &model::SessRow::Closed)
+        .expect("出现「已关闭」");
+    assert!(h.text().contains("已关闭 (1)"));
+    h.pick_upper(closed).await;
+    h.keys("Right").await;
+    h.settle().await;
+    let row = h
+        .core
+        .state
+        .session_rows()
+        .iter()
+        .position(|r| r == &model::SessRow::ClosedSession(first.id.clone()))
+        .unwrap();
+    h.pick_upper(row).await;
+    h.settle().await;
+    assert_eq!(h.chat_title(), first.title, "左边只读地看它");
+    h.keys("o").await;
+    h.settle().await;
+    assert!(
+        h.core.state.user_sessions().iter().any(|s| s.id == first.id),
+        "重新打开回到上面"
+    );
+    assert!(h.calls("dev").iter().any(|c| matches!(
+        c,
+        port::Command::ReopenSession { session } if *session == first.id
+    )));
+}

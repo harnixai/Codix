@@ -113,6 +113,17 @@ pub enum Command {
         from_byte: u64,
     },
 
+    /// 在 Codix 里关掉的会话（转录还在），关掉的时刻新的在前（交互 §5.2「已关闭」）。
+    ListClosedSessions,
+    /// 已关闭的会话放回会话列表。
+    ReopenSession {
+        session: SessionId,
+    },
+    /// 删掉一个会话：转录、附属数据、子 Agent 的侧链都删，删了就没了。
+    DeleteSession {
+        session: SessionId,
+    },
+
     // 流程
     ListFlows,
     GetFlow {
@@ -215,6 +226,9 @@ impl Command {
             Command::ListFlows => "list_flows",
             Command::GetFlow { .. } => "get_flow",
             Command::ListRuns { .. } => "list_runs",
+            Command::ListClosedSessions => "list_closed_sessions",
+            Command::ReopenSession { .. } => "reopen_session",
+            Command::DeleteSession { .. } => "delete_session",
             Command::ListEndedRuns { .. } => "list_ended_runs",
             Command::GetRun { .. } => "get_run",
             Command::StartRun { .. } => "start_run",

@@ -102,6 +102,8 @@ pub enum Confirm {
     CancelRun(port::RunId, String),
     /// 停下作业正在跑的那一次：作业、哪一次（省略 = 正在跑的那次）、名字。
     StopFiring(port::JobId, Option<u64>, String),
+    /// 删掉一个已关闭的会话：会话、名字。
+    DeleteSession(SessionId, String),
     ForceStation(port::RunId, port::StationId, String),
     Rework(port::RunId, port::StationId, String),
 }
@@ -169,6 +171,9 @@ pub struct Domain {
     /// 每个流程的运行（展开流程时取）。
     pub runs: Map<String, Vec<port::RunSummary>>,
     pub run_views: Map<port::RunId, port::RunView>,
+    /// 在 Codix 里关掉的会话（会话标签末尾的「已关闭」）。
+    pub closed_sessions: Vec<SessionSummary>,
+    pub closed_loaded: bool,
     /// 已结束的运行，不分流程，结束时刻新的在前（流程标签末尾的「已结束」，交互 §5.3）。
     pub ended_runs: Vec<port::RunSummary>,
     /// 取过一次了（取失败也算，免得每帧重取）。
@@ -259,6 +264,8 @@ pub struct Ui {
     pub pending_jump: Option<crate::follow::Attention>,
     /// 待跳转已经切过一次标签：之后标签变了就是人自己换走了。
     pub pending_jump_set: bool,
+    /// 会话标签的「已关闭」展开着（缺省收起）。
+    pub closed_expanded: bool,
     /// 「已结束」展开着（缺省收起）。
     pub ended_expanded: bool,
     /// 上一次提示过"运行已结束"的运行：同一个只提示一次。
@@ -384,6 +391,7 @@ impl State {
                 rename: None,
                 flow_expanded: Default::default(),
                 ended_expanded: false,
+                closed_expanded: false,
                 pending_jump: None,
                 pending_jump_set: false,
                 ended_noticed: None,

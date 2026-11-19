@@ -134,6 +134,8 @@ fn row_keys(s: &State, tab: Tab, upper: bool) -> Vec<String> {
                 SessRow::Goal(id) => format!("g:{id}"),
                 SessRow::Todo(id) => format!("t:{id}"),
                 SessRow::TodoItem(id, i) => format!("ti:{id}:{i}"),
+                SessRow::Closed => "closed".into(),
+                SessRow::ClosedSession(id) => format!("cs:{id}"),
             })
             .collect(),
         (Tab::Sessions, false) => s
@@ -420,7 +422,17 @@ fn data(s: &mut State) -> Vec<Effect> {
                 ));
             }
         }
-        Tab::Sessions => out.extend(crate::sessions::ensure_watch(s)),
+        Tab::Sessions => {
+            if !s.domain.closed_loaded {
+                out.extend(load(
+                    s,
+                    "closed".into(),
+                    Pending::ClosedSessions,
+                    Command::ListClosedSessions,
+                ));
+            }
+            out.extend(crate::sessions::ensure_watch(s));
+        }
     }
     out
 }

@@ -283,6 +283,12 @@ impl ScriptedBackend {
                 .ok_or_else(|| PortError::Failed(format!("没有会话 {session}"))),
             Close { session } => {
                 if effects {
+                    let mut state = st();
+                    if let Some(mut s) = state.sessions.remove(session) {
+                        s.closed = true;
+                        state.closed.insert(0, s);
+                    }
+                    drop(state);
                     self.emit_now(Event::SessionRemoved {
                         session: session.clone(),
                     });
@@ -525,6 +531,35 @@ impl ScriptedBackend {
                     .unwrap_or_default(),
             )),
             TestNotify => Ok(Reply::Notified(vec![])),
+            ListClosedSessions => Ok(Reply::Sessions(
+                st().closed.iter().map(|s| s.summary.clone()).collect(),
+            )),
+            ReopenSession { session } => {
+                let mut state = st();
+                let Some(at) = state.closed.iter().position(|s| &s.summary.id == session) else {
+                    return Err(PortError::Failed(format!("{session} 不是已关闭的会话")));
+                };
+                let mut s = state.closed.remove(at);
+                s.closed = false;
+                let summary = s.summary.clone();
+                if effects {
+                    state.sessions.insert(summary.id.clone(), s);
+                }
+                drop(state);
+                if effects {
+                    self.emit_now(Event::SessionUpserted(summary));
+                }
+                Ok(Reply::Ok)
+            }
+            DeleteSession { session } => {
+                st().closed.retain(|s| &s.summary.id != session);
+                if effects {
+                    self.emit_now(Event::SessionRemoved {
+                        session: session.clone(),
+                    });
+                }
+                Ok(Reply::Ok)
+            }
             ValidateJob { job } => Ok(Reply::JobCheck(port::JobCheck {
                 next_fire_ms: job.next_fire_ms.into_iter().collect(),
                 guard: job.guard.clone(),

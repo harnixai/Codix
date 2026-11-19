@@ -19,6 +19,8 @@ pub struct MockState {
     pub flows: Vec<FlowSeed>,
     pub runs: BTreeMap<RunId, RunView>,
     pub jobs: BTreeMap<JobId, (Job, Vec<JobEntry>)>,
+    /// 已关闭的会话，关掉的新的在前。
+    pub closed: Vec<SessionSeed>,
 }
 
 impl MockState {
@@ -28,9 +30,12 @@ impl MockState {
             commands: seed.commands,
             sessions: seed
                 .sessions
-                .into_iter()
+                .iter()
+                .filter(|s| !s.closed)
+                .cloned()
                 .map(|s| (s.summary.id.clone(), s))
                 .collect(),
+            closed: seed.sessions.into_iter().filter(|s| s.closed).collect(),
             tasks: seed.tasks.into_iter().map(|t| (t.id.clone(), t)).collect(),
             task_output: seed.task_output,
             flows: seed.flows,
@@ -54,7 +59,10 @@ impl MockState {
     }
 
     pub fn watched(&self, id: &SessionId) -> Option<Watched> {
-        let s = self.sessions.get(id)?;
+        let s = self
+            .sessions
+            .get(id)
+            .or_else(|| self.closed.iter().find(|s| &s.summary.id == id))?;
         Some(Watched {
             session: s.summary.clone(),
             history: s.history.clone(),
@@ -111,6 +119,7 @@ impl MockState {
                         todos: vec![],
                         prompts: vec![],
                         running: false,
+                        closed: false,
                     });
                 None
             }

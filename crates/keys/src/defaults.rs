@@ -159,6 +159,8 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Sessions, "p", A::PauseResume),
         b(C::Sessions, "m", A::Message),
         b(C::Sessions, "s", A::Stop),
+        b(C::Sessions, "o", A::Reopen),
+        b(C::Sessions, "d", A::Delete),
         b(C::Flows, "v", A::View),
         b(C::Flows, "p", A::PauseResume),
         b(C::Flows, "x", A::Close),

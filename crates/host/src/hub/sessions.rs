@@ -375,7 +375,73 @@ impl Hub {
         serde_json::from_value(page["messages"].clone()).unwrap_or_default()
     }
 
+    fn is_closed(&self, id: &str) -> bool {
+        self.0.reg.locked().get(id).is_some_and(|r| r.closed)
+    }
+
+    /// 这个项目里在 Codix 里关掉的会话（Agix 还留着它们的转录），关掉的时刻新的在前。
+    pub(super) async fn closed_sessions(&self) -> Vec<port::SessionSummary> {
+        let Ok(v) = self.call("session.list", json!({})).await else {
+            return vec![];
+        };
+        let infos: Vec<SessionInfo> =
+            serde_json::from_value(v["sessions"].clone()).unwrap_or_default();
+        let mut out: Vec<(u64, port::SessionSummary)> = infos
+            .iter()
+            .filter(|i| i.project_root.as_deref() == Some(self.0.project.as_str()))
+            .filter_map(|i| {
+                let at = self
+                    .0
+                    .reg
+                    .locked()
+                    .get(&i.session_id)
+                    .filter(|r| r.closed)?
+                    .closed_ms;
+                let s = self.sess_from_info(i);
+                Some((at, self.0.st.locked().summary_of(&s)))
+            })
+            .collect();
+        out.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+        out.into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// 重新打开的会话放回会话表（冷的：用到时再恢复）。
+    pub(super) async fn adopt_closed(&self, id: &str) {
+        let Ok(v) = self.call("session.list", json!({})).await else {
+            return;
+        };
+        let infos: Vec<SessionInfo> =
+            serde_json::from_value(v["sessions"].clone()).unwrap_or_default();
+        if let Some(i) = infos.iter().find(|i| i.session_id == id) {
+            let s = self.sess_from_info(i);
+            self.0.st.locked().sessions.insert(s.id.clone(), s);
+        }
+    }
+
+    /// 已关闭的会话只读地看：读它的转录拼一份快照，不订阅、不放回会话表（交互 §5.2）。
+    async fn watch_closed(&self, id: &str) -> Result<Reply, PortError> {
+        let session = self
+            .closed_sessions()
+            .await
+            .into_iter()
+            .find(|s| s.id.0 == id)
+            .ok_or_else(|| PortError::Failed(format!("no session {id}")))?;
+        let conv = history::convert(&self.history(id).await);
+        Ok(Reply::Watched(Box::new(Watched {
+            session,
+            history: conv.items,
+            running: false,
+            goal: None,
+            todos: conv.todos.unwrap_or_default(),
+            tasks: vec![],
+            prompts: vec![],
+        })))
+    }
+
     pub(super) async fn watch(&self, id: &str) -> Result<Reply, PortError> {
+        if self.is_closed(id) {
+            return self.watch_closed(id).await;
+        }
         self.ensure_known(id).await?;
         let gone = || PortError::Failed(format!("no session {id}"));
         let generation = self.0.link.locked().generation(id);

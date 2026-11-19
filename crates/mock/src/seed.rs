@@ -34,6 +34,9 @@ pub struct SessionSeed {
     pub prompts: Vec<Prompt>,
     #[serde(default)]
     pub running: bool,
+    /// 种子里就是已关闭的（交互 §5.2「已关闭」）。
+    #[serde(default)]
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +109,7 @@ pub fn busy() -> Seed {
             todos: vec![],
             prompts: vec![],
             running: i % 5 == 0,
+            closed: false,
         })
         .collect();
     let tasks = (0..50)

@@ -23,9 +23,12 @@ pub struct Record {
     /// 实例建这个会话的时刻（会话列表的顺序、`#n` 按它）；0 是没记，用引擎报的。
     #[serde(default)]
     pub created_ms: u64,
-    /// 在 Codix 里关掉的：Agix 的列表里还有它（transcript 在），会话标签里不再列。
+    /// 在 Codix 里关掉的：Agix 的列表里还有它（transcript 在），会话标签里不再列，在「已关闭」里。
     #[serde(default)]
     pub closed: bool,
+    /// 关掉的时刻：「已关闭」按它新的在前。
+    #[serde(default)]
+    pub closed_ms: u64,
 }
 
 #[derive(Debug, Default)]

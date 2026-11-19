@@ -234,6 +234,12 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         s.ui.detach_armed_ms = None;
     }
     let picker = s.picker_candidates();
+    // 对话区里是已关闭的会话：只读，斜杠命令照常。
+    let read_only = s.chat_is_closed() && !s.ui.composer.text.starts_with('/');
+    if a == Action::Submit && read_only {
+        s.notice(i18n::t!("sessions.closed_readonly"), false);
+        return Some(vec![]);
+    }
     let c = &mut s.ui.composer;
     match a {
         Action::Up if !picker.is_empty() => c.picker = c.picker.saturating_sub(1),
@@ -877,12 +883,16 @@ mod tests {
         );
         let id = SessionId("s1".into());
         s.ui.chat = Some(id.clone());
-        let asked = |e: &[Effect]| match e {
-            [Effect::Call(req, cmd)] => match &**cmd {
-                Command::SetPermissionMode { mode, .. } => (*req, *mode),
-                other => panic!("{other:?}"),
-            },
-            other => panic!("{other:?}"),
+        let asked = |e: &[Effect]| {
+            e.iter()
+                .find_map(|x| match x {
+                    Effect::Call(req, cmd) => match &**cmd {
+                        Command::SetPermissionMode { mode, .. } => Some((*req, *mode)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{e:?}"))
         };
         let e = crate::update(&mut s, crate::Msg::Action(Action::CycleMode));
         let (req, mode) = asked(&e);

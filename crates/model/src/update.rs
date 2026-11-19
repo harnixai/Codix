@@ -92,6 +92,8 @@ pub(crate) enum Pending {
     },
     TaskOutput(port::TaskId),
     Runs(String),
+    /// 会话标签的「已关闭」。
+    ClosedSessions,
     /// 「已结束」的一页；`append` 是「更多」取的，接在后面。
     EndedRuns {
         append: bool,
@@ -412,6 +414,9 @@ fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
             vec![s.call(Pending::Ignore, Command::Close { session: id })]
         }
         Confirm::StopTask(task, _) => vec![s.call(Pending::Ignore, Command::StopTask { task })],
+        Confirm::DeleteSession(session, _) => {
+            vec![s.call(Pending::Ignore, Command::DeleteSession { session })]
+        }
         Confirm::StopFiring(job, fired_ms, _) => {
             vec![s.call(Pending::Ignore, Command::StopFiring { job, fired_ms })]
         }
@@ -1201,11 +1206,20 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
                 s.notice(i18n::t!("update.disconnected"), true);
             }
         }
-        Event::SessionUpserted(sum) => match d.sessions.iter_mut().find(|x| x.id == sum.id) {
-            Some(x) => *x = sum,
-            None => d.sessions.insert(0, sum),
-        },
-        Event::SessionRemoved { session } => d.sessions.retain(|x| x.id != session),
+        Event::SessionUpserted(sum) => {
+            // 重新打开的会话从「已关闭」回到上面。
+            d.closed_sessions.retain(|x| x.id != sum.id);
+            match d.sessions.iter_mut().find(|x| x.id == sum.id) {
+                Some(x) => *x = sum,
+                None => d.sessions.insert(0, sum),
+            }
+        }
+        Event::SessionRemoved { session } => {
+            d.sessions.retain(|x| x.id != session);
+            d.closed_sessions.retain(|x| x.id != session);
+            // 关掉的会进「已关闭」、删掉的不进：哪一种由实例说了算，重取一次。
+            d.closed_loaded = false;
+        }
         Event::FlowUpserted(f) => match d.flows.iter_mut().find(|x| x.name == f.name) {
             Some(x) => *x = f,
             None => d.flows.push(f),
@@ -1239,6 +1253,7 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
     };
     let key = match &what {
         Pending::Runs(f) => Some(format!("runs:{f}")),
+        Pending::ClosedSessions => Some("closed".into()),
         Pending::EndedRuns { append: false } => Some("ended".into()),
         Pending::FlowDetail(f) => Some(format!("flow:{f}")),
         Pending::RunView { id, .. } => Some(format!("run:{id}")),
@@ -1296,6 +1311,10 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
         (Pending::Jobs, Reply::Jobs(v)) => {
             d.jobs = v;
             d.load_errors[2] = None;
+        }
+        (Pending::ClosedSessions, Reply::Sessions(v)) => {
+            d.closed_sessions = v;
+            d.closed_loaded = true;
         }
         (Pending::Runs(f), Reply::Runs(v)) => {
             d.runs.insert(f, v);

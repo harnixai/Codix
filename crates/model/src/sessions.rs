@@ -19,15 +19,21 @@ pub enum SessRow {
     Goal(SessionId),
     Todo(SessionId),
     TodoItem(SessionId, usize),
+    /// 「已关闭 (n)」。
+    Closed,
+    /// 已关闭的会话：选中只读地看，`o` 重新打开，`d` 删除。
+    ClosedSession(SessionId),
 }
 
 impl SessRow {
     pub fn session(&self) -> Option<&SessionId> {
         match self {
-            SessRow::New => None,
-            SessRow::Session(s) | SessRow::Goal(s) | SessRow::Todo(s) | SessRow::TodoItem(s, _) => {
-                Some(s)
-            }
+            SessRow::New | SessRow::Closed => None,
+            SessRow::Session(s)
+            | SessRow::Goal(s)
+            | SessRow::Todo(s)
+            | SessRow::TodoItem(s, _)
+            | SessRow::ClosedSession(s) => Some(s),
         }
     }
 }
@@ -81,7 +87,27 @@ impl State {
                 }
             }
         }
+        let closed: Vec<&SessionSummary> = self
+            .domain
+            .closed_sessions
+            .iter()
+            .filter(|s| filter.is_empty() || s.title.contains(filter.as_str()))
+            .collect();
+        if !closed.is_empty() {
+            out.push(SessRow::Closed);
+            if self.ui.closed_expanded {
+                out.extend(closed.iter().map(|s| SessRow::ClosedSession(s.id.clone())));
+            }
+        }
         out
+    }
+
+    /// 对话区里的这个会话已经关了：只读（交互 §5.2）。
+    pub(crate) fn chat_is_closed(&self) -> bool {
+        self.ui
+            .chat
+            .as_ref()
+            .is_some_and(|id| self.domain.closed_sessions.iter().any(|s| &s.id == id))
     }
 
     /// 右栏上半选中的主 Agent。
@@ -252,6 +278,23 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     return Line::default();
                 };
                 session_line(s, x, numbered(id), width)
+            }
+            SessRow::Closed => {
+                let mark = if s.ui.closed_expanded { "▾" } else { "▸" };
+                Line::toned(format!("{mark} "), Tone::Dim).push(
+                    i18n::t!("sessions.closed", n = s.domain.closed_sessions.len()),
+                    Tone::Normal,
+                )
+            }
+            SessRow::ClosedSession(id) => {
+                let Some(x) = s.domain.closed_sessions.iter().find(|x| &x.id == id) else {
+                    return Line::default();
+                };
+                split_line(
+                    Line::toned("    ", Tone::Dim).push(x.title.clone(), Tone::Dim),
+                    Line::toned(crate::chat::fmt_k(x.usage.total()), Tone::Dim),
+                    width,
+                )
             }
             SessRow::Goal(id) => {
                 let Some(g) = s.domain.convs.get(id).and_then(|c| c.goal.as_ref()) else {
@@ -488,6 +531,42 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     let row = rows.get(s.ui.upper[0].selected).cloned();
     let id = row.as_ref().and_then(|r| r.session().cloned());
     Some(match (a, row) {
+        (Action::Expand | Action::Open, Some(SessRow::Closed)) if !s.ui.closed_expanded => {
+            s.ui.closed_expanded = true;
+            vec![]
+        }
+        (Action::Collapse | Action::Open, Some(SessRow::Closed)) => {
+            s.ui.closed_expanded = false;
+            vec![]
+        }
+        (Action::Collapse, Some(SessRow::ClosedSession(_))) => {
+            s.ui.closed_expanded = false;
+            s.ui.upper[0].selected = s
+                .session_rows()
+                .iter()
+                .position(|x| x == &SessRow::Closed)
+                .unwrap_or(0);
+            vec![]
+        }
+        (Action::Reopen, Some(SessRow::ClosedSession(id))) => {
+            vec![s.call(Pending::Ignore, Command::ReopenSession { session: id })]
+        }
+        (Action::Delete, Some(SessRow::ClosedSession(id))) => {
+            let title = s
+                .domain
+                .closed_sessions
+                .iter()
+                .find(|x| x.id == id)
+                .map(|x| x.title.clone())
+                .unwrap_or_default();
+            s.ui.confirm = Some(Confirm::DeleteSession(id, title));
+            vec![]
+        }
+        // 已关闭的会话只读：不进输入框、不改名。
+        (Action::Open | Action::Rename, Some(SessRow::ClosedSession(_))) => {
+            s.notice(i18n::t!("sessions.closed_readonly"), false);
+            vec![]
+        }
         (Action::Open, Some(SessRow::New)) | (Action::New, _) => {
             crate::follow::go_draft(s);
             s.show_chat_pub();

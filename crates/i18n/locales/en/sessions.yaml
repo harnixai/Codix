@@ -1,5 +1,7 @@
 sessions:
   new: "＋ New session"
+  closed: "Closed ({n})"
+  closed_readonly: "closed · o to reopen · d to delete"
   new_hint: "  Enter · or /new in the input box"
   goal_round: "round {n}/{max}"
   goal_paused: "paused"

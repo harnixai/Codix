@@ -89,7 +89,7 @@ pub trait Backend: Send + Sync + 'static {
 | 组 | 命令 |
 |---|---|
 | 连接 | `Hello{client, force}`：返回实例信息和能力位；`Heartbeat{last_input_ms}`；`Detach`；`StopInstance` |
-| 会话 | `ListSessions{filter}`、`CreateSession{project, scene, model}`、`OpenSession{id}`（需要时先恢复）、`Watch{id}` / `Unwatch{id}`、`History{id, before}`、`Rename`、`Close` |
+| 会话 | `ListSessions{filter}`、`CreateSession{project, scene, model}`、`OpenSession{id}`（需要时先恢复）、`Watch{id}` / `Unwatch{id}`（已关闭的只读：读转录拼快照，不订阅）、`History{id, before}`、`Rename`、`Close`、`ListClosedSessions` / `ReopenSession{id}` / `DeleteSession{id}`（交互 §5.2「已关闭」；删除连同侧链，删了就没了） |
 | 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
 | goal | `SetGoal`、`UpdateGoal{action: Pause \| Resume \| Edit \| Clear}` |
 | 任务 | `StopTask`、`MessageTask`、`TaskOutput{task, from_byte}` |

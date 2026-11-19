@@ -12,6 +12,7 @@ pub const SESSION_LIST: &str = "session_list";
 pub const SESSION_SHOW: &str = "session_show";
 pub const SESSION_RENAME: &str = "session_rename";
 pub const SESSION_CLOSE: &str = "session_close";
+pub const SESSION_DELETE: &str = "session_delete";
 pub const JOB_LIST: &str = "job_list";
 pub const JOB_SHOW: &str = "job_show";
 pub const JOB_SAVE: &str = "job_save";
@@ -73,7 +74,7 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
             "additionalProperties": false
         },
         "read_only": read_only,
-        "destructive": matches!(name, SESSION_CLOSE | JOB_DELETE | JOB_STOP),
+        "destructive": matches!(name, SESSION_CLOSE | SESSION_DELETE | JOB_DELETE | JOB_STOP),
         "subagents": true
     })
 }
@@ -104,7 +105,7 @@ pub fn declarations() -> Value {
     json!([
         tool(
             SESSION_LIST,
-            "List the sessions of this Codix instance's project: the user's sessions, numbered as in the sessions list (#1 is the newest). With all=true, also the sessions started by scheduled jobs and flow runs (not numbered).",
+            "List the sessions of this Codix instance's project: the user's sessions, numbered as in the sessions list (#1 is the newest). With all=true, also the sessions started by scheduled jobs and flow runs, and the closed ones (not numbered).",
             json!({"all": {"type": "boolean", "default": false}}),
             &[]
         ),
@@ -124,6 +125,12 @@ pub fn declarations() -> Value {
             SESSION_CLOSE,
             "Close a session: it leaves the sessions list (its transcript is kept). Only when the user asks for it.",
             json!({"target": target("The session")}),
+            &["target"]
+        ),
+        tool(
+            SESSION_DELETE,
+            "Delete a session for good: its transcript, memory and sub-agent sessions. A session open in the sessions list has to be closed first; closed ones are listed with all=true. Only when the user asks for it.",
+            json!({"target": target("The session (a closed one: its id)")}),
             &["target"]
         ),
         tool(
@@ -416,7 +423,7 @@ mod tests {
         let mut uniq = names.clone();
         uniq.sort();
         uniq.dedup();
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 14);
         assert_eq!(uniq.len(), names.len());
         assert!(d.as_array().unwrap().iter().all(|t| t["subagents"] == true));
         for r in READ_ONLY {

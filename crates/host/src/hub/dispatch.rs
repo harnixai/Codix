@@ -81,7 +81,49 @@ impl Hub {
                     Err(e) if e.code() != Some(SESSION_NOT_FOUND) => return Err(rpc_err(e)),
                     _ => {}
                 }
-                self.0.reg.locked().update(&session.0, |r| r.closed = true);
+                let now = self.now();
+                self.0.reg.locked().update(&session.0, |r| {
+                    r.closed = true;
+                    r.closed_ms = now;
+                });
+                self.0.st.locked().sessions.remove(&session.0);
+                self.0.link.locked().watched.remove(&session.0);
+                self.emit_events(vec![Event::SessionRemoved { session }]);
+                Ok(Reply::Ok)
+            }
+            C::ListClosedSessions => Ok(Reply::Sessions(self.closed_sessions().await)),
+            C::ReopenSession { session } => {
+                let closed = self.closed_sessions().await;
+                if !closed.iter().any(|s| s.id == session) {
+                    return Err(PortError::Failed(format!(
+                        "{session} is not a closed session"
+                    )));
+                }
+                self.0.reg.locked().update(&session.0, |r| {
+                    r.closed = false;
+                    r.closed_ms = 0;
+                });
+                self.adopt_closed(&session.0).await;
+                self.upsert(&session.0);
+                Ok(Reply::Ok)
+            }
+            C::DeleteSession { session } => {
+                if self.0.job_runs.locked().contains_key(&session.0) {
+                    self.turn_done(
+                        &session.0,
+                        false,
+                        "session deleted".into(),
+                        Usage::default(),
+                    );
+                }
+                let _ = self
+                    .call("session.unsubscribe", json!({"session_id": session.0}))
+                    .await;
+                // 删了就没了：转录、附属数据、子 Agent 的侧链都删（Agix 的 session.delete）。
+                self.call("session.delete", json!({"session_id": session.0}))
+                    .await
+                    .map_err(rpc_err)?;
+                self.0.reg.locked().remove(&session.0);
                 self.0.st.locked().sessions.remove(&session.0);
                 self.0.link.locked().watched.remove(&session.0);
                 self.emit_events(vec![Event::SessionRemoved { session }]);

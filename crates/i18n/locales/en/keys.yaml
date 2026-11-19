@@ -68,6 +68,7 @@ keys:
     toggle_enabled: "Enable / disable"
     run_now: "Run now"
     delete: "Delete"
+    reopen: "reopen"
     quit: "Quit"
     yes: "Yes"
     no: "No"

@@ -654,6 +654,7 @@ fn footer(s: &State) -> tui::Footer {
             Confirm::ClearGoal(_) => i18n::t!("view.confirm.clear_goal"),
             Confirm::CancelRun(_, t) => i18n::t!("view.confirm.cancel_run", title = t),
             Confirm::StopFiring(_, _, n) => i18n::t!("view.confirm.stop_firing", name = n),
+            Confirm::DeleteSession(_, t) => i18n::t!("view.confirm.delete_session", title = t),
             Confirm::ForceStation(_, _, t) => {
                 i18n::t!("view.confirm.force_station", title = t)
             }

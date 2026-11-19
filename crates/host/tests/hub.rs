@@ -1281,3 +1281,84 @@ async fn what_happened_while_detached_is_shown_on_attach() {
         );
     }
 }
+
+/// 关掉的会话进「已关闭」：只读地看（读转录，不订阅、不放回会话表），可以重新打开，也可以删掉。
+#[tokio::test]
+async fn closed_sessions_are_listed_viewed_reopened_and_deleted() {
+    let r = rig().await;
+    let s2 = SessionId("s2".into());
+    r.hub
+        .handle(Command::Close {
+            session: s2.clone(),
+        })
+        .await
+        .unwrap();
+    let Reply::Sessions(closed) = r.hub.handle(Command::ListClosedSessions).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        closed.iter().map(|s| s.id.0.as_str()).collect::<Vec<_>>(),
+        ["s2"]
+    );
+
+    let subs_before = r.calls("session.subscribe").len();
+    let Reply::Watched(w) = r
+        .hub
+        .handle(Command::Watch {
+            session: s2.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!w.history.is_empty(), "读到了转录");
+    assert_eq!(
+        r.calls("session.subscribe").len(),
+        subs_before,
+        "只读：不订阅"
+    );
+    let Reply::Sessions(open) = r
+        .hub
+        .handle(Command::ListSessions {
+            filter: Default::default(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(open.iter().all(|s| s.id != s2), "看过之后也不回到上面");
+
+    r.hub
+        .handle(Command::ReopenSession {
+            session: s2.clone(),
+        })
+        .await
+        .unwrap();
+    let Reply::Sessions(open) = r
+        .hub
+        .handle(Command::ListSessions {
+            filter: Default::default(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(open.iter().any(|s| s.id == s2), "重新打开回到上面");
+
+    r.hub
+        .handle(Command::Close {
+            session: s2.clone(),
+        })
+        .await
+        .unwrap();
+    r.hub
+        .handle(Command::DeleteSession {
+            session: s2.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(r.calls("session.delete")[0]["session_id"], "s2");
+}

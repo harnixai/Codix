@@ -39,6 +39,12 @@ impl Hub {
                             .filter(|s| !port::order::is_user_session(s))
                             .map(|s| session_line(None, s)),
                     );
+                    lines.extend(
+                        self.closed_sessions()
+                            .await
+                            .iter()
+                            .map(|s| format!("{}  closed", session_line(None, s))),
+                    );
                 }
                 Ok(if lines.is_empty() {
                     "no sessions".into()
@@ -86,6 +92,24 @@ impl Hub {
                 .await
                 .map_err(port_err)?;
                 Ok(format!("closed \"{title}\" ({id})"))
+            }
+            tools::SESSION_DELETE => {
+                if scope != tools::Scope::Full {
+                    return Err(out_of_scope(&scope));
+                }
+                let key = tools::str_of(input, "target").ok_or("target is required")?;
+                let closed = self.closed_sessions().await;
+                let Some(s) = closed.iter().find(|s| s.id.0 == key.trim()) else {
+                    return Err(format!(
+                        "{key} is not a closed session: close it first (session_close), then delete it"
+                    ));
+                };
+                self.dispatch(Command::DeleteSession {
+                    session: s.id.clone(),
+                })
+                .await
+                .map_err(port_err)?;
+                Ok(format!("deleted \"{}\" ({})", s.title, s.id))
             }
             tools::JOB_LIST => {
                 let sched = self.scheduler().map_err(port_err)?;

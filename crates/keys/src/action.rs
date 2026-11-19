@@ -79,6 +79,8 @@ pub enum Action {
     ToggleEnabled,
     RunNow,
     Delete,
+    /// 已关闭的会话重新打开。
+    Reopen,
     Quit,
 
     // 对话框
@@ -168,6 +170,7 @@ impl Action {
             ToggleEnabled => i18n::t!("keys.action.toggle_enabled"),
             RunNow => i18n::t!("keys.action.run_now"),
             Delete => i18n::t!("keys.action.delete"),
+            Reopen => i18n::t!("keys.action.reopen"),
             Quit => i18n::t!("keys.action.quit"),
             Yes => i18n::t!("keys.action.yes"),
             No => i18n::t!("keys.action.no"),
