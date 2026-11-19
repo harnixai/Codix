@@ -48,7 +48,7 @@ impl Hub {
                 turn_id,
                 event,
             } => {
-                if self.0.taps.lock().unwrap().contains_key(&session_id) {
+                if self.0.taps.locked().contains_key(&session_id) {
                     let text = (event["kind"] == "turn_start")
                         .then(|| self.started(&session_id, turn_id.as_deref()))
                         .flatten();
@@ -73,7 +73,7 @@ impl Hub {
                     session_id,
                     project_root,
                 } => {
-                    let known = self.0.st.lock().unwrap().sessions.contains_key(&session_id);
+                    let known = self.0.st.locked().sessions.contains_key(&session_id);
                     if known || project_root.as_deref() == Some(self.0.project.as_str()) {
                         if !known {
                             self.adopt(&session_id).await;
@@ -83,7 +83,7 @@ impl Hub {
                 }
                 DaemonEvent::SessionEvicted { session_id }
                 | DaemonEvent::SessionClosed { session_id } => {
-                    let mut st = self.0.st.lock().unwrap();
+                    let mut st = self.0.st.locked();
                     if let Some(s) = st.sessions.get_mut(&session_id) {
                         s.live = false;
                         s.running = false;
@@ -92,8 +92,8 @@ impl Hub {
                     self.upsert(&session_id);
                 }
                 DaemonEvent::SessionDeleted { session_id } => {
-                    self.0.st.lock().unwrap().sessions.remove(&session_id);
-                    self.0.reg.lock().unwrap().remove(&session_id);
+                    self.0.st.locked().sessions.remove(&session_id);
+                    self.0.reg.locked().remove(&session_id);
                     self.emit_events(vec![Event::SessionRemoved {
                         session: SessionId(session_id),
                     }]);
@@ -102,7 +102,7 @@ impl Hub {
                 | DaemonEvent::TurnCompleted { session_id, .. } => {
                     let running = matches!(DaemonEvent::parse(&v), DaemonEvent::TurnStarted { .. });
                     let changed = {
-                        let mut st = self.0.st.lock().unwrap();
+                        let mut st = self.0.st.locked();
                         match st.sessions.get_mut(&session_id) {
                             Some(s) if s.running != running => {
                                 s.running = running;
@@ -127,8 +127,7 @@ impl Hub {
         if on_busy != "steer" {
             self.0
                 .sent
-                .lock()
-                .unwrap()
+                .locked()
                 .entry(id.to_string())
                 .or_default()
                 .push_back((turn.clone(), text.to_string()));
@@ -186,7 +185,7 @@ impl Hub {
     /// 一轮开始了：它是经 `run_turn` 发的哪一句。认得轮 id 就按 id 取；不认得（引擎自己
     /// 起的，或 id 没对上）就取最早发出的那一句。
     pub(super) fn started(&self, session: &str, turn: Option<&str>) -> Option<String> {
-        let mut sent = self.0.sent.lock().unwrap();
+        let mut sent = self.0.sent.locked();
         let q = sent.get_mut(session)?;
         let i = turn
             .and_then(|t| q.iter().position(|(id, _)| id == t))
@@ -199,14 +198,14 @@ impl Hub {
     }
 
     pub(super) fn forget_sent(&self, session: &str, turn: &str) -> Option<String> {
-        let mut sent = self.0.sent.lock().unwrap();
+        let mut sent = self.0.sent.locked();
         let q = sent.get_mut(session)?;
         let i = q.iter().position(|(id, _)| id == turn)?;
         q.remove(i).map(|(_, text)| text)
     }
 
     pub(super) fn turn_done(&self, session: &str, ok: bool, text: String, usage: Usage) {
-        if self.0.side.lock().unwrap().remove(session) {
+        if self.0.side.locked().remove(session) {
             let first: String = text.chars().take(400).collect();
             self.emit_events(vec![Event::Notice {
                 level: if ok {
@@ -217,7 +216,7 @@ impl Hub {
                 text: first,
             }]);
         }
-        let run = self.0.job_runs.lock().unwrap().remove(session);
+        let run = self.0.job_runs.locked().remove(session);
         if let (Some((job, fired, started)), Ok(sched)) = (run, self.scheduler()) {
             let outcome = if ok {
                 JobOutcome::Done
@@ -227,7 +226,7 @@ impl Hub {
             let elapsed = self.now().saturating_sub(started);
             let store = sched.store();
             let entry = {
-                let s = store.lock().unwrap();
+                let s = store.locked();
                 let _ = s.finish(&job, fired, outcome, elapsed, usage);
                 s.history(&job, 50)
                     .into_iter()

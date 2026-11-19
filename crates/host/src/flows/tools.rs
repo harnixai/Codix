@@ -3,6 +3,7 @@
 //! 限作用域、流程还有没结束的运行时不许改不许删。运行里的会话自己的三个工具（`flow_state`、
 //! `flow_submit`、`flow_propose`）是派工器的，原样转给它。
 
+use crate::sync::Locked;
 use std::collections::HashMap;
 use std::sync::{Mutex, Weak};
 
@@ -176,7 +177,7 @@ impl AuthorHost for CodixAuthorHost {
             let f = self.flows.upgrade()?;
             return f.engine.record(&run).await.ok().map(|r| r.flow);
         }
-        self.created.lock().unwrap().get(session).cloned()
+        self.created.locked().get(session).cloned()
     }
 
     /// 实例是项目的：流程从这个项目读、存进它（项目受信才写），运行也在它里面。
@@ -190,8 +191,7 @@ impl AuthorHost for CodixAuthorHost {
 
     async fn created(&self, session: &SessionId, flow: &str) -> Option<String> {
         self.created
-            .lock()
-            .unwrap()
+            .locked()
             .insert(session.clone(), flow.to_string());
         None
     }

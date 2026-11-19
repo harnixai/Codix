@@ -1,6 +1,7 @@
 //! socket 服务与单一接入（architecture §8.3）：握手、踢人、心跳与空闲兜底、脱离与停实例。
 //! 其余端口命令交给 [`Service`]。
 
+use crate::sync::Locked;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -110,7 +111,7 @@ pub async fn serve(
         }
     };
     if let ServeEnd::Shutdown(reason) = &end
-        && let Some(h) = sh.holder.lock().unwrap().as_ref()
+        && let Some(h) = sh.holder.locked().as_ref()
     {
         let _ = h.sink.send(event(Event::InstanceStopped {
             reason: reason.clone(),
@@ -156,7 +157,7 @@ async fn closed(rx: &mut watch::Receiver<bool>) {
 
 /// 放开接入。`conn` 为 `Some` 时只放自己那一份：已经被踢的连接收尾时什么也不做。
 fn release(sh: &Shared, conn: Option<u64>) {
-    let mut h = sh.holder.lock().unwrap();
+    let mut h = sh.holder.locked();
     if h.as_ref().is_some_and(|x| conn.is_none_or(|c| c == x.conn)) {
         *h = None;
         sh.svc.attach(None);
@@ -216,7 +217,7 @@ async fn connection(sh: Arc<Shared>, stream: UnixStream, conn: u64) {
     let (sink, rx) = mpsc::unbounded_channel();
     let (close_tx, close_rx) = watch::channel(false);
     let admit = {
-        let mut h = sh.holder.lock().unwrap();
+        let mut h = sh.holder.locked();
         match h.take() {
             Some(old) if !force => {
                 let idle_ms = now_ms().saturating_sub(old.info.last_input_ms);
@@ -293,7 +294,7 @@ async fn connection(sh: Arc<Shared>, stream: UnixStream, conn: u64) {
                             idle = Idle::new(last_input_ms);
                             if last_input_ms != client.last_input_ms {
                                 client.last_input_ms = last_input_ms;
-                                let mut h = sh.holder.lock().unwrap();
+                                let mut h = sh.holder.locked();
                                 if let Some(x) = h.as_mut().filter(|x| x.conn == conn) {
                                     x.info.last_input_ms = last_input_ms;
                                     (sh.on_holder)(Some(&x.info));

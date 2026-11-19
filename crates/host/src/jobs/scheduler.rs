@@ -9,6 +9,7 @@ use port::{Job, JobEntry};
 use tokio::sync::Notify;
 
 use super::store::JobStore;
+use crate::sync::Locked;
 
 /// 触发一次作业。`fired_ms` 同时是触发记录的键，`Fire` 的实现负责写 `Running` 行和之后的结局行。
 #[async_trait]
@@ -54,7 +55,7 @@ impl Scheduler {
 
     fn lock(&self) -> MutexGuard<'_, JobStore> {
         // 持锁线程 panic 只会让内存与磁盘暂时不一致，不值得把整个调度器一起带崩。
-        self.store.lock().unwrap_or_else(|e| e.into_inner())
+        self.store.locked()
     }
 
     pub fn shutdown(&self) {

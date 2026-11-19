@@ -9,6 +9,7 @@ pub(crate) mod session_host;
 mod tests;
 pub(crate) mod tools;
 
+use crate::sync::Locked;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -336,7 +337,7 @@ impl Flows {
         };
         let now = self.summaries().await;
         let mut events: Vec<Event> = now.iter().cloned().map(Event::FlowUpserted).collect();
-        let mut known = self.published.lock().unwrap();
+        let mut known = self.published.locked();
         for gone in known.iter().filter(|n| !now.iter().any(|f| &f.name == *n)) {
             events.push(Event::FlowRemoved { name: gone.clone() });
         }

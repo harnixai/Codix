@@ -16,7 +16,7 @@ impl Hub {
             }
             C::Heartbeat { .. } | C::Detach | C::StopInstance => Ok(Reply::Ok),
             C::ListSessions { filter } => {
-                let st = self.0.st.lock().unwrap();
+                let st = self.0.st.locked();
                 let mut v: Vec<_> = st
                     .sessions
                     .values()
@@ -49,38 +49,41 @@ impl Hub {
             }
             C::Watch { session } => self.watch(&session.0).await,
             C::Unwatch { session } => {
-                let mut link = self.0.link.lock().unwrap();
+                let mut link = self.0.link.locked();
                 link.watched.remove(&session.0);
                 *link.unwatched.entry(session.0).or_default() += 1;
                 Ok(Reply::Ok)
             }
             C::Rename { session, title } => {
-                let _ = self
-                    .call(
-                        "session.rename",
-                        json!({"session_id": session.0, "name": title}),
-                    )
-                    .await;
+                // 名字写在引擎的会话事实里（冷会话也能改）：引擎没改成就不改本地的，免得两边各一个名字。
+                self.call(
+                    "session.rename",
+                    json!({"session_id": session.0, "name": title}),
+                )
+                .await
+                .map_err(rpc_err)?;
                 self.retitle(&session.0, &title, Titler::User);
                 Ok(Reply::Ok)
             }
             C::Close { session } => {
-                if self.0.job_runs.lock().unwrap().contains_key(&session.0) {
+                if self.0.job_runs.locked().contains_key(&session.0) {
                     self.turn_done(&session.0, false, "session closed".into(), Usage::default());
                 }
+                // 没订阅过（冷会话）的退订失败无妨；关闭时冷会话答 SESSION_NOT_FOUND——本来就没有运行实体，
+                // 照样算关了。别的错误回给人，本地不动。
                 let _ = self
                     .call("session.unsubscribe", json!({"session_id": session.0}))
                     .await;
-                let _ = self
+                match self
                     .call("session.close", json!({"session_id": session.0}))
-                    .await;
-                self.0
-                    .reg
-                    .lock()
-                    .unwrap()
-                    .update(&session.0, |r| r.closed = true);
-                self.0.st.lock().unwrap().sessions.remove(&session.0);
-                self.0.link.lock().unwrap().watched.remove(&session.0);
+                    .await
+                {
+                    Err(e) if e.code() != Some(SESSION_NOT_FOUND) => return Err(rpc_err(e)),
+                    _ => {}
+                }
+                self.0.reg.locked().update(&session.0, |r| r.closed = true);
+                self.0.st.locked().sessions.remove(&session.0);
+                self.0.link.locked().watched.remove(&session.0);
                 self.emit_events(vec![Event::SessionRemoved { session }]);
                 Ok(Reply::Ok)
             }
@@ -91,12 +94,7 @@ impl Hub {
             } => {
                 self.ensure_known(&session.0).await?;
                 // 往哪个会话说话就是在看哪个会话：新建会话后 model 先放一个空转录、不等快照就提交。
-                self.0
-                    .link
-                    .lock()
-                    .unwrap()
-                    .watched
-                    .insert(session.0.clone());
+                self.0.link.locked().watched.insert(session.0.clone());
                 let first: String = text.lines().next().unwrap_or("").chars().take(40).collect();
                 if !first.trim().is_empty() {
                     self.retitle(&session.0, first.trim(), Titler::FirstText);
@@ -118,7 +116,7 @@ impl Hub {
                 Ok(Reply::Ok)
             }
             C::Answer { prompt, answer, .. } => {
-                let meta = self.0.st.lock().unwrap().prompts.get(&prompt.0).cloned();
+                let meta = self.0.st.locked().prompts.get(&prompt.0).cloned();
                 // 不认识的提问多半已经被答掉或撤了：和引擎一样静默成功。
                 if let Some(meta) = meta {
                     self.call(
@@ -165,7 +163,7 @@ impl Hub {
                     .and_then(state::permission_mode)
                     .unwrap_or(mode);
                 let changed = {
-                    let mut st = self.0.st.lock().unwrap();
+                    let mut st = self.0.st.locked();
                     match st.sessions.get_mut(&session.0) {
                         Some(s) if s.permission != got => {
                             s.permission = got;
@@ -191,10 +189,9 @@ impl Hub {
                 .map_err(rpc_err)?;
                 self.0
                     .reg
-                    .lock()
-                    .unwrap()
+                    .locked()
                     .update(&session.0, |r| r.model = Some(model.clone()));
-                if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(&session.0) {
+                if let Some(s) = self.0.st.locked().sessions.get_mut(&session.0) {
                     s.model = model;
                 }
                 self.upsert(&session.0);
@@ -230,7 +227,7 @@ impl Hub {
                     .map_err(rpc_err)?;
                 let id = str_field(&r, "session_id");
                 let (from_title, base) = {
-                    let st = self.0.st.lock().unwrap();
+                    let st = self.0.st.locked();
                     let s = st.sessions.get(&session.0).cloned().unwrap_or_default();
                     (s.title.clone(), s)
                 };
@@ -240,13 +237,13 @@ impl Hub {
                     from_title,
                 };
                 let now = self.now();
-                self.0.reg.lock().unwrap().update(&id, |r| {
+                self.0.reg.locked().update(&id, |r| {
                     r.origin = origin.clone();
                     r.title = Some(title.clone());
                     r.updated_ms = now;
                     r.created_ms = now;
                 });
-                self.0.st.lock().unwrap().sessions.insert(
+                self.0.st.locked().sessions.insert(
                     id.clone(),
                     Sess {
                         id: id.clone(),
@@ -261,7 +258,7 @@ impl Hub {
                     },
                 );
                 self.upsert(&id);
-                self.0.side.lock().unwrap().insert(id.clone());
+                self.0.side.locked().insert(id.clone());
                 self.run_turn(&id, &text, "queue");
                 Ok(Reply::Ok)
             }
@@ -385,8 +382,7 @@ impl Hub {
     pub(super) fn task_owner(&self, task: &TaskId) -> Result<String, PortError> {
         self.0
             .st
-            .lock()
-            .unwrap()
+            .locked()
             .task_owner
             .get(&task.0)
             .cloned()

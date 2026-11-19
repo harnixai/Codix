@@ -12,7 +12,7 @@ impl Hub {
         input: &Value,
     ) -> Result<String, String> {
         let scope = {
-            let st = self.0.st.lock().unwrap();
+            let st = self.0.st.locked();
             tools::scope_of(st.sessions.get(rpc).map(|s| &s.origin))
         };
         if scope == tools::Scope::None {
@@ -48,7 +48,7 @@ impl Hub {
             }
             tools::SESSION_SHOW => {
                 let id = self.session_target(input)?;
-                let st = self.0.st.lock().unwrap();
+                let st = self.0.st.locked();
                 let (Some(sum), Some(s)) = (st.summary(&id), st.sessions.get(&id)) else {
                     return Err(format!("no session {id}"));
                 };
@@ -180,7 +180,7 @@ impl Hub {
 
     /// 会话标签与工具看的那些：顶层的（子 Agent 的侧链不算）。
     pub(super) fn top_sessions(&self) -> Vec<port::SessionSummary> {
-        let st = self.0.st.lock().unwrap();
+        let st = self.0.st.locked();
         st.sessions
             .values()
             .filter(|s| s.parent.is_none())
@@ -196,7 +196,7 @@ impl Hub {
             return Ok(s.id.0.clone());
         }
         let k = key.trim();
-        if self.0.st.lock().unwrap().sessions.contains_key(k) {
+        if self.0.st.locked().sessions.contains_key(k) {
             return Ok(k.to_string());
         }
         Err(format!("no session {key}"))

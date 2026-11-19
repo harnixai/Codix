@@ -2,6 +2,7 @@
 //! 客户端）。会话 id 由派工器的键算出（Agix 的 `session.create` 认 `session_id`），所以同一个键
 //! 开两次——实例重启之后也一样——是同一个会话。
 
+use crate::sync::Locked;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -198,7 +199,7 @@ fn host_error(e: RpcError) -> HostError {
 #[async_trait::async_trait]
 impl SessionHost for CodixSessionHost {
     async fn open(&self, spec: OpenSpec) -> Result<Opened, HostError> {
-        if let Some(had) = self.opened.lock().unwrap().get(&spec.key)
+        if let Some(had) = self.opened.locked().get(&spec.key)
             && *had != spec
         {
             return Err(HostError::Refused(format!(
@@ -230,7 +231,7 @@ impl SessionHost for CodixSessionHost {
             )
             .await
             .map_err(host_error)?;
-        self.opened.lock().unwrap().insert(spec.key.clone(), spec);
+        self.opened.locked().insert(spec.key.clone(), spec);
         Ok(Opened { id, existed })
     }
 

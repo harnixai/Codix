@@ -5,22 +5,22 @@ use super::*;
 impl Hub {
     /// 这个会话此刻在不在跑一轮、在哪个项目里；不认识就是 `None`。
     pub(crate) fn origin_of(&self, id: &str) -> Option<Origin> {
-        let st = self.0.st.lock().unwrap();
+        let st = self.0.st.locked();
         st.sessions.get(id).map(|s| s.origin.clone())
     }
 
     pub(crate) fn session_state(&self, id: &str) -> Option<(bool, Option<String>)> {
-        let st = self.0.st.lock().unwrap();
+        let st = self.0.st.locked();
         st.sessions.get(id).map(|s| (s.running, s.project.clone()))
     }
 
     /// 会话在不在：内存里没有就问引擎，在盘上就带回来、订阅上。
     /// 在 Codix 里关掉的不算在：引擎的存储里还有它，但它不该被谁再带回来。
     pub(crate) async fn bring_back(&self, id: &str) -> Result<bool, RpcError> {
-        if self.0.st.lock().unwrap().sessions.contains_key(id) {
+        if self.0.st.locked().sessions.contains_key(id) {
             return Ok(true);
         }
-        if self.0.reg.lock().unwrap().get(id).is_some_and(|r| r.closed) {
+        if self.0.reg.locked().get(id).is_some_and(|r| r.closed) {
             return Ok(false);
         }
         match self.call("session.get", json!({"session_id": id})).await {
@@ -30,7 +30,7 @@ impl Hub {
         }
         self.adopt(id).await;
         let _ = self.subscribe(id, true).await;
-        Ok(self.0.st.lock().unwrap().sessions.contains_key(id))
+        Ok(self.0.st.locked().sessions.contains_key(id))
     }
 
     /// 流程派工器开的会话：`session_id` 由键算出，同一个键总是同一个会话（跨重启也是）。
@@ -52,9 +52,9 @@ impl Hub {
         let id = str_field(&r, "session_id");
         let existed = r["existing"].as_bool().unwrap_or(false);
         let now = self.now();
-        let known = self.0.st.lock().unwrap().sessions.contains_key(&id);
+        let known = self.0.st.locked().sessions.contains_key(&id);
         if !existed || !known {
-            self.0.reg.lock().unwrap().update(&id, |rec| {
+            self.0.reg.locked().update(&id, |rec| {
                 rec.origin = origin.clone();
                 if rec.title.is_none() {
                     rec.title = title.clone();
@@ -71,8 +71,7 @@ impl Hub {
             let title = self
                 .0
                 .reg
-                .lock()
-                .unwrap()
+                .locked()
                 .get(&id)
                 .and_then(|r| r.title.clone())
                 .or(title);
@@ -81,14 +80,14 @@ impl Hub {
                 title: title.unwrap_or_else(|| state::short(&id)),
                 project: project.map(str::to_string),
                 scene: r["scene"].as_str().unwrap_or(scene).to_string(),
-                model: self.0.default_model.lock().unwrap().clone(),
+                model: self.0.default_model.locked().clone(),
                 origin,
                 live: true,
                 updated_ms: now,
                 created_ms: created,
                 ..Sess::default()
             };
-            self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
+            self.0.st.locked().sessions.insert(id.clone(), sess);
         }
         let _ = self.subscribe(&id, existed).await;
         self.upsert(&id);
@@ -107,7 +106,7 @@ impl Hub {
             session: SessionId(id.to_string()),
         })
         .await?;
-        self.0.taps.lock().unwrap().remove(id);
+        self.0.taps.locked().remove(id);
         Ok(())
     }
 
@@ -154,12 +153,12 @@ impl Hub {
     }
 
     pub(super) fn sess_from_info(&self, info: &SessionInfo) -> Sess {
-        let reg = self.0.reg.lock().unwrap();
+        let reg = self.0.reg.locked();
         let rec = reg.get(&info.session_id).cloned().unwrap_or_default();
         let model = rec
             .model
             .clone()
-            .unwrap_or_else(|| self.0.default_model.lock().unwrap().clone());
+            .unwrap_or_else(|| self.0.default_model.locked().clone());
         Sess {
             id: info.session_id.clone(),
             title: rec
@@ -197,8 +196,7 @@ impl Hub {
             if self
                 .0
                 .reg
-                .lock()
-                .unwrap()
+                .locked()
                 .get(&info.session_id)
                 .is_some_and(|r| r.closed)
             {
@@ -208,7 +206,7 @@ impl Hub {
             if s.live {
                 live.push(s.id.clone());
             }
-            self.0.st.lock().unwrap().sessions.insert(s.id.clone(), s);
+            self.0.st.locked().sessions.insert(s.id.clone(), s);
         }
         for id in live {
             let _ = self.subscribe(&id, false).await;
@@ -226,8 +224,7 @@ impl Hub {
             // 和建会话赛跑时别把那边已有的状态（悬着的提问等）盖掉。
             self.0
                 .st
-                .lock()
-                .unwrap()
+                .locked()
                 .sessions
                 .entry(id.to_string())
                 .or_insert(s);
@@ -269,7 +266,7 @@ impl Hub {
             return;
         };
         let changed = {
-            let mut st = self.0.st.lock().unwrap();
+            let mut st = self.0.st.locked();
             match st.sessions.get_mut(id) {
                 Some(s) if s.permission != m => {
                     s.permission = m;
@@ -308,7 +305,7 @@ impl Hub {
         let r = self.call("session.create", params).await.map_err(rpc_err)?;
         let id = str_field(&r, "session_id");
         let now = self.now();
-        self.0.reg.lock().unwrap().update(&id, |rec| {
+        self.0.reg.locked().update(&id, |rec| {
             rec.origin = origin.clone();
             rec.title = title.clone();
             rec.model = model.clone();
@@ -324,14 +321,14 @@ impl Hub {
                 .map(str::to_string)
                 .or(scene)
                 .unwrap_or_else(|| "code".into()),
-            model: model.unwrap_or_else(|| self.0.default_model.lock().unwrap().clone()),
+            model: model.unwrap_or_else(|| self.0.default_model.locked().clone()),
             origin,
             live: true,
             updated_ms: now,
             created_ms: now,
             ..Sess::default()
         };
-        self.0.st.lock().unwrap().sessions.insert(id.clone(), sess);
+        self.0.st.locked().sessions.insert(id.clone(), sess);
         let _ = self.subscribe(&id, false).await;
         self.upsert(&id);
         Ok(id)
@@ -340,17 +337,16 @@ impl Hub {
     pub(super) fn summary(&self, id: &str) -> Result<port::SessionSummary, PortError> {
         self.0
             .st
-            .lock()
-            .unwrap()
+            .locked()
             .summary(id)
             .ok_or_else(|| PortError::Failed(format!("no session {id}")))
     }
 
     pub(super) async fn ensure_known(&self, id: &str) -> Result<(), PortError> {
-        if !self.0.st.lock().unwrap().sessions.contains_key(id) {
+        if !self.0.st.locked().sessions.contains_key(id) {
             self.adopt(id).await;
         }
-        if self.0.st.lock().unwrap().sessions.contains_key(id) {
+        if self.0.st.locked().sessions.contains_key(id) {
             Ok(())
         } else {
             Err(PortError::Failed(format!("no session {id}")))
@@ -382,9 +378,9 @@ impl Hub {
     pub(super) async fn watch(&self, id: &str) -> Result<Reply, PortError> {
         self.ensure_known(id).await?;
         let gone = || PortError::Failed(format!("no session {id}"));
-        let generation = self.0.link.lock().unwrap().generation(id);
+        let generation = self.0.link.locked().generation(id);
         let (parent, was_live) = {
-            let st = self.0.st.lock().unwrap();
+            let st = self.0.st.locked();
             let s = st.sessions.get(id).ok_or_else(gone)?;
             (s.parent.clone(), s.live)
         };
@@ -399,7 +395,7 @@ impl Hub {
                     let goal = serde_json::from_value::<wire::frames::GoalView>(g["goal"].clone())
                         .ok()
                         .map(|g| state::goal_of(&g));
-                    if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(id) {
+                    if let Some(s) = self.0.st.locked().sessions.get_mut(id) {
                         s.goal = goal;
                     }
                 }
@@ -422,7 +418,7 @@ impl Hub {
         let msgs = self.history(id).await;
         let conv = history::convert(&msgs);
         // 收尾在 st 与 link 两把锁里一次做完：之后的帧都作为事件发出，之前的都在快照里。
-        let mut st = self.0.st.lock().unwrap();
+        let mut st = self.0.st.locked();
         let s = st.sessions.get_mut(id).ok_or_else(gone)?;
         // 实例早就订阅着的会话，它自己跟着帧记的状态比刚才那次 session.get 新。
         if !was_live && let Some(r) = running_hint {
@@ -449,7 +445,7 @@ impl Hub {
             tasks: s.tasks.values().cloned().collect(),
             prompts: s.prompts.clone(),
         };
-        let mut link = self.0.link.lock().unwrap();
+        let mut link = self.0.link.locked();
         if link.generation(id) == generation {
             link.watched.insert(id.to_string());
         }
@@ -460,7 +456,7 @@ impl Hub {
     /// 第一句话只在还没有名字时用（Agix 不报冷会话的名字，没有它列表里只剩 id）。
     pub(super) fn retitle(&self, id: &str, title: &str, by: Titler) {
         {
-            let mut reg = self.0.reg.lock().unwrap();
+            let mut reg = self.0.reg.locked();
             let rec = reg.get(id).cloned().unwrap_or_default();
             let keep = match by {
                 Titler::User => false,
@@ -475,7 +471,7 @@ impl Hub {
                 r.title_from_text = by == Titler::FirstText;
             });
         }
-        if let Some(s) = self.0.st.lock().unwrap().sessions.get_mut(id) {
+        if let Some(s) = self.0.st.locked().sessions.get_mut(id) {
             s.title = title.to_string();
         }
         self.upsert(id);

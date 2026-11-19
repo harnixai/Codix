@@ -90,7 +90,7 @@ impl Hub {
                 )
             }
         };
-        let _ = store.lock().unwrap().append(&job.id.0, &entry);
+        let _ = store.locked().append(&job.id.0, &entry);
         let mut events = vec![Event::JobFired {
             job: job.id.clone(),
             entry,
@@ -102,8 +102,7 @@ impl Hub {
         if let Some((sid, prompt)) = run {
             self.0
                 .job_runs
-                .lock()
-                .unwrap()
+                .locked()
                 .insert(sid.clone(), (job.id.0.clone(), fired_ms, self.now()));
             self.run_turn(&sid, &prompt, "queue");
         }

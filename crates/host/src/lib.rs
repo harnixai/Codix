@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod project;
 pub mod server;
 pub mod service;
+mod sync;
 
 pub use engine::{Engine, Notification, RpcError};
 pub use hub::{Hub, HubConfig};

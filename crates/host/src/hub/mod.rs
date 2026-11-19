@@ -11,6 +11,7 @@ mod tool_calls;
 pub(crate) mod tools;
 mod turns;
 
+use crate::sync::Locked;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -228,7 +229,7 @@ impl Hub {
                 .or_else(|| m.as_str())
                 .unwrap_or("");
             tracing::info!(model = name, "default model");
-            *hub.0.default_model.lock().unwrap() = name.to_string();
+            *hub.0.default_model.locked() = name.to_string();
         }
         hub.load_sessions().await?;
         // 通知在自己的任务里按到达顺序处理：同一会话的帧不能乱序。
@@ -251,7 +252,7 @@ impl Hub {
             // 上一次实例退出时还没跑完的触发：那一轮已经不会有结局了。按触发记录找，定义读不到的也收拾。
             {
                 let store = sched.store();
-                let s = store.lock().unwrap();
+                let s = store.locked();
                 for id in s.history_ids() {
                     for e in s.history(&id, 20) {
                         if e.outcome == JobOutcome::Running {
@@ -268,7 +269,7 @@ impl Hub {
                     }
                 }
             }
-            *hub.0.jobs.lock().unwrap() = Some(sched);
+            *hub.0.jobs.locked() = Some(sched);
         }
         Ok(hub)
     }
@@ -312,8 +313,7 @@ impl Hub {
         let (tx, rx) = mpsc::unbounded_channel();
         self.0
             .taps
-            .lock()
-            .unwrap()
+            .locked()
             .entry(session.to_string())
             .or_default()
             .push(tx);
@@ -321,7 +321,7 @@ impl Hub {
     }
 
     fn tap_send(&self, session: &str, t: Tapped) {
-        let mut taps = self.0.taps.lock().unwrap();
+        let mut taps = self.0.taps.locked();
         if let Some(v) = taps.get_mut(session) {
             v.retain(|tx| tx.send(t.clone()).is_ok());
             if v.is_empty() {
@@ -336,11 +336,11 @@ impl Hub {
 
     /// 下一个接入的 TUI 在 `Hello` 时收到这句提示，只说一次。
     pub fn notice_on_attach(&self, text: String) {
-        self.0.on_attach.lock().unwrap().push(text);
+        self.0.on_attach.locked().push(text);
     }
 
     pub fn shutdown(&self) {
-        if let Some(s) = self.0.jobs.lock().unwrap().as_ref() {
+        if let Some(s) = self.0.jobs.locked().as_ref() {
             s.shutdown();
         }
     }
@@ -356,8 +356,7 @@ impl Hub {
     fn scheduler(&self) -> Result<Scheduler, PortError> {
         self.0
             .jobs
-            .lock()
-            .unwrap()
+            .locked()
             .clone()
             .ok_or_else(|| PortError::Unsupported("jobs".into()))
     }
@@ -366,8 +365,8 @@ impl Hub {
 
     fn emit(&self, out: Out) {
         {
-            let st = self.0.st.lock().unwrap();
-            let link = self.0.link.lock().unwrap();
+            let st = self.0.st.locked();
+            let link = self.0.link.locked();
             send(&link, &st, out.events);
         }
         self.spawn_todo(out.todo);
@@ -378,9 +377,9 @@ impl Hub {
     fn apply(&self, f: impl FnOnce(&mut St, &mut Out)) {
         let mut out = Out::default();
         {
-            let mut st = self.0.st.lock().unwrap();
+            let mut st = self.0.st.locked();
             f(&mut st, &mut out);
-            let link = self.0.link.lock().unwrap();
+            let link = self.0.link.locked();
             send(&link, &st, std::mem::take(&mut out.events));
         }
         self.spawn_todo(out.todo);
@@ -401,7 +400,7 @@ impl Hub {
     }
 
     fn upsert(&self, id: &str) {
-        let s = self.0.st.lock().unwrap().summary(id);
+        let s = self.0.st.locked().summary(id);
         if let Some(s) = s {
             self.emit_events(vec![Event::SessionUpserted(s)]);
         }
@@ -446,13 +445,13 @@ impl Service for Hub {
     fn attach(&self, sink: Option<Sink>) {
         let attached = sink.is_some();
         {
-            let mut link = self.0.link.lock().unwrap();
+            let mut link = self.0.link.locked();
             link.sink = sink;
             link.watched.clear();
             link.epoch += 1;
         }
         if attached {
-            let notices = std::mem::take(&mut *self.0.on_attach.lock().unwrap());
+            let notices = std::mem::take(&mut *self.0.on_attach.locked());
             self.emit_events(
                 notices
                     .into_iter()
@@ -466,7 +465,7 @@ impl Service for Hub {
     }
 
     fn hello(&self) -> (InstanceInfo, bool, bool) {
-        let st = self.0.st.lock().unwrap();
+        let st = self.0.st.locked();
         let primary = st.sessions.values().filter(|s| s.parent.is_none());
         let (mut sessions, mut waiting) = (0, 0);
         for s in primary {
@@ -476,8 +475,7 @@ impl Service for Hub {
         let jobs = self
             .0
             .jobs
-            .lock()
-            .unwrap()
+            .locked()
             .as_ref()
             .map(|s| s.list().len() as u32)
             .unwrap_or(0);
@@ -497,7 +495,7 @@ impl Service for Hub {
                 holder: None,
             },
             self.0.flows.get().is_some(),
-            self.0.jobs.lock().unwrap().is_some(),
+            self.0.jobs.locked().is_some(),
         )
     }
 

@@ -792,3 +792,72 @@ async fn jobs_follow_the_projects_trust() {
     };
     assert!(left.is_empty());
 }
+
+/// 名字写在引擎里：引擎没改成就回错、本地不改；冷会话关闭时引擎答"不存在"，照样算关了，别的错误回给人。
+#[tokio::test]
+async fn rename_and_close_follow_what_the_engine_did() {
+    let r = rig_with(Box::new(|m, p| match m {
+        "session.rename" | "session.close" if p["session_id"] == "s1" => Err(RpcError::Remote {
+            code: -32603,
+            message: "disk full".into(),
+            data: Value::Null,
+        }),
+        "session.close" if p["session_id"] == "s2" => Err(RpcError::Remote {
+            code: -32000,
+            message: "not in memory".into(),
+            data: Value::Null,
+        }),
+        _ => default_handler(m, p),
+    }))
+    .await;
+    let titles = |v: &[port::SessionSummary]| -> Vec<(String, String)> {
+        v.iter()
+            .map(|s| (s.id.0.clone(), s.title.clone()))
+            .collect()
+    };
+    let list = |r: &Rig| {
+        let hub = r.hub.clone();
+        async move {
+            let Reply::Sessions(v) = hub
+                .handle(Command::ListSessions {
+                    filter: Default::default(),
+                })
+                .await
+                .unwrap()
+            else {
+                panic!()
+            };
+            v
+        }
+    };
+    let before = titles(&list(&r).await);
+    let renamed = r
+        .hub
+        .handle(Command::Rename {
+            session: SessionId("s1".into()),
+            title: "新名字".into(),
+        })
+        .await;
+    assert!(renamed.is_err(), "{renamed:?}");
+    assert_eq!(titles(&list(&r).await), before, "引擎没改成，本地也不改");
+
+    let closed = r
+        .hub
+        .handle(Command::Close {
+            session: SessionId("s1".into()),
+        })
+        .await;
+    assert!(closed.is_err(), "{closed:?}");
+    assert!(
+        list(&r).await.iter().any(|s| s.id.0 == "s1"),
+        "没关成就还在"
+    );
+
+    r.hub
+        .handle(Command::Close {
+            session: SessionId("s2".into()),
+        })
+        .await
+        .expect("冷会话照样关");
+    assert!(list(&r).await.iter().all(|s| s.id.0 != "s2"));
+}
