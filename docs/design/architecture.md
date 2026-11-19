@@ -249,35 +249,63 @@ loop {
 
 ### 8.1 数据目录
 
+**项目级的放项目，全局的放全局，本机的、过程性的不进 git。** 一个实例对应一个项目，会话、流程、作业都是
+项目的；全局目录只留用户级的配置、实例的运行时文件与发现，以及认领过的项目的登记。
+
 ```
 ~/.codix/                         CODIX_HOME 指定时以它为准；同时也是 Agix 的 data_root
 ├── settings.json                 ┐
-├── projects/  sessions/  memory/ │ Agix 的全局数据，布局归 Agix（ARCHITECTURE.md §8）。
-├── scenes/  daemon/  …           ┘ 模型、provider、权限等配置都沿用这里的 settings.json
+├── sessions/<id>/  memory/       │ Agix 的全局数据，布局归 Agix（ARCHITECTURE.md §8）。sessions/<id>/ 下
+├── scenes/  daemon/  plugins/ …  ┘ 对项目里的会话只有索引（§8.4）。模型、provider、权限都沿用 settings.json
 ├── codix.yaml                    Codix 自己的配置（YAML）：界面、实例（空闲超时）；不存在时写一份带注释的缺省配置
 ├── keybindings.json              快捷键覆盖
 ├── flows/                        全局流程包（可写层），所有实例共用：flows/、skills/、rules/、policies/…
-└── instances/<名字>/             目录 0700
+├── known-projects.json           认领过的项目：凭证 → 项目路径（§8.9）
+└── instances/<名字>/             目录 0700；只放这台机器上这个进程的东西
     ├── instance.json             发现文件：名字、pid、项目、启动时刻、版本、当前接入者；实例退出时删掉
     ├── meta.json                 实例自己的设定（项目）；停了也留着，`codix start` 照它重新拉起
     ├── instance.lock             flock：同名实例只能跑一个；拿不到锁的 `codix host` 立即退出
     ├── host.sock                 0600
     ├── groups.json               Agix 的 groups_file，回收上一次没收尾的进程组
-    ├── sessions.json             Codix 记的会话归属（§8.4）
-    ├── jobs.json                 作业定义
-    ├── jobs/<作业 id>.jsonl      触发记录，一次一行
-    ├── flow-runs/                流程运行的记录（harnix-flow 的 FileStore）
-    ├── worktrees/<运行>/         `workspace: worktree` 的运行的 worktree，分支 `codix/flow/<运行>`
-    ├── workspaces/<运行>/        没有项目的运行的工作目录
     └── host.log                  实例进程的日志（stderr 也重定向到这里）
+
+<项目>/                           实例必须有项目
+├── .wkts/<运行>/                 `workspace: worktree` 的运行的 worktree，分支 `codix/flow/<运行>`；
+│                                 和引擎自己的 worktree 同一个目录（在仓库根），`.wkts/.gitignore` 是 `*`
+└── .codix/                       项目层目录（Agix 的 project_dir）
+    ├── .gitignore                Agix 维护 state/、settings.local.json、mcp.local.json；harnix 维护 runs/
+    ├── settings.json  mcp.json   ┐
+    ├── agents/  skills/  rules/  │ 进 git：项目的引擎配置，布局归 Agix
+    ├── hooks/  commands/ …       ┘
+    ├── settings.local.json …     个人配置，不进 git
+    ├── flows/                    进 git：项目自己的流程包（项目受信才读、才写，§8.6）
+    ├── jobs.json                 进 git：作业定义（项目受信才读、才写，§8.5）
+    ├── runs/<运行>/              harnix 的过程目录，不进 git（Harnix#69 落地后挪到 state/codix/runs/）
+    └── state/                    不进 git：本机数据与过程数据
+        ├── history/<id>/         Agix：受信项目的会话（转录、memory、checkpoints）
+        ├── memory/  scratchpad/  Agix：模型不问就能写的只有这两个
+        └── codix/                Codix 的命名空间（Agix 的 `state/<产品名>/`），模型不能写
+            ├── owner.json        认领凭证（§8.9）
+            ├── host.lock         flock：一个项目同时只能有一个实例
+            ├── sessions.json     会话归属（§8.4）
+            ├── jobs-state.json   作业在这台机器上的启用状态与调度基线
+            ├── jobs/<作业 id>.jsonl  触发记录，一次一行
+            ├── flow-runs/        流程运行的记录（harnix-flow 的 FileStore）
+            ├── workspaces/<运行>/ 没有项目的运行的工作目录（流程库要它；Codix 的运行都有项目）
+            └── quarantine/<时刻>/ 认不出来的状态挪到这里，不读（§8.9）
 ```
 
 - Codix 自己的文件和 Agix 的放在同一个目录，用自己的名字，不和 Agix 的顶层名字冲突；**不往 Agix 的
   `settings.json` 里写 Codix 的配置**。
-- 项目层目录：`EmbedConfig.project_dir = ".codix"`（Agix#86 已在 0.3.17 落地）。项目里原有的 `.agix`
-  不再被读，要沿用其中的设置由用户自己搬。`product_name = "Codix"`：提示词、`User-Agent`、worktree
-  分支前缀都用这个名字。
-- **作业属于各自的实例**，两个实例不会重复触发同一个作业。`codix start <名字>` 重启实例时作业接着排。
+- 项目层目录：`EmbedConfig.project_dir = ".codix"`（Agix#86）。项目里原有的 `.agix` 不再被读，要沿用其中的
+  设置由用户自己搬。`product = "Codix"`：提示词、`User-Agent`、worktree 分支前缀、`state/codix/` 都用这个名字。
+- **运行时文件留在全局**：`codix list` 要有一个地方扫得到所有实例；macOS 的 unix socket 路径不能超过 104 字节，
+  放进项目，项目一深就绑不上。
+- **流程的 worktree 不放在 `.codix/` 下**：那是引擎守着的配置目录，路径里有它，模型在 worktree 里写文件就会被拦。
+  `.wkts/` 下只能有一层（`.wkts/<运行>`）：Agix 把 `.wkts/` 下第一层认作一个 worktree，据此把保护映射回主仓库。
+- **作业属于项目**：一个项目同时只有一个实例（`state/codix/host.lock`），不会重复触发同一个作业。
+  `codix start <名字>` 重启实例时作业接着排。
+- 以前放在 `instances/<名字>/` 下的会话归属、作业、流程运行与 worktree 不迁移。
 
 ### 8.2 crate 与进程
 
@@ -320,7 +348,7 @@ codix（一个二进制）
 ### 8.4 Agix 接入：`Hub`
 
 - 实例进程里起一个 `Embedded`：`data_root = ~/.codix`、`cwd = 项目`、`project_dir = .codix`、
-  `product_name = Codix`、`groups_file = instances/<名>/groups.json`，**不传 `instance`**（Agix 的实例锁
+  `product = Codix`、`history = Project`、`groups_file = instances/<名>/groups.json`，**不传 `instance`**（Agix 的实例锁
   按"数据根 + 场景"算，一个场景只能锁一份；实例锁由 Codix 自己管）。经 `serve_stream` + `duplex`
   连上，`daemon.subscribeEvents` 订阅会话的生灭与轮的起止。
 - **实例是这个引擎唯一的客户端。** 它订阅内存里的每一个会话（`daemon.event` 的 `session_created` /
@@ -330,7 +358,9 @@ codix（一个二进制）
   - 一轮的细节（文字增量、工具、提问……）只推 TUI `Watch` 着的会话；子 Agent 的侧链会话被 Watch 时，
     父会话上的 `subagent_progress` 解包成那个侧链会话的事件。
 - **只列这个项目的会话**：`session.list` 的条目按 `project_root == 实例的项目` 过滤。
-- **会话归属**记在 `sessions.json`：Codix 建的会话记下 `origin`（用户、作业的哪次触发、分叉）
+- **会话放在项目里**（Agix#94）：项目受信时，会话的转录与附属数据在 `.codix/state/history/<id>/`，全局只留索引；
+  不受信时照旧在全局。Agix 只读索引登记过的会话，项目失去信任后其中的会话不读（`PROJECT_UNTRUSTED`）。
+- **会话归属**记在 `state/codix/sessions.json`：Codix 建的会话记下 `origin`（用户、作业的哪次触发、分叉）
   与建会话的时刻（会话列表的顺序、`#n` 按它）；没记过的按 `User`，时刻取引擎报的。子 Agent 的上级来自任务的
   `agent_session_id`。
 - 建会话一律带 `prompt_types: ["permission", "question"]` 与只读宿主工具的 allow 规则，项目根就是实例的项目。
@@ -367,6 +397,15 @@ codix（一个二进制）
   skills 的，附加进这个会话的系统提示词。触发记录先写 `Running`，那一轮结束时补上结局、耗时、用量。
 - 流程作业：启动一次运行（触发方式记为 `Schedule`），触发记录指着那次运行；运行自己有结局，触发记录只记启动成没成。
 - 作业没有自己的会话：新建、修改、清理都在用户会话里说，由宿主工具执行（下面）。界面不另开表单（§4.4）。
+- **定义与本机状态分开**：
+  - 定义（名字、cron、内容、`catch_up`、创建时刻）在 `.codix/jobs.json`，随项目进 git，团队共用。
+  - 启用与否、调度基线（上次触发、恢复启用的时刻）在 `state/codix/jobs-state.json`，只属于这台机器。
+    没有记录的作业是停用的：克隆下来的仓库带着作业，不会拉下代码就在别人的机器上无人值守地跑起来。
+    在这台机器上新建的作业缺省启用。
+  - **项目受信才读、才写定义**，与项目的流程包一样（§8.6）：不受信时作业标签是空的，`job_save` 照实说存不进去；
+    `/trust` 之后重新读，作业跟着出现或消失（`JobUpserted` / `JobRemoved`）。
+- 作业 ID 是随机的短 ID（`j` 加 8 位十六进制）：定义进 git，几个人各自新建，按序号编的 ID 合并时会撞。
+  列表按创建时刻排（`port::order::jobs`），`#n` 照旧。
 
 **宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、
 `job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程的 22 个 `flow_*` 是流程库的编写与
@@ -395,13 +434,14 @@ codix（一个二进制）
 存储、流程包、派工器（runner）都是库的，实例只做装配与宿主的那一半（`host/src/flows/`）。
 
 - **装配**（`flows::start`，实例起来时一次）：
-  - 运行记录：`FileStore`，`instances/<名>/flow-runs/`。
+  - 运行记录：`FileStore`，`.codix/state/codix/flow-runs/`。
   - 流程包三层：`~/.codix/flows/`（`DirPacks` 的可写层）；垫在下面的内置包（库的示例包，`MemPacks::examples()`）；
     项目自己的 `<项目>/.codix/flows/`，**项目受信才读、才写**。会话都在实例的项目里，`flow_create` 存进项目自己的
     流程包，所以项目没受信时存不进去，工具照实说。信任取 Agix 的 `project.status`；人用 `/trust`（端口
     `TrustProject` → `project.trust`）信任或取消，之后派工器重新问一遍，项目的流程跟着出现或消失。
-  - `ProjectLayout`：项目层目录 `.codix`（与 Agix 的同一个），worktree 在 `instances/<名>/worktrees/`、分支
-    `codix/flow/<运行>`，任务会话可以当自己的来写的子目录 `scratchpad`、`memory`（Agix 0.3.18 起引擎的 worktree 在仓库根的 `.wkts/`）。
+  - `ProjectLayout`：项目层目录 `.codix`（与 Agix 的同一个），worktree 在仓库根的 `.wkts/<运行>/`、分支
+    `codix/flow/<运行>`（§8.1），任务会话可以当自己的来写的子目录 `state/scratchpad`、`state/memory`
+    （Agix#93：模型不问就能写的只有这两个）。
   - 场景（定义里的 profile）就是 Agix 的场景名，目前只开 `code`，交付走 `flow_submit`。
 - **会话宿主**（`SessionHost`，`flows/session_host.rs`）经 `Hub` 开会话，`Hub` 仍是引擎唯一的客户端：
   - `open`：会话 id 由派工器的键算出（键的 v5 UUID，照引擎的写法写成 BASE58），`session.create` 带
@@ -439,6 +479,22 @@ codix（一个二进制）
 `codix.*`、插件经 `[x-codix]` 带来的流程包（门禁与程序步骤经 `ext.run` 跑插件命令）。第一个插件是 `xforge`。
 设计见 `plugins.md`，依赖 Agix#90、#91、#92 与 Harnix#68。
 
+### 8.9 项目状态的认领
+
+`.codix/state/` 在 `.gitignore` 里，但一个仓库照样可以把它提交进去。克隆下来，里面的 `jobs-state.json` 会让作业
+无人值守地跑，`flow-runs/` 里没结束的运行会被派工器接着做。所以 `state/codix/` 里的东西**只有认得出是这台机器
+自己写的才读**，与项目受不受信无关（会话历史由 Agix 按同样的思路只读索引登记过的，§8.4）。
+
+- 第一次在一个项目上启动：生成一个随机凭证，写进 `state/codix/owner.json` 与全局的 `known-projects.json`
+  （凭证 → 项目路径）。
+- 之后启动：`owner.json` 的凭证在 `known-projects.json` 里才认。路径变了是项目搬了家，改写登记的路径。凭证按项目
+  登记、不按实例名，实例改名或重建都还认得。
+- 认不出来（凭证没登记、没有 `owner.json` 却有别的文件）：`state/codix/` 下除了锁的东西整个挪到
+  `quarantine/<时刻>/`，从空状态开始，对话区提示一次。不删：万一是自己的（比如换了 `CODIX_HOME`），可以手动搬回来。
+- `.codix`、`state`、`codix` 三级目录都不能是符号链接，否则拒绝启动：指向别处的链接会让认领和锁都落到项目外。
+- 顺序：先拿 `host.lock`（拿不到就是这个项目已有实例，报出锁文件里记的实例名后退出），再认领，再打开里面的东西。
+  `known-projects.json` 的读改写另加一把 flock（`known-projects.lock`），几个实例同时启动也不会互相覆盖。
+
 ## 9. 旧实现踩过的坑
 
 | 坑 | 本设计如何避开 |
@@ -456,7 +512,6 @@ codix（一个二进制）
 
 | 问题 | 倾向 |
 |---|---|
-| 项目层目录 | 已提 Agix#86，落地后改成 `.codix/` |
 | 空闲超时的缺省值 | 30 分钟（`codix.yaml` 的 `instance.idle_timeout`），设为 `0` 表示不超时 |
 | 缺省终端尺寸 | 160×45，写在 `config.toml`，可以设为 `off` |
 | 宽屏下左右两栏的缺省比例 | 60 : 40，可调，并记住 |

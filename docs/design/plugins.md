@@ -30,7 +30,7 @@ XForge 自己的状态机、编排者、往 `.claude/` `.codex/` 投影的脚手
 | 插件 → 引擎 | `tools.*`、`agix.*` | 读写项目文件、YAML / JSON Schema 等纯计算 |
 
 **边界的变化**：引擎仍然只经 JSON-RPC 打交道；**启动时的装配是 Rust 的**——`EmbedConfig` 里本来就有
-`project_dir`、`product_name`，宿主 JS 库同样在这里注册。动工时 CLAUDE.md「已定的边界」那一条照此改写。
+`project_dir`、`product`，宿主 JS 库同样在这里注册。动工时 CLAUDE.md「已定的边界」那一条照此改写。
 
 ## 2. 目录
 
