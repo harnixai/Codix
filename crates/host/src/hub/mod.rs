@@ -561,13 +561,23 @@ impl Service for Hub {
             sessions += 1;
             waiting += s.prompts.len() as u32;
         }
-        let jobs = self
+        drop(st);
+        let job_list = self
             .0
             .jobs
             .locked()
             .as_ref()
-            .map(|s| s.list().len() as u32)
-            .unwrap_or(0);
+            .map(|s| s.list())
+            .unwrap_or_default();
+        let jobs = job_list.len() as u32;
+        // "等你"与界面的待处理同一个口径：提问、在等人的运行、上次失败或被自动停用的作业。
+        waiting += self.0.alerts.locked().waiting_runs() as u32;
+        waiting += job_list
+            .iter()
+            .filter(|j| {
+                j.auto_disabled.is_some() || j.last.as_ref().is_some_and(JobOutcome::is_failure)
+            })
+            .count() as u32;
         (
             InstanceInfo {
                 name: InstanceName(self.0.instance.clone()),

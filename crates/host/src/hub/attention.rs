@@ -17,6 +17,14 @@ pub(super) struct Alerts {
     /// 等着合并送出的一批。
     batch: Vec<Alert>,
     flushing: bool,
+    /// 此刻在等人的运行（`Hello` 的"等你"计数）。
+    waiting_runs: HashSet<String>,
+}
+
+impl Alerts {
+    pub(super) fn waiting_runs(&self) -> usize {
+        self.waiting_runs.len()
+    }
 }
 
 /// 可能是等人处理的事的那几种事件。
@@ -38,6 +46,14 @@ impl Hub {
     /// 推出去的事件里认出等人处理的事。
     pub(super) fn observe(&self, events: &[Event]) {
         for e in events {
+            if let Event::RunUpserted(r) = e {
+                let mut a = self.0.alerts.locked();
+                if matches!(r.status, RunStatus::Waiting { .. }) {
+                    a.waiting_runs.insert(r.id.0.clone());
+                } else {
+                    a.waiting_runs.remove(&r.id.0);
+                }
+            }
             if let Some((key, alert)) = self.alert_of(e) {
                 self.raise(key, alert);
             }
