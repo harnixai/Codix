@@ -575,6 +575,7 @@ impl Service for Hub {
                 waiting,
                 jobs,
                 holder: None,
+                restarts: 0,
             },
             self.0.flows.get().is_some(),
             self.0.jobs.locked().is_some(),

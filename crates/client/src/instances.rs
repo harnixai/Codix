@@ -194,6 +194,7 @@ impl Instances for SocketInstances {
                 waiting: 0,
                 jobs: 0,
                 holder: None,
+                restarts: 0,
             };
             let meta = read_json::<InstanceMeta>(&self.layout.meta(&name));
             if let Some(f) = read_json::<InstanceFile>(&self.layout.discovery(&name)) {
@@ -211,6 +212,7 @@ impl Instances for SocketInstances {
                     started_ms: Some(f.started_ms),
                     version: f.version,
                     holder: f.holder.filter(|_| state == InstanceState::Running),
+                    restarts: meta.as_ref().map_or(0, |m| m.restarts),
                     ..blank(state)
                 });
             } else if all && let Some(m) = meta {

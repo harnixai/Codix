@@ -147,6 +147,8 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         started_ms,
         version,
         holder: None,
+        supervisor_pid: std::env::var_os(crate::supervise::CHILD_ENV)
+            .map(|_| nix::unistd::getppid().as_raw() as u32),
     };
     claim.write_discovery(&base)?;
     tracing::info!(instance = %name, "serving");

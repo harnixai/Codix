@@ -29,6 +29,7 @@ fn backend(scenario: &str) -> std::sync::Arc<ScriptedBackend> {
         waiting: 0,
         jobs: 0,
         holder: None,
+        restarts: 0,
     };
     let sc = Scenario::parse("t", scenario).unwrap();
     ScriptedBackend::new(MockState::new(instance, seed), sc, MockOptions::default())

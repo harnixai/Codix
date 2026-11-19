@@ -220,7 +220,7 @@ pub(crate) fn origin_icon(o: &Origin) -> &'static str {
     }
 }
 
-pub(crate) fn fmt_elapsed(ms: u64) -> String {
+pub fn fmt_elapsed(ms: u64) -> String {
     let s = ms / 1000;
     if s < 60 {
         format!("{s}s")

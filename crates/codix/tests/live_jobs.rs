@@ -247,15 +247,10 @@ async fn a_firing_left_running_by_a_crash_is_marked_interrupted_on_start() {
     let lv = Live::new();
     let (c, j, running) = fire_long(&lv).await;
     drop(c);
+    let pid = lv.read("instance.json")["pid"].as_u64().unwrap();
     lv.kill_host().await;
-    let on_disk = lv.job_history_file(&j.id.0);
-    assert_eq!(
-        on_disk.last().map(|e| &e.outcome),
-        Some(&JobOutcome::Running),
-        "崩溃时那一轮没有结局"
-    );
-
-    let c = lv.start_again().await;
+    // 看护进程把实例重新拉起来；起来时把崩溃留下的那次收尾。
+    let c = lv.wait_restarted(pid).await;
     let Reply::JobHistory(h) = c
         .ok(Command::JobHistory {
             job: j.id.clone(),

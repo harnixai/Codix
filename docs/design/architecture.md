@@ -496,6 +496,12 @@ schema；`job_validate` 不落盘，回下 5 次触发时刻与护栏的实际�
 
 - `codix new` / `start`：子进程跑 `codix host`，`setsid` 脱离终端，stdin 接 `/dev/null`、stdout 与 stderr
   接 `host.log`；拉起方等 `host.sock` 能连上（至多 30 秒：macOS 第一次执行新装的二进制要先扫描）再接入。
+- **看护**：拉起的 `codix host` 是看护进程，它用同样的参数（环境里带 `CODIX_HOST_CHILD`）再拉起真正的实例进程
+  并等着；SIGTERM / SIGINT 转给实例。实例正常退出（停止）就跟着结束；被信号杀死（崩溃、kill -9）就按 1s / 5s
+  / 30s 退避重启，10 分钟里超过 5 次就放弃并在 `meta.json` 记 `crashed`；起来不到 5 秒就自己报错退出的（锁被占、
+  配置错）不重启。重启次数记在 `meta.json`，`codix list` 写出来；发现文件里记着看护进程的 pid。
+- `host.log` 超过 10 MB 轮转成 `host.log.1`（留 3 份）：拉起前看一次，常驻时每小时看一次，轮转后把 stdout /
+  stderr dup2 到新文件。
 - 日志过滤用 `agix::process::log_filter`（否则 rmcp 会把 OAuth 令牌写进日志）；装 panic 钩子。
 - SIGTERM / SIGINT：通知 TUI（`InstanceStopped`）、停调度器、`Embedded::shutdown`，删掉 socket 与发现文件。
   SIGHUP 忽略。

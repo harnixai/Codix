@@ -44,6 +44,7 @@ impl Service for Fake {
                 waiting: 0,
                 jobs: 0,
                 holder: None,
+                restarts: 0,
             },
             false,
             true,
@@ -211,6 +212,7 @@ fn discovery(name: &str, pid: u32) -> InstanceFile {
         started_ms: 1,
         version: "0".into(),
         holder: None,
+        supervisor_pid: None,
     }
 }
 
@@ -240,6 +242,7 @@ async fn list_marks_and_cleans_stale_instances() {
             name: n.into(),
             project: Some(format!("/p/{n}")),
             stopped_ms: Some(5),
+            ..Default::default()
         };
         write_json_atomic(&layout.meta(n), &meta).unwrap();
     }

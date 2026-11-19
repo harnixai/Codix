@@ -14,6 +14,7 @@ use model::{InstOp, Mouse, MouseButton, MouseKind, Msg};
 use port::Instances;
 
 mod host_main;
+mod supervise;
 
 /// 跑在终端里的 agent 工作台
 #[derive(Parser)]
@@ -106,7 +107,10 @@ async fn main() -> Result<()> {
     // 作业的"下次触发"、触发记录的时刻按本地时间显示；调度器本身就按本地时区算。
     model::set_utc_offset(chrono::Local::now().offset().local_minus_utc());
     if let Some(Cmd::Host { name, project }) = cli.command {
-        return host_main::run(name, project).await;
+        if std::env::var_os(supervise::CHILD_ENV).is_some() {
+            return host_main::run(name, project).await;
+        }
+        return supervise::run(name, project).await;
     }
     let idle_override = match &cli.command {
         Some(Cmd::Attach {
@@ -148,6 +152,8 @@ async fn main() -> Result<()> {
     if let Some(Cmd::List { all }) = cli.command {
         for i in instances.list(all).await? {
             // 列宽在这里补，文字里只留占位：换语言时词序可以变，列还是对齐的。
+            let now = client::now_ms();
+            let since = |ms: u64| model::fmt_elapsed(now.saturating_sub(ms));
             println!(
                 "{}",
                 i18n::t!(
@@ -155,11 +161,22 @@ async fn main() -> Result<()> {
                     name = format!("{:<10}", i.name),
                     state = format!("{:<8?}", i.state),
                     project = format!("{:<16}", i.project.unwrap_or_default()),
+                    pid = format!("{:<7}", i.pid.map(|p| p.to_string()).unwrap_or_default()),
+                    up = format!("{:<8}", i.started_ms.map(since).unwrap_or_default()),
                     sessions = format!("{:<4}", i.sessions),
                     waiting = format!("{:<3}", i.waiting),
+                    restarts = if i.restarts > 0 {
+                        i18n::t!("app.restarts", n = i.restarts)
+                    } else {
+                        String::new()
+                    },
                     holder = i
                         .holder
-                        .map(|h| i18n::t!("app.held_by", holder = h.label()))
+                        .map(|h| i18n::t!(
+                            "app.held_by_idle",
+                            holder = h.label(),
+                            idle = since(h.last_input_ms)
+                        ))
                         .unwrap_or_default()
                 )
             );

@@ -25,6 +25,9 @@ pub struct InstanceInfo {
     pub jobs: u32,
     #[serde(default)]
     pub holder: Option<ClientInfo>,
+    /// 这次启动以来看护进程重启过它几次（architecture §8.7）。
+    #[serde(default)]
+    pub restarts: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

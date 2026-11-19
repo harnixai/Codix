@@ -29,7 +29,7 @@ pub use highlight::theme_names;
 pub use jobs::JobLower;
 pub use mouse::{Mouse, MouseButton, MouseKind};
 pub use panel::set_utc_offset;
-pub use sessions::{SessRow, TreeRow};
+pub use sessions::{SessRow, TreeRow, fmt_elapsed};
 pub use settings::Settings;
 pub use state::{
     Confirm, DEFAULT_IDLE_TIMEOUT_MS, DetachReason, Domain, Focus, Overlay, Picker, Screen, State,

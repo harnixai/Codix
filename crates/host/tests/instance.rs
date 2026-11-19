@@ -34,6 +34,7 @@ async fn claim_locks_binds_and_releases() {
         started_ms: 1,
         version: "0".into(),
         holder: None,
+        supervisor_pid: None,
     };
     c.write_discovery(&f).unwrap();
     assert_eq!(read_json::<InstanceFile>(&layout.discovery("a")), Some(f));

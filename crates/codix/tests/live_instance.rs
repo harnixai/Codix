@@ -97,13 +97,30 @@ async fn a_stopped_instance_is_started_again_from_its_meta() {
     assert!(lv.read("meta.json")["stopped_ms"].is_null());
 }
 
+/// 实例进程崩了（被 kill -9），看护进程把它重新拉起来，`list` 写出重启过几次（architecture §8.7）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_crashed_instance_is_restarted_by_its_supervisor() {
+    let lv = Live::new();
+    let c = lv.start().await;
+    drop(c);
+    let pid = lv.read("instance.json")["pid"].as_u64().unwrap();
+    lv.kill_host().await;
+    let _c = lv.wait_restarted(pid).await;
+    let list = lv.instances.list(false).await.unwrap();
+    assert_eq!(list[0].state, InstanceState::Running);
+    assert_eq!(list[0].restarts, 1, "{list:?}");
+    assert!(lv.host_log().contains("restarting"), "看护进程写了日志");
+}
+
+/// 连看护进程一起被杀：没人拉起，列出来是残留，清掉后照 `meta.json` 拉起。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live"]
 async fn a_killed_instance_is_listed_as_stale_cleaned_and_can_be_started() {
     let lv = Live::new();
     let c = lv.start().await;
     drop(c);
-    lv.kill_host().await;
+    lv.kill_host_and_supervisor().await;
 
     let list = lv.instances.list(false).await.unwrap();
     assert_eq!(list.len(), 1, "残留的不论 all 都列出来");

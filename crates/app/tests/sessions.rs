@@ -403,7 +403,11 @@ async fn a_closed_session_waits_under_closed_and_can_be_reopened() {
     h.keys("o").await;
     h.settle().await;
     assert!(
-        h.core.state.user_sessions().iter().any(|s| s.id == first.id),
+        h.core
+            .state
+            .user_sessions()
+            .iter()
+            .any(|s| s.id == first.id),
         "重新打开回到上面"
     );
     assert!(h.calls("dev").iter().any(|c| matches!(

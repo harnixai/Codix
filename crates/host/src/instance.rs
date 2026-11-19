@@ -51,12 +51,13 @@ pub fn claim(layout: &Layout, name: &str, project: Option<&str>) -> Result<Claim
         }
     })?;
     let old = read_json::<InstanceMeta>(&layout.meta(name));
+    // 看护进程记的重启次数留着：它在实例认领之前就写了。
+    let old = old.unwrap_or_default();
     let meta = InstanceMeta {
         name: name.into(),
-        project: project
-            .map(str::to_owned)
-            .or_else(|| old.and_then(|m| m.project)),
+        project: project.map(str::to_owned).or(old.project),
         stopped_ms: None,
+        ..old
     };
     write_json_atomic(&layout.meta(name), &meta)?;
     Ok(Claim {
@@ -100,8 +101,7 @@ impl Claim {
         let meta_path = self.layout.meta(&self.name);
         let mut meta = read_json::<InstanceMeta>(&meta_path).unwrap_or(InstanceMeta {
             name: self.name.clone(),
-            project: None,
-            stopped_ms: None,
+            ..Default::default()
         });
         meta.stopped_ms = Some(now_ms());
         write_json_atomic(&meta_path, &meta)?;

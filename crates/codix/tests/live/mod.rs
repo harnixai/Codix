@@ -247,11 +247,47 @@ impl Live {
     }
 
     /// `kill -9` 实例进程（模拟崩溃：不走任何收尾），等它真没了才返回。
+    /// `kill -9` 实例进程（模拟崩溃）：看护进程还在，会把它重新拉起来。
     pub async fn kill_host(&self) {
-        let pid = self.read("instance.json")["pid"]
-            .as_u64()
-            .unwrap()
-            .to_string();
+        let pid = self.read("instance.json")["pid"].as_u64().unwrap();
+        kill_hard(pid).await;
+    }
+
+    /// 连看护进程一起 `kill -9`：没人拉起，留下残留。
+    pub async fn kill_host_and_supervisor(&self) {
+        let f = self.read("instance.json");
+        if let Some(s) = f["supervisor_pid"].as_u64() {
+            kill_hard(s).await;
+        }
+        kill_hard(f["pid"].as_u64().unwrap()).await;
+    }
+
+    /// 等看护进程把实例重新拉起来（发现文件里换了 pid、socket 连得上），再接入。
+    pub async fn wait_restarted(&self, old_pid: u64) -> Client {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let pid = std::fs::read_to_string(self.instance_dir().join("instance.json"))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v["pid"].as_u64());
+            if pid.is_some_and(|p| p != old_pid)
+                && let Ok(c) = self.attach(Attach::default()).await
+            {
+                return c;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "看护进程没把实例拉起来\n{}",
+                self.host_log()
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+}
+
+async fn kill_hard(pid: u64) {
+    let pid = pid.to_string();
+    {
         let kill = |sig: &str| {
             std::process::Command::new("kill")
                 .args([sig, &pid])
@@ -270,7 +306,9 @@ impl Live {
         }
         panic!("实例进程 {pid} 杀不掉");
     }
+}
 
+impl Live {
     pub fn host_log(&self) -> String {
         std::fs::read_to_string(self.layout().log(NAME)).unwrap_or_default()
     }

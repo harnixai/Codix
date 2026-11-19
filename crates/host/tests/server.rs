@@ -45,6 +45,7 @@ impl Service for FakeService {
                 waiting: 0,
                 jobs: 0,
                 holder: None,
+                restarts: 0,
             },
             false,
             true,

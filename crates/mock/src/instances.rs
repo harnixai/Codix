@@ -141,6 +141,7 @@ impl Instances for MockInstances {
                     waiting: 0,
                     jobs: 0,
                     holder: None,
+                    restarts: 0,
                 },
                 seed: "empty".into(),
             });

@@ -8,7 +8,9 @@ app:
     joiner: "; "
   no_scenario: "No scenario or seed named {name}"
   bad_duration: "Unrecognized duration {value}"
-  list_row: "{name} {state} {project} sessions {sessions} waiting {waiting} {holder}"
+  list_row: "{name} {state} {project} pid {pid} up {up} sessions {sessions} waiting {waiting} {restarts}{holder}"
+  restarts: "restarted {n} times  "
+  held_by_idle: "attached: {holder} (idle {idle})"
   held_by: "attached by {holder}"
   stopped: "Stopped {name}"
   cli:

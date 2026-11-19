@@ -9,7 +9,9 @@ app:
     joiner: "；"
   no_scenario: "没有场景或种子 {name}"
   bad_duration: "看不懂的时长 {value}"
-  list_row: "{name} {state} {project} 会话 {sessions} 等你 {waiting} {holder}"
+  list_row: "{name} {state} {project} pid {pid} 已运行 {up} 会话 {sessions} 等你 {waiting} {restarts}{holder}"
+  restarts: "重启过 {n} 次  "
+  held_by_idle: "接入：{holder}（空闲 {idle}）"
   held_by: "已被 {holder} 接入"
   stopped: "已停止 {name}"
   cli:

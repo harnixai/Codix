@@ -62,16 +62,27 @@ pub struct InstanceFile {
     pub version: String,
     #[serde(default)]
     pub holder: Option<ClientInfo>,
+    /// 看护它的进程（architecture §8.7）；它的父进程。
+    #[serde(default)]
+    pub supervisor_pid: Option<u32>,
 }
 
 /// 实例自己的设定（`instance.json` 删掉之后也留着），`codix start` 照它重新拉起。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InstanceMeta {
     pub name: String,
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
     pub stopped_ms: Option<u64>,
+    /// 这次启动以来看护进程重启过实例几次。
+    #[serde(default)]
+    pub restarts: u32,
+    #[serde(default)]
+    pub last_crash_ms: Option<u64>,
+    /// 短时间里崩了太多次，看护进程放弃了。
+    #[serde(default)]
+    pub crashed: bool,
 }
 
 impl Layout {
