@@ -37,3 +37,4 @@ pub use state::{
 };
 pub use update::{Effect, InstOk, InstOp, Msg, ReqId, update};
 pub use view::view;
+pub use welcome::short_version;

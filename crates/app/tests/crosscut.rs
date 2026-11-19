@@ -102,7 +102,10 @@ async fn m19_long_lists_scroll_and_filter() {
 async fn m20_first_run_has_guiding_empty_states() {
     let mut h = Harness::new("m20-first-run", SIZE).await;
     let text = h.text();
-    assert!(text.contains("Codix 0.1.0"), "欢迎块");
+    assert!(
+        text.contains(&format!("Codix {}", model::short_version())),
+        "欢迎块"
+    );
     assert!(
         h.panel().is_empty() && !text.contains("Ctrl+T"),
         "没有 goal / todo 的会话没有面板，连标题线也没有"

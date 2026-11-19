@@ -31,12 +31,19 @@ pub fn render_text(frame: &FrameState, size: Size) -> String {
 
 /// 与 `tests/snapshots/<name>.txt` 比较；`CODIX_UPDATE_SNAPSHOTS=1` 时改写它。
 pub fn assert_snapshot(name: &str, actual: &str) {
+    // 欢迎框里的版本每次发布都变：换成等宽的占位，快照不用跟着重写。
+    let v = model::short_version();
+    let placeholder: String = v
+        .chars()
+        .map(|c| if c == '.' { '.' } else { 'x' })
+        .collect();
+    let actual = actual.replace(&format!("Codix {v}"), &format!("Codix {placeholder}"));
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
         .join(format!("{name}.txt"));
     if std::env::var_os("CODIX_UPDATE_SNAPSHOTS").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, actual).unwrap();
+        std::fs::write(&path, &actual).unwrap();
         return;
     }
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {

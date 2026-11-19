@@ -68,8 +68,12 @@ archive/       旧实现 AttaCode 的本地副本，不入库，只作参考
 
 ## 版本与提交
 
-- 版本标签：`Codix-v<x.y.z>-<YYYYMMDD><NN>`。`NN` 是当天第几次发布，从 `01` 开始。
-- `Cargo.toml` 的 `[workspace.package] version` 写成 `x.y.z-YYYYMMDDNN`。起始版本为 `0.1.0`。
+- **每次推送到远程就是一次发布，必须带版本标签**（与 Agix 一致）。
+- 版本标签：`Codix-v<x.y.z>-<YYYYMMDD><NN>`。每次发布 `z` 加 1；`NN` 是当天第几次发布，从 `01` 开始，
+  用 `git tag -l 'Codix-v*-<YYYYMMDD>*'` 查当天已有的取最大加 1。
+- `Cargo.toml` 的 `[workspace.package] version` 写成 `x.y.z-YYYYMMDDNN`，不带程序名前缀。界面上只显示 `x.y.z`。
+- 发布步骤：改版本号并 `cargo update -w` 同步 `Cargo.lock`；`scripts/check.sh` 全过（发布前跑一遍 `scripts/live.sh`）；
+  版本号改动单独一个提交；推送 `main`，再打附注标签（标签消息写本次发布的要点）并推送标签。
 - 提交前缀：`Codix:`。小步提交，每一步都要能构建。
 - 子模块更新单独提交，消息为 `Codix: bump Agix to <sha>`。
 

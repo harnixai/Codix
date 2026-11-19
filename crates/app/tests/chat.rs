@@ -34,7 +34,11 @@ fn submitted(h: &Harness) -> Vec<String> {
 #[tokio::test(start_paused = true)]
 async fn m01_streams_with_thinking_status_and_markdown() {
     let mut h = chat("m01-chat-basic").await;
-    assert!(h.transcript().contains("Codix 0.1.0"), "欢迎块在最上面");
+    assert!(
+        h.transcript()
+            .contains(&format!("Codix {}", model::short_version())),
+        "欢迎块在最上面"
+    );
     ask(&mut h, "介绍一下").await;
     h.advance(150).await;
     let text = h.text();

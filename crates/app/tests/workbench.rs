@@ -48,7 +48,11 @@ async fn m17_single_pane_switches_back_and_forth() {
     h.snapshot("m17-single-side-100x30");
     h.keys("Ctrl+B").await;
     assert_eq!(h.core.state.ui.focus, Focus::Composer);
-    assert!(h.find("Codix 0.1.0").is_some(), "欢迎块");
+    assert!(
+        h.find(&format!("Codix {}", model::short_version()))
+            .is_some(),
+        "欢迎块"
+    );
 }
 
 #[tokio::test(start_paused = true)]

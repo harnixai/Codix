@@ -4,7 +4,11 @@ use port::SessionSummary;
 use tui::{Line, Tone, display_width, truncate_to_width};
 
 const LOGO: [&str; 2] = ["▄▀▀ ▄▀▄ █▀▄ █ ▀▄▀", "▀▄▄ ▀▄▀ █▄▀ █ ▄▀▄"];
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// 欢迎框里只写 `x.y.z`：Cargo 的版本是 `x.y.z-YYYYMMDDNN`，日期序号是发布的标识，不是给人看的版本。
+pub fn short_version() -> &'static str {
+    let v = env!("CARGO_PKG_VERSION");
+    v.split('-').next().unwrap_or(v)
+}
 const BOX_MAX: usize = 60;
 
 /// 还没打开会话时：只有实例信息。
@@ -46,12 +50,16 @@ pub(crate) fn block(s: &SessionSummary, width: usize) -> Vec<Line> {
 fn boxed(width: usize, info: Vec<String>) -> Vec<Line> {
     let w = width.min(BOX_MAX);
     if w < 24 {
-        return vec![Line::toned(format!("Codix {VERSION}"), Tone::Accent)];
+        return vec![Line::toned(
+            format!("Codix {}", short_version()),
+            Tone::Accent,
+        )];
     }
     let inner = w - 4;
     let mut body: Vec<Line> = vec![
         Line::toned(LOGO[0], Tone::Accent),
-        Line::toned(LOGO[1], Tone::Accent).push(format!("   Codix {VERSION}"), Tone::Strong),
+        Line::toned(LOGO[1], Tone::Accent)
+            .push(format!("   Codix {}", short_version()), Tone::Strong),
         Line::default(),
     ];
     body.extend(info.into_iter().map(|t| Line::toned(t, Tone::Dim)));
