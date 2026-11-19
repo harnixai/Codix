@@ -28,3 +28,8 @@ archive/
 
 # 演示环境：scripts/demo.sh 生成，带凭据
 /demo/
+
+# rustc / cargo 的其它产物（取自 GitHub 的 Rust 模板）
+*.pdb
+**/mutants.out*/
+rustc-ice-*.txt
