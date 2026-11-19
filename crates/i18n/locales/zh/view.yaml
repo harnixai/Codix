@@ -78,6 +78,11 @@ view:
   models:
     title: "选一个模型"
     keys: "↑↓ 选择 · Enter 换到它（下一轮生效）· Esc 不换"
+  rewind:
+    title: "退回到哪一轮之前"
+    files: "  · 改了 {n} 个文件"
+    unrestorable: "  · 文件回不去了"
+    keys: "↑↓ 选择 · Enter / 1 撤对话与文件 · 2 只撤对话 · 3 只撤文件 · Esc 不退（Bash 的副作用不回滚）"
   away:
     title: "离开期间（{elapsed}）"
     keys: "↑↓ 选择 · Enter 去处理 · Esc 关掉"

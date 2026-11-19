@@ -417,7 +417,13 @@ pub(crate) fn composer_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             } else if s.ui.esc_armed_ms.is_some_and(|t| now - t <= ESC_ARM_MS) {
                 s.ui.esc_armed_ms = None;
                 if s.ui.composer.is_empty() {
-                    s.notice(i18n::t!("chat_update.rewind_todo"), false);
+                    let Some(id) = s.ui.chat.clone() else {
+                        return Some(vec![]);
+                    };
+                    return Some(vec![s.call(
+                        Pending::Checkpoints(id.clone()),
+                        Command::Checkpoints { session: id },
+                    )]);
                 } else {
                     let text = s.ui.composer.text.clone();
                     s.ui.composer.history.push(text);
@@ -825,6 +831,41 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
                 );
             }
             vec![]
+        }
+        (Pending::Checkpoints(session), Reply::Checkpoints(turns)) => {
+            if turns.is_empty() {
+                s.notice(i18n::t!("chat_update.rewind_none"), false);
+            } else {
+                let selected = turns.len() - 1;
+                s.ui.overlay = Some(Overlay::Rewind {
+                    session,
+                    turns,
+                    selected,
+                });
+            }
+            vec![]
+        }
+        (
+            Pending::Rewound(session, prompt),
+            Reply::Rewound {
+                removed_turns,
+                restored_files,
+            },
+        ) => {
+            s.notice(
+                i18n::t!(
+                    "chat_update.rewound",
+                    turns = removed_turns,
+                    files = restored_files
+                ),
+                false,
+            );
+            // 对话变了：丢掉本地的转录，重新 Watch；那一轮的话放回输入框改了再发。
+            s.domain.convs.remove(&session);
+            s.ui.composer.clear();
+            s.ui.composer.insert_str(&prompt);
+            s.ui.focus = Focus::Composer;
+            crate::follow::after_update(s)
         }
         (Pending::Files, Reply::Files(files)) => {
             s.domain.project_files = Some(files);

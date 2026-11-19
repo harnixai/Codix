@@ -713,6 +713,42 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
             }
             text(&i18n::t!("view.event_log.title"), lines, *scroll)
         }
+        Overlay::Rewind {
+            turns, selected, ..
+        } => {
+            let mut lines: Vec<Line> = turns
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let mark = if i == *selected { "› " } else { "  " };
+                    let mut l = Line::plain(mark).push(
+                        truncate_to_width(&t.prompt.replace('\n', " "), 70),
+                        Tone::Normal,
+                    );
+                    if !t.files.is_empty() {
+                        l = l.push(i18n::t!("view.rewind.files", n = t.files.len()), Tone::Dim);
+                    }
+                    if !t.restorable {
+                        l = l.push(i18n::t!("view.rewind.unrestorable"), Tone::Warn);
+                    }
+                    if i == *selected {
+                        l = l.with_tone(Tone::Selected);
+                    }
+                    l
+                })
+                .collect();
+            let body = s.ui.size.rows.saturating_sub(8) as usize;
+            let skip = selected.saturating_sub(body.saturating_sub(1));
+            lines = lines.into_iter().skip(skip).take(body).collect();
+            lines.push(Line::default());
+            lines.push(Line::toned(i18n::t!("view.rewind.keys"), Tone::Dim));
+            tui::Overlay {
+                title: i18n::t!("view.rewind.title"),
+                height: lines.len() as u16 + 2,
+                lines,
+                width: (s.ui.size.cols.saturating_sub(10)).min(100),
+            }
+        }
         Overlay::Models { models, selected } => {
             let mut lines: Vec<Line> = models
                 .iter()

@@ -304,3 +304,30 @@ async fn a_trusted_projects_sessions_are_kept_in_the_project() {
         assert!(list.iter().any(|s| s.id == *id), "{id} 跨重启还在");
     }
 }
+
+/// 回滚经端口落到 Agix：两轮之后回滚菜单列出两轮，只撤对话退回到第一轮刚结束时，撤掉了一轮。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn checkpoints_list_turns_and_rewind_removes_the_later_ones() {
+    let lv = Live::new();
+    let mut c = lv.start().await;
+    let s = c.new_session().await;
+    c.watch(&s).await;
+    c.turn(&s, OK).await.ended();
+    c.turn(&s, "Reply with only the word YES.").await.ended();
+    let Reply::Checkpoints(turns) = c.ok(Command::Checkpoints { session: s.clone() }).await else {
+        panic!("checkpoints")
+    };
+    assert_eq!(turns.len(), 2, "{turns:?}");
+    let Reply::Rewound { removed_turns, .. } = c
+        .ok(Command::Rewind {
+            session: s.clone(),
+            to_turn: Some(turns[0].turn_id.clone()),
+            scope: port::RewindScope::Conversation,
+        })
+        .await
+    else {
+        panic!("rewind")
+    };
+    assert_eq!(removed_turns, 1);
+}

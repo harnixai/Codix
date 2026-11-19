@@ -78,6 +78,11 @@ view:
   models:
     title: "Pick a model"
     keys: "↑↓ select · Enter to switch (from the next turn) · Esc to keep"
+  rewind:
+    title: "Go back to before which turn"
+    files: "  · {n} files changed"
+    unrestorable: "  · files cannot be restored"
+    keys: "↑↓ select · Enter / 1 conversation and files · 2 conversation only · 3 files only · Esc to stay (Bash side effects are not undone)"
   away:
     title: "While you were away ({elapsed})"
     keys: "↑↓ select · Enter to go there · Esc to close"

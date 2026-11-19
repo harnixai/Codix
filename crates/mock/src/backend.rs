@@ -360,6 +360,24 @@ impl ScriptedBackend {
                     clamped: false,
                 })
             }
+            Checkpoints { .. } => Ok(Reply::Checkpoints(vec![
+                port::Checkpoint {
+                    turn_id: "t1".into(),
+                    prompt: "看看认证模块现在怎么组织的".into(),
+                    files: vec![],
+                    restorable: true,
+                },
+                port::Checkpoint {
+                    turn_id: "t2".into(),
+                    prompt: "把 session 存储挪到 Redis".into(),
+                    files: vec!["src/auth/session.rs".into()],
+                    restorable: true,
+                },
+            ])),
+            Rewind { .. } => Ok(Reply::Rewound {
+                removed_turns: 1,
+                restored_files: 1,
+            }),
             ProjectFiles => Ok(Reply::Files(
                 [
                     "src/auth/mod.rs",

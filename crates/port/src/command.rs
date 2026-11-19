@@ -77,6 +77,17 @@ pub enum Command {
     ListModels,
     /// 项目里的文件（`@` 提及的补全）：跟着 `.gitignore`，至多一万个。
     ProjectFiles,
+    /// 回滚菜单：还在对话里的每一轮（Agix 的 `session.checkpoints`）。
+    Checkpoints {
+        session: SessionId,
+    },
+    /// 退回到某一轮刚结束时（`to_turn` 省略 = 第一轮之前），撤文件、对话或两者（`session.rewind`）。
+    Rewind {
+        session: SessionId,
+        #[serde(default)]
+        to_turn: Option<String>,
+        scope: RewindScope,
+    },
     /// Shift+Tab：切这个会话的权限模式，立即生效、记在会话上（需求 C-20，Agix
     /// `session.setPermissionMode`）。回 `PermissionMode`，以其中实际生效的为准。
     SetPermissionMode {
@@ -225,6 +236,8 @@ impl Command {
             Command::SetModel { .. } => "set_model",
             Command::ListModels => "list_models",
             Command::ProjectFiles => "project_files",
+            Command::Checkpoints { .. } => "checkpoints",
+            Command::Rewind { .. } => "rewind",
             Command::SetPermissionMode { .. } => "set_permission_mode",
             Command::TrustProject { .. } => "trust_project",
             Command::Commands { .. } => "commands",
@@ -366,6 +379,11 @@ pub enum Reply {
     Doctor(Vec<crate::HealthCheck>),
     Models(Vec<ModelInfo>),
     Files(Vec<String>),
+    Checkpoints(Vec<Checkpoint>),
+    Rewound {
+        removed_turns: u32,
+        restored_files: u32,
+    },
 }
 
 /// 一个可选的模型：哪个 provider 的、叫什么。
@@ -375,4 +393,26 @@ pub struct ModelInfo {
     pub id: String,
     #[serde(default)]
     pub display_name: Option<String>,
+}
+
+/// 回滚菜单的一轮。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub turn_id: String,
+    /// 开启这一轮的那句话（前 200 个字）。
+    pub prompt: String,
+    /// 这一轮里被写过的文件。
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub restorable: bool,
+}
+
+/// 回滚撤什么。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindScope {
+    Both,
+    Conversation,
+    Files,
 }

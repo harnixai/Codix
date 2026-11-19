@@ -224,6 +224,77 @@ impl Hub {
             }
             C::ListModels => Ok(Reply::Models(self.list_models().await)),
             C::ProjectFiles => Ok(Reply::Files(self.project_files().await)),
+            C::Checkpoints { session } => {
+                let v = self
+                    .call("session.checkpoints", json!({"session_id": session.0}))
+                    .await
+                    .map_err(rpc_err)?;
+                let turns = v["turns"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|t| port::Checkpoint {
+                        turn_id: str_field(t, "turn_id"),
+                        prompt: str_field(t, "prompt"),
+                        files: t["files"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|f| f["path"].as_str().map(str::to_string))
+                            .collect(),
+                        restorable: t["restorable"].as_bool().unwrap_or(false),
+                    })
+                    .collect();
+                Ok(Reply::Checkpoints(turns))
+            }
+            C::Rewind {
+                session,
+                to_turn,
+                scope,
+            } => {
+                let mut p = json!({
+                    "session_id": session.0,
+                    "scope": match scope {
+                        port::RewindScope::Both => "both",
+                        port::RewindScope::Conversation => "conversation",
+                        port::RewindScope::Files => "files",
+                    },
+                });
+                match to_turn {
+                    Some(t) => p["to_turn"] = json!(t),
+                    None => p["to_start"] = json!(true),
+                }
+                // 回不去的文件（被会话之外改过、副本没了）整个拒绝，问题原样回给人：
+                // 不替人决定覆盖或跳过。
+                let v = self.call("session.rewind", p).await.map_err(|e| match e {
+                    RpcError::Remote { message, data, .. } => {
+                        PortError::Failed(match data["issues"].as_array() {
+                            Some(issues) if !issues.is_empty() => format!(
+                                "{message}: {}",
+                                issues
+                                    .iter()
+                                    .map(|i| format!(
+                                        "{} ({})",
+                                        i["path"].as_str().unwrap_or(""),
+                                        i["issue"].as_str().unwrap_or("")
+                                    ))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                            _ => message,
+                        })
+                    }
+                    e => rpc_err(e),
+                })?;
+                Ok(Reply::Rewound {
+                    removed_turns: v["conversation"]["removed_turns"]
+                        .as_array()
+                        .map_or(0, |a| a.len() as u32),
+                    restored_files: v["files"]["restored"]
+                        .as_array()
+                        .map_or(0, |a| a.len() as u32),
+                })
+            }
             C::SetModel {
                 session,
                 model,

@@ -116,6 +116,10 @@ pub(crate) enum Pending {
     Models,
     /// `@` 提及：项目里的文件。
     Files,
+    /// 回滚菜单。
+    Checkpoints(port::SessionId),
+    /// 回滚做完了：会话，放回输入框的那句话。
+    Rewound(port::SessionId, String),
     /// Shift+Tab 切了这个会话的权限模式（请求的是第二项），回复里是实际生效的。
     PermissionSet(port::SessionId, port::PermissionMode),
 }
@@ -664,6 +668,58 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             Some(c) => exit_choice(s, c),
             None => vec![],
         };
+    }
+    if matches!(s.ui.overlay, Some(Overlay::Rewind { .. }))
+        && matches!(a, Action::Back | Action::No)
+    {
+        s.ui.overlay = None;
+        return vec![];
+    }
+    if let Some(Overlay::Rewind {
+        session,
+        turns,
+        selected,
+    }) = &mut s.ui.overlay
+    {
+        // Enter 撤对话与文件；1 / 2 / 3 分别是两者、只撤对话、只撤文件。
+        let scope = match a {
+            Action::Up => {
+                *selected = selected.saturating_sub(1);
+                None
+            }
+            Action::Down => {
+                *selected = (*selected + 1).min(turns.len().saturating_sub(1));
+                None
+            }
+            Action::Confirm | Action::Open | Action::Submit | Action::Choose1 => {
+                Some(port::RewindScope::Both)
+            }
+            Action::Choose2 => Some(port::RewindScope::Conversation),
+            Action::Choose3 => Some(port::RewindScope::Files),
+            _ => None,
+        };
+        let Some(scope) = scope else {
+            return vec![];
+        };
+        // 退回到选中那一轮之前（它前一轮刚结束时），把它的话放回输入框。
+        let at = *selected;
+        let to_turn = at.checked_sub(1).map(|i| turns[i].turn_id.clone());
+        let prompt = turns[at].prompt.clone();
+        let session = session.clone();
+        s.ui.overlay = None;
+        let keep = if scope == port::RewindScope::Files {
+            String::new()
+        } else {
+            prompt
+        };
+        return vec![s.call(
+            Pending::Rewound(session.clone(), keep),
+            Command::Rewind {
+                session,
+                to_turn,
+                scope,
+            },
+        )];
     }
     if let Some(Overlay::Models { models, selected }) = &mut s.ui.overlay {
         match a {

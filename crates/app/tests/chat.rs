@@ -452,3 +452,26 @@ async fn at_completes_project_files() {
         "空格之后不再补全"
     );
 }
+
+/// 输入框为空时连按两次 Esc：列出能退回去的轮，选一轮退回到它之前，那句话放回输入框改了再发（C-21）。
+#[tokio::test(start_paused = true)]
+async fn double_esc_rewinds_to_before_a_turn_and_puts_it_back() {
+    let mut h = Harness::new("default", Size::new(160, 45)).await;
+    h.open_session("昨天的调研").await;
+    h.core.state.ui.focus = model::Focus::Composer;
+    h.keys("Esc Esc").await;
+    h.settle().await;
+    assert!(
+        matches!(h.core.state.ui.overlay, Some(model::Overlay::Rewind { ref turns, selected, .. })
+            if turns.len() == 2 && selected == 1),
+        "{:?}",
+        h.core.state.ui.overlay
+    );
+    h.keys("Enter").await;
+    h.settle().await;
+    assert!(h.calls("dev").iter().any(|c| matches!(
+        c,
+        Command::Rewind { to_turn: Some(t), scope: port::RewindScope::Both, .. } if t == "t1"
+    )));
+    assert_eq!(h.core.state.ui.composer.text, "把 session 存储挪到 Redis");
+}

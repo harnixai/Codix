@@ -127,6 +127,12 @@ pub enum Overlay {
     EventLog {
         scroll: usize,
     },
+    /// 输入框为空时连按两次 Esc：选一轮退回去，把那一轮的话放回输入框（交互 §4.5）。
+    Rewind {
+        session: SessionId,
+        turns: Vec<port::Checkpoint>,
+        selected: usize,
+    },
     /// `/model` 不带参数：选一个模型。
     Models {
         models: Vec<port::ModelInfo>,
