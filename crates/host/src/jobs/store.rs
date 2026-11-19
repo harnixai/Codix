@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use client::ProjectState;
-use port::{Job, JobEntry, JobId, JobKind, JobOutcome, Usage};
+use port::{AutoDisabled, Job, JobEntry, JobGuard, JobId, JobKind, JobOutcome, OutcomeKind, Usage};
 use serde::{Deserialize, Serialize};
 
 use super::cron;
@@ -24,6 +24,8 @@ struct JobDef {
     catch_up: bool,
     #[serde(default)]
     created_ms: u64,
+    #[serde(default, skip_serializing_if = "JobGuard::is_empty")]
+    guard: JobGuard,
 }
 
 /// 这台机器上的状态。没有记录的作业是停用的：克隆下来的仓库带着作业，不能拉下代码就跑起来。
@@ -35,6 +37,8 @@ struct Local {
     /// 没触发过时的基线：在这台机器上新建、改了 cron、恢复启用的时刻。
     #[serde(default)]
     since_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto_disabled: Option<AutoDisabled>,
 }
 
 /// 内存里合起来的一条。`Job` 的 `next_fire_ms` 与 `last` 是派生值，这里不用。
@@ -67,6 +71,7 @@ impl StoredJob {
             kind: self.job.kind.clone(),
             catch_up: self.job.catch_up,
             created_ms: self.job.created_ms,
+            guard: self.job.guard.clone(),
         }
     }
 
@@ -75,6 +80,7 @@ impl StoredJob {
             enabled: self.job.enabled,
             last_fired_ms: self.last_fired_ms,
             since_ms: self.since_ms,
+            auto_disabled: self.job.auto_disabled.clone(),
         }
     }
 }
@@ -83,6 +89,7 @@ const UNTRUSTED: &str =
     "the project is not trusted: its job definitions are not read or saved until it is (/trust)";
 
 pub struct JobStore {
+    guard: super::guard::GuardConfig,
     defs_path: PathBuf,
     state_path: PathBuf,
     history_dir: PathBuf,
@@ -98,6 +105,7 @@ impl JobStore {
         history_dir: impl Into<PathBuf>,
     ) -> JobStore {
         JobStore {
+            guard: Default::default(),
             defs_path: defs_path.into(),
             state_path: state_path.into(),
             history_dir: history_dir.into(),
@@ -108,6 +116,14 @@ impl JobStore {
 
     pub fn open_in(state: &ProjectState) -> JobStore {
         JobStore::open(state.jobs(), state.jobs_state(), state.job_history_dir())
+    }
+
+    pub fn set_guard_config(&mut self, g: super::guard::GuardConfig) {
+        self.guard = g;
+    }
+
+    pub fn guard_config(&self) -> &super::guard::GuardConfig {
+        &self.guard
     }
 
     pub fn trusted(&self) -> bool {
@@ -140,8 +156,12 @@ impl JobStore {
                     enabled: l.enabled,
                     catch_up: d.catch_up,
                     created_ms: d.created_ms,
+                    guard: d.guard,
+                    auto_disabled: l.auto_disabled,
+                    effective_guard: None,
                     next_fire_ms: None,
                     last: None,
+                    running_ms: None,
                 },
                 last_fired_ms: l.last_fired_ms,
                 since_ms: l.since_ms,
@@ -174,11 +194,13 @@ impl JobStore {
         } else {
             None
         };
-        job.last = self
-            .history(job.id.as_str(), 1)
-            .into_iter()
-            .next()
-            .map(|e| e.outcome);
+        job.effective_guard = Some(self.guard.effective(&job.guard).0);
+        let recent = self.history(job.id.as_str(), 1);
+        job.last = recent.first().map(|e| e.outcome.clone());
+        job.running_ms = recent
+            .first()
+            .filter(|e| e.outcome == JobOutcome::Running)
+            .map(|e| e.fired_ms);
         job
     }
 
@@ -226,6 +248,7 @@ impl JobStore {
         }
         job.next_fire_ms = None;
         job.last = None;
+        job.running_ms = None;
         match self.jobs.iter_mut().find(|s| s.job.id == job.id) {
             Some(s) => {
                 // cron 变了，旧基线下"错过"的触发已经没有意义。
@@ -235,6 +258,12 @@ impl JobStore {
                     s.since_ms = now_ms;
                 }
                 job.created_ms = s.job.created_ms;
+                // 自动停用是这台机器上的事：改定义不清它，启用才清。
+                job.auto_disabled = if job.enabled && !s.job.enabled {
+                    None
+                } else {
+                    s.job.auto_disabled.clone()
+                };
                 s.job = job.clone();
             }
             None => {
@@ -278,9 +307,39 @@ impl JobStore {
             s.last_fired_ms = None;
             s.since_ms = now_ms;
         }
+        if enabled {
+            s.job.auto_disabled = None;
+        }
         s.job.enabled = enabled;
         self.save_local()?;
         Ok(true)
+    }
+
+    /// 连续失败到了上限：在这台机器上停用，记下来（启用时清掉）。
+    pub fn auto_disable(&mut self, id: &str, after: u32, now_ms: u64) -> Result<bool, String> {
+        let Some(s) = self.jobs.iter_mut().find(|s| s.job.id.as_str() == id) else {
+            return Ok(false);
+        };
+        s.job.enabled = false;
+        s.job.auto_disabled = Some(AutoDisabled {
+            at_ms: now_ms,
+            after,
+        });
+        self.save_local()?;
+        Ok(true)
+    }
+
+    /// 最近连着几次没成（`Failed` / `Stopped`）；跳过的不算，也不打断。
+    pub fn failure_streak(&self, id: &str) -> u32 {
+        let mut n = 0;
+        for e in self.history(id, 100) {
+            match &e.outcome {
+                o if o.is_failure() => n += 1,
+                JobOutcome::Skipped { .. } | JobOutcome::Running => {}
+                _ => break,
+            }
+        }
+        n
     }
 
     pub fn mark_fired(&mut self, id: &str, fired_ms: u64) -> Result<(), String> {
@@ -328,6 +387,22 @@ impl JobStore {
                 target,
             },
         )
+    }
+
+    /// 一页触发记录：新的在前，比 `before_ms` 早的，按结局筛。
+    pub fn history_page(
+        &self,
+        id: &str,
+        before_ms: Option<u64>,
+        limit: usize,
+        outcome: Option<OutcomeKind>,
+    ) -> Vec<JobEntry> {
+        self.history(id, usize::MAX)
+            .into_iter()
+            .filter(|e| before_ms.is_none_or(|b| e.fired_ms < b))
+            .filter(|e| outcome.is_none_or(|k| e.outcome.kind() == k))
+            .take(limit)
+            .collect()
     }
 
     /// 新的在前；同一个 `fired_ms` 取最后一行。坏行跳过。
@@ -395,8 +470,12 @@ mod tests {
             enabled: true,
             catch_up: false,
             created_ms: 0,
+            guard: Default::default(),
+            auto_disabled: None,
+            effective_guard: None,
             next_fire_ms: None,
             last: None,
+            running_ms: None,
         }
     }
 

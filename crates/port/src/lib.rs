@@ -30,7 +30,10 @@ pub use ids::{
     InstanceName, JobId, MessageId, PromptId, RunId, SessionId, StationId, TaskId, ToolId,
 };
 pub use instance::{Attach, ClientInfo, InstanceInfo, InstanceState, NewInstance};
-pub use job::{Job, JobEntry, JobKind, JobOutcome, JobTarget};
+pub use job::{
+    AutoDisabled, Job, JobCheck, JobEntry, JobGuard, JobKind, JobOutcome, JobTarget, OutcomeKind,
+    Overlap, SkipCause, StopCause,
+};
 pub use session::{
     Answer, FileChange, FileChangeKind, Goal, GoalPhase, HistoryItem, Origin, Prompt, PromptKind,
     PromptSource, Provenance, Resolution, SessionState, SessionSummary, StopReason, Todo,

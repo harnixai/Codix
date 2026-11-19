@@ -907,6 +907,7 @@ jobs:
       catch_up: true
       next_fire_ms: 1763341200000
       last: done
+      effective_guard: {timeout_ms: 1800000, max_tokens: 2000000, overlap: skip, disable_after: 3}
     history:
       - fired_ms: 1763254800000
         outcome: done
@@ -963,9 +964,10 @@ jobs:
         simple:
           prompt: 检查依赖的安全公告
           skills: [audit]
-      enabled: true
+      enabled: false
       catch_up: true
-      next_fire_ms: 1763294400000
+      auto_disabled: {at_ms: 1763272810000, after: 3}
+      effective_guard: {timeout_ms: 1800000, max_tokens: 2000000, overlap: skip, disable_after: 3}
       last: {failed: {message: provider 返回 429}}
     history:
       - fired_ms: 1763272800000
@@ -976,3 +978,21 @@ jobs:
         elapsed_ms: 64000
         usage: {input: 3800, output: 650, cache_read: 1200}
         target: {session: {id: s6, title: 老项目会话}}
+  - job:
+      id: j5
+      name: 夜间测试
+      cron: "0 2 * * *"
+      kind:
+        simple:
+          prompt: 跑全量测试并总结失败
+      enabled: true
+      catch_up: false
+      next_fire_ms: 1763402400000
+      last: running
+      running_ms: 1763316000000
+      effective_guard: {timeout_ms: 2700000, max_tokens: 1500000, overlap: queue, disable_after: 0}
+    history:
+      - fired_ms: 1763316000000
+        outcome: running
+        usage: {input: 900000, output: 30000}
+        target: {session: {id: s2, title: 夜间测试}}

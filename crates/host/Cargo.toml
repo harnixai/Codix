@@ -26,6 +26,7 @@ chrono.workspace = true
 tracing.workspace = true
 harnix-flow.workspace = true
 uuid.workspace = true
+jsonschema.workspace = true
 futures.workspace = true
 
 [dev-dependencies]

@@ -505,14 +505,20 @@ async fn a_flow_job_starts_a_run_when_it_fires() {
         enabled: true,
         catch_up: false,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     };
     let Reply::Job(job) = c.ok(Command::SaveJob { job }).await else {
         panic!("save_job")
     };
     c.ok(Command::RunJobNow {
         job: job.id.clone(),
+        subject: None,
+        prompt_append: None,
     })
     .await;
     let jid = job.id.clone();
@@ -530,6 +536,48 @@ async fn a_flow_job_starts_a_run_when_it_fires() {
     c.wait_event("那次运行跑完", RUN, |e| {
         matches!(e, Event::RunUpserted(s) if s.id == id && s.status == RunStatus::Finished)
             .then_some(())
+    })
+    .await;
+}
+
+/// 作业工具对齐流程：用户会话在对话里先校验、再建出一个流程作业（流程按名字认、主题照给），
+/// 再这一次换个主题立即跑一次，起的运行就是这个主题（architecture §8.5）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_user_session_creates_and_runs_a_flow_job_with_the_job_tools() {
+    let lv = Live::new();
+    install(&lv, &[("live-echo", ONE_STATION)]);
+    let mut c = lv.start_trusted().await;
+    c.answering(Answering::Auto);
+    let t = ask(
+        &mut c,
+        "Call job_validate once, then job_save once, both with: name \"weekly-echo\", cron \"0 9 * * 1\", \
+         kind \"flow\", flow \"live-echo\", subject \"say the word OK\". Then call job_run once with target \
+         \"weekly-echo\"'s id and subject \"say the word YES\". Do not ask me to confirm. Reply with only DONE.",
+    )
+    .await;
+    t.ended();
+    for tool in ["job_validate", "job_save", "job_run"] {
+        assert!(t.tools.iter().any(|n| n == tool), "{tool}: {:?}", t.tools);
+    }
+    let Reply::Jobs(jobs) = c.ok(Command::ListJobs).await else {
+        panic!("list_jobs")
+    };
+    let job = jobs
+        .iter()
+        .find(|j| j.name == "weekly-echo")
+        .expect("建出了流程作业");
+    assert!(
+        matches!(&job.kind, port::JobKind::Flow { flow, subject, .. }
+            if flow == "live-echo" && subject == "say the word OK"),
+        "{:?}",
+        job.kind
+    );
+    c.wait_event("这一次的运行", RUN, |e| match e {
+        Event::RunUpserted(r) if r.flow == "live-echo" && r.subject == "say the word YES" => {
+            Some(())
+        }
+        _ => None,
     })
     .await;
 }

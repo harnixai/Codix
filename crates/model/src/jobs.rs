@@ -97,12 +97,17 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
             };
             let (g, tone) = m.pair();
 
-            let next = if j.enabled {
-                j.next_fire_ms
+            let next = match (&j.auto_disabled, j.enabled, j.running_ms) {
+                (_, _, Some(t)) => i18n::t!(
+                    "jobs.running_for",
+                    elapsed = crate::sessions::fmt_elapsed(s.ui.now_ms.saturating_sub(t))
+                ),
+                (Some(a), false, _) => i18n::t!("jobs.auto_disabled", n = a.after),
+                (_, true, _) => j
+                    .next_fire_ms
                     .map(|t| i18n::t!("jobs.next_fire", time = fmt_clock(t)))
-                    .unwrap_or_default()
-            } else {
-                i18n::t!("jobs.disabled")
+                    .unwrap_or_default(),
+                (_, false, _) => i18n::t!("jobs.disabled"),
             };
             let (last, ltone) = match &j.last {
                 Some(JobOutcome::Failed { .. }) => (i18n::t!("jobs.last_failed"), Tone::Error),
@@ -205,7 +210,14 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         )],
         (Action::RunNow, Some(j)) => {
             s.notice(i18n::t!("jobs.run_now", name = j.name), false);
-            vec![s.call(Pending::Ignore, Command::RunJobNow { job: j.id })]
+            vec![s.call(
+                Pending::Ignore,
+                Command::RunJobNow {
+                    job: j.id,
+                    subject: None,
+                    prompt_append: None,
+                },
+            )]
         }
         (Action::New, _) => prefill(s, &i18n::t!("jobs.prefill_new"), "jobs.notice_tool"),
         (Action::Edit, Some(j)) => prefill(
@@ -248,8 +260,66 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             s.domain.load_errors[Tab::Jobs.index()] = None;
             vec![s.call(Pending::Jobs, Command::ListJobs)]
         }
+        // 选中那条触发记录：照原样再跑一次（定义不变，这一次就是现在）。
+        (Action::Retry, Some(j)) if s.ui.focus == Focus::SideLower => {
+            let entry = selected_entry(s)?;
+            s.notice(
+                i18n::t!(
+                    "jobs.retry",
+                    name = j.name,
+                    time = fmt_clock(entry.fired_ms)
+                ),
+                false,
+            );
+            vec![s.call(
+                Pending::Ignore,
+                Command::RunJobNow {
+                    job: j.id,
+                    subject: None,
+                    prompt_append: None,
+                },
+            )]
+        }
+        // 停下正在跑的那一次：下半选中了某次就是那次，否则是作业正在跑的那次（流程作业由实例找它起的运行）。
+        (Action::Stop, Some(j)) => {
+            let picked = if s.ui.focus == Focus::SideLower {
+                selected_entry(s)
+            } else {
+                None
+            };
+            let fired = match (&picked, &j.kind) {
+                (Some(e), _) => Some(e.fired_ms),
+                (None, JobKind::Simple { .. }) => j.running_ms,
+                (None, JobKind::Flow { .. }) => None,
+            };
+            let running = match (&picked, &j.kind) {
+                (Some(e), _) => {
+                    e.outcome == JobOutcome::Running
+                        || matches!(e.target, Some(JobTarget::Run { .. }))
+                }
+                (None, JobKind::Simple { .. }) => j.running_ms.is_some(),
+                (None, JobKind::Flow { .. }) => true,
+            };
+            if !running {
+                s.notice(i18n::t!("jobs.stop_none", name = j.name), false);
+                return Some(vec![]);
+            }
+            s.ui.confirm = Some(crate::state::Confirm::StopFiring(j.id, fired, j.name));
+            vec![]
+        }
         _ => return None,
     })
+}
+
+fn selected_entry(s: &State) -> Option<port::JobEntry> {
+    let id = s.selected_job()?;
+    match s
+        .job_lower_rows()
+        .get(s.ui.lower[Tab::Jobs.index()].selected)?
+    {
+        JobLower::Entry(i) => s.domain.job_history.get(&id)?.get(*i).cloned(),
+        _ => None,
+    }
 }
 
 fn selected_flow_link(s: &State) -> Option<String> {

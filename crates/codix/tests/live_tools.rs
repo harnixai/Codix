@@ -21,8 +21,12 @@ fn job(name: &str, prompt: &str) -> Job {
         enabled: true,
         catch_up: false,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     }
 }
 
@@ -146,6 +150,8 @@ async fn a_job_session_cannot_touch_another_job() {
     };
     c.ok(Command::RunJobNow {
         job: mine.id.clone(),
+        subject: None,
+        prompt_append: None,
     })
     .await;
     let id = mine.id.clone();

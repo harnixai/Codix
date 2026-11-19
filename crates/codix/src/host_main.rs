@@ -85,6 +85,7 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         Ok(f) => Some(f),
         Err(e) => {
             tracing::error!("flows not started: {e:#}");
+            hub.notice_on_attach(format!("flows are unavailable in this instance: {e:#}"));
             None
         }
     };

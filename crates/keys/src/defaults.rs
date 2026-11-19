@@ -176,6 +176,8 @@ pub(crate) fn bindings() -> Vec<Binding> {
         b(C::Jobs, "R", A::RunNow),
         b(C::Jobs, "d", A::Delete),
         b(C::Jobs, "r", A::Retry),
+        b(C::Jobs, "t", A::Retry),
+        b(C::Jobs, "s", A::Stop),
     ]);
     v
 }

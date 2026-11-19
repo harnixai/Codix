@@ -104,11 +104,83 @@ impl Hub {
             tools::JOB_SHOW => {
                 let sched = self.scheduler().map_err(port_err)?;
                 let job = job_target(&sched.list(), input)?;
+                let (guard, capped) = self.guard_config().effective(&job.guard);
                 Ok(serde_json::to_string_pretty(&json!({
                     "job": job,
+                    "guardrails_in_effect": guard,
+                    "capped_by_this_machine": capped,
                     "recent_firings": sched.history(&job.id.0, 10),
                 }))
                 .unwrap_or_default())
+            }
+            tools::JOB_VALIDATE => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let existing = match input.get("target") {
+                    Some(_) => Some(job_target(&sched.list(), input)?),
+                    None => None,
+                };
+                let job = tools::job_from_input(input, existing)?;
+                let check = self.check_job(&job).await;
+                let next: Vec<String> = check.next_fire_ms.iter().map(|t| local_time(*t)).collect();
+                Ok(serde_json::to_string_pretty(&json!({
+                    "ok": check.problems.is_empty(),
+                    "problems": check.problems,
+                    "next_firings": next,
+                    "guardrails_in_effect": check.guard,
+                    "capped_by_this_machine": check.capped,
+                }))
+                .unwrap_or_default())
+            }
+            tools::JOB_HISTORY => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let job = job_target(&sched.list(), input)?;
+                let outcome = match tools::str_of(input, "outcome") {
+                    Some(o) => Some(
+                        serde_json::from_value::<port::OutcomeKind>(json!(o))
+                            .map_err(|_| format!("unknown outcome {o}"))?,
+                    ),
+                    None => None,
+                };
+                let Reply::JobHistory(page) = self
+                    .dispatch(Command::JobHistory {
+                        job: job.id.clone(),
+                        before_ms: input.get("before_ms").and_then(Value::as_u64),
+                        limit: input
+                            .get("limit")
+                            .and_then(Value::as_u64)
+                            .map(|n| n.min(200) as u32),
+                        outcome,
+                    })
+                    .await
+                    .map_err(port_err)?
+                else {
+                    return Err("no history".into());
+                };
+                let lines: Vec<String> = page.iter().map(firing_line).collect();
+                Ok(if lines.is_empty() {
+                    format!("no firings of \"{}\"", job.name)
+                } else {
+                    lines.join("\n")
+                })
+            }
+            tools::JOB_STOP => {
+                let sched = self.scheduler().map_err(port_err)?;
+                let job = job_target(&sched.list(), input)?;
+                match &scope {
+                    tools::Scope::Full => {}
+                    tools::Scope::Job(mine) if mine == &job.id.0 => {}
+                    _ => return Err(out_of_scope(&scope)),
+                }
+                self.stop_firing(
+                    &job.id.0,
+                    input.get("fired_ms").and_then(Value::as_u64),
+                    port::StopCause::Manual,
+                )
+                .await?;
+                Ok(format!(
+                    "stopped the running firing of \"{}\" ({})",
+                    job.name, job.id
+                ))
             }
             tools::JOB_SAVE => {
                 let sched = self.scheduler().map_err(port_err)?;
@@ -167,6 +239,8 @@ impl Hub {
                     _ => (
                         Command::RunJobNow {
                             job: job.id.clone(),
+                            subject: tools::str_of(input, "subject"),
+                            prompt_append: tools::str_of(input, "prompt_append"),
                         },
                         "fired",
                     ),
@@ -257,22 +331,59 @@ pub(super) fn session_line(n: Option<usize>, s: &port::SessionSummary) -> String
 }
 
 pub(super) fn job_line(n: usize, j: &Job) -> String {
+    let kind = match &j.kind {
+        port::JobKind::Simple { .. } => "simple".to_string(),
+        port::JobKind::Flow { flow, .. } => format!("flow {flow}"),
+    };
+    let state = match (&j.auto_disabled, j.enabled) {
+        (Some(a), _) => format!("disabled after {} failures in a row", a.after),
+        (None, true) => "enabled".into(),
+        (None, false) => "disabled".into(),
+    };
     let next = j
         .next_fire_ms
         .filter(|_| j.enabled)
         .map(|ms| format!("  next {}", local_time(ms)))
         .unwrap_or_default();
+    let running = j
+        .running_ms
+        .map(|ms| format!("  running since {}", local_time(ms)))
+        .unwrap_or_default();
     let last = j
         .last
         .as_ref()
-        .map(|o| format!("  last {o:?}"))
+        .map(|o| format!("  last {}", outcome_text(o)))
         .unwrap_or_default();
     format!(
-        "#{n}  {}  \"{}\"  {}  {}{next}{last}",
-        j.id,
-        j.name,
-        j.cron,
-        if j.enabled { "enabled" } else { "disabled" }
+        "#{n}  {}  \"{}\"  {kind}  {}  {state}{next}{running}{last}",
+        j.id, j.name, j.cron
+    )
+}
+
+fn outcome_text(o: &port::JobOutcome) -> String {
+    use port::JobOutcome as O;
+    match o {
+        O::Running => "running".into(),
+        O::Done => "done".into(),
+        O::Failed { message } => format!("failed: {message}"),
+        O::Stopped { reason } => format!("stopped: {}", json!(reason).as_str().unwrap_or("")),
+        O::Skipped { reason } => format!("skipped: {}", json!(reason).as_str().unwrap_or("")),
+    }
+}
+
+fn firing_line(e: &port::JobEntry) -> String {
+    let target = match &e.target {
+        Some(port::JobTarget::Session { id, title }) => format!("  → session \"{title}\" ({id})"),
+        Some(port::JobTarget::Run { id, subject }) => format!("  → run \"{subject}\" ({id})"),
+        None => String::new(),
+    };
+    format!(
+        "{} (fired_ms {})  {}  {}s  {} tokens{target}",
+        local_time(e.fired_ms),
+        e.fired_ms,
+        outcome_text(&e.outcome),
+        e.elapsed_ms / 1000,
+        e.usage.total()
     )
 }
 

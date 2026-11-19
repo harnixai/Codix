@@ -117,8 +117,12 @@ mod tests {
             enabled: true,
             catch_up: false,
             created_ms,
+            guard: Default::default(),
+            auto_disabled: None,
+            effective_guard: None,
             next_fire_ms: None,
             last: None,
+            running_ms: None,
         };
         let jobs_in = [j("j00000001", "a", 2), j("jffffffff", "b", 1)];
         let names: Vec<&str> = jobs(&jobs_in).iter().map(|x| x.name.as_str()).collect();

@@ -343,11 +343,15 @@ impl Hub {
                 None => match cmd {
                     C::ListFlows => Ok(Reply::Flows(vec![])),
                     C::ListRuns { .. } | C::ListEndedRuns { .. } => Ok(Reply::Runs(vec![])),
-                    _ => Err(PortError::Unsupported("flows".into())),
+                    // 列表回空、由 Hello 的 flows 能力位让界面说明；具体原因在接入时提示过、也在 host.log。
+                    _ => Err(PortError::Unsupported(
+                        "flows are not available in this instance (see host.log)".into(),
+                    )),
                 },
             },
             C::ListJobs => Ok(Reply::Jobs(self.scheduler()?.list())),
             C::SaveJob { job } => {
+                let job = self.normalize_job(job).await.map_err(PortError::Failed)?;
                 let saved = self.scheduler()?.upsert(job).map_err(PortError::Failed)?;
                 self.emit_events(vec![Event::JobUpserted(saved.clone())]);
                 Ok(Reply::Job(saved))
@@ -369,13 +373,51 @@ impl Hub {
                 }
                 Ok(Reply::Ok)
             }
-            C::RunJobNow { job } => {
+            C::RunJobNow {
+                job,
+                subject,
+                prompt_append,
+            } => {
                 self.scheduler()?
-                    .run_now(&job.0)
+                    .run_now_with(&job.0, |j| match &mut j.kind {
+                        JobKind::Simple { prompt, .. } => {
+                            if let Some(more) = prompt_append.filter(|s| !s.trim().is_empty()) {
+                                prompt.push_str("\n\n");
+                                prompt.push_str(&more);
+                            }
+                        }
+                        JobKind::Flow { subject: s, .. } => {
+                            if let Some(x) = subject.filter(|s| !s.trim().is_empty()) {
+                                *s = x;
+                            }
+                        }
+                    })
                     .map_err(PortError::Failed)?;
                 Ok(Reply::Ok)
             }
-            C::JobHistory { job } => Ok(Reply::JobHistory(self.scheduler()?.history(&job.0, 50))),
+            C::JobHistory {
+                job,
+                before_ms,
+                limit,
+                outcome,
+            } => {
+                let sched = self.scheduler()?;
+                let store = sched.store();
+                let page = store.locked().history_page(
+                    &job.0,
+                    before_ms,
+                    limit.unwrap_or(20) as usize,
+                    outcome,
+                );
+                Ok(Reply::JobHistory(page))
+            }
+            C::ValidateJob { job } => Ok(Reply::JobCheck(self.check_job(&job).await)),
+            C::StopFiring { job, fired_ms } => {
+                self.stop_firing(&job.0, fired_ms, port::StopCause::Manual)
+                    .await
+                    .map_err(PortError::Failed)?;
+                Ok(Reply::Ok)
+            }
         }
     }
 

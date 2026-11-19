@@ -88,8 +88,12 @@ fn job(name: &str, cron: &str, prompt: &str, enabled: bool) -> Job {
         enabled,
         catch_up: false,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     }
 }
 
@@ -235,6 +239,8 @@ async fn main() {
         &b,
         Command::RunJobNow {
             job: daily.id.clone(),
+            subject: None,
+            prompt_append: None,
         },
     )
     .await;

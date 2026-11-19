@@ -499,3 +499,62 @@ async fn ended_runs_sit_under_ended_and_show_where_they_came_from() {
         "← 收起「已结束」，选中回到它"
     );
 }
+
+/// 护栏写在定义里；自动停用的、正在跑的在列表里看得出来；`s` 停下正在跑的那次（二次确认），
+/// 下半选中一次触发按 `t` 照原样再跑一次（交互 §5.4）。
+#[tokio::test(start_paused = true)]
+async fn jobs_show_guards_and_stop_or_retry_a_firing() {
+    let mut h = Harness::new("default", SIZE).await;
+    h.tab(model::Tab::Jobs).await;
+    h.settle().await;
+    let upper = h.text();
+    assert!(upper.contains("自动停用：连续 3 次失败"), "{upper}");
+    assert!(upper.contains("正在跑"), "{upper}");
+    h.pick_upper(0).await;
+    h.settle().await;
+    assert!(
+        h.lower()
+            .contains("超时 30m · 单次 2.0M · 重叠时跳过 · 连续失败 3 次停用"),
+        "{}",
+        h.lower()
+    );
+
+    let rows = h.core.state.job_rows();
+    let night = rows.iter().position(|id| id.as_str() == "j5").unwrap();
+    h.pick_upper(night).await;
+    h.settle().await;
+    h.keys("s").await;
+    assert!(matches!(
+        h.core.state.ui.confirm,
+        Some(model::Confirm::StopFiring(..))
+    ));
+    h.keys("y").await;
+    h.settle().await;
+    assert!(h.calls("dev").iter().any(|c| matches!(
+        c,
+        Command::StopFiring { job, fired_ms: Some(_) } if job.as_str() == "j5"
+    )));
+
+    h.pick_upper(0).await;
+    h.settle().await;
+    h.keys("s").await;
+    assert!(h.core.state.ui.confirm.is_none(), "没在跑的不问");
+    assert!(h.text().contains("没有正在跑的"));
+    let first = h
+        .core
+        .state
+        .job_lower_rows()
+        .iter()
+        .position(|r| matches!(r, JobLower::Entry(0)))
+        .unwrap();
+    h.pick_lower(first).await;
+    h.settle().await;
+    let before = h.calls("dev").len();
+    h.keys("t").await;
+    h.settle().await;
+    assert!(
+        h.calls("dev")[before..]
+            .iter()
+            .any(|c| matches!(c, Command::RunJobNow { job, .. } if job.as_str() == "j1"))
+    );
+}

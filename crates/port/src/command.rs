@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Answer, ClientInfo, FlowDetail, FlowSummary, Goal, HistoryItem, InstanceInfo, Job, JobEntry,
-    JobId, MessageId, Millis, Prompt, PromptId, RunId, RunOp, RunSummary, RunView, SessionId,
-    SessionSummary, Task, TaskId, Todo,
+    Answer, ClientInfo, FlowDetail, FlowSummary, Goal, HistoryItem, InstanceInfo, Job, JobCheck,
+    JobEntry, JobId, MessageId, Millis, OutcomeKind, Prompt, PromptId, RunId, RunOp, RunSummary,
+    RunView, SessionId, SessionSummary, Task, TaskId, Todo,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,11 +153,33 @@ pub enum Command {
         job: JobId,
         enabled: bool,
     },
+    /// 立即跑一次；这一次可以换主题（流程作业）或补一句（简单作业），不改定义。
     RunJobNow {
         job: JobId,
+        #[serde(default)]
+        subject: Option<String>,
+        #[serde(default)]
+        prompt_append: Option<String>,
     },
+    /// 新的在前；`before_ms` 翻页，`limit` 缺省 20，`outcome` 按结局筛。
     JobHistory {
         job: JobId,
+        #[serde(default)]
+        before_ms: Option<Millis>,
+        #[serde(default)]
+        limit: Option<u32>,
+        #[serde(default)]
+        outcome: Option<OutcomeKind>,
+    },
+    /// 校验一份定义，不落盘：下几次触发、护栏的生效值、存不进去的原因。
+    ValidateJob {
+        job: Job,
+    },
+    /// 停下正在跑的那一次（`fired_ms` 省略 = 正在跑的那次）。
+    StopFiring {
+        job: JobId,
+        #[serde(default)]
+        fired_ms: Option<Millis>,
     },
 }
 
@@ -201,6 +223,8 @@ impl Command {
             Command::SetJobEnabled { .. } => "set_job_enabled",
             Command::RunJobNow { .. } => "run_job_now",
             Command::JobHistory { .. } => "job_history",
+            Command::ValidateJob { .. } => "validate_job",
+            Command::StopFiring { .. } => "stop_firing",
         }
     }
 }
@@ -308,4 +332,5 @@ pub enum Reply {
     Jobs(Vec<Job>),
     Job(Job),
     JobHistory(Vec<JobEntry>),
+    JobCheck(JobCheck),
 }

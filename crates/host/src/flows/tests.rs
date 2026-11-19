@@ -209,3 +209,43 @@ async fn a_closed_session_is_gone_and_its_stream_ends() {
     assert!(host.send(&id, "x").await.is_err());
     assert!(host.lookup(&id).await.unwrap().is_none());
 }
+
+/// 流程作业的流程：`#n` 按流程列表认成名字，名字照认，不在的说清楚，inputs 要合流程的 schema。
+#[tokio::test]
+async fn a_flow_jobs_flow_is_resolved_and_its_inputs_checked() {
+    let r = rig().await;
+    let dir = tempfile::tempdir().unwrap();
+    let flows = super::start(
+        &r.hub,
+        super::FlowsConfig {
+            flows_dir: dir.path().join("flows"),
+            runs_dir: dir.path().join("runs"),
+            worktrees_dir: dir.path().join(".wkts"),
+            workspaces_dir: dir.path().join("ws"),
+        },
+    )
+    .await
+    .unwrap();
+    let all = flows.summaries().await;
+    let first = port::order::flows(&all)[0].name.clone();
+    use crate::hub::FlowPort;
+    assert_eq!(
+        flows.check_job_flow("#1", &Value::Null).await.unwrap(),
+        first
+    );
+    assert_eq!(
+        flows.check_job_flow(&first, &json!({})).await.unwrap(),
+        first
+    );
+    assert!(
+        flows
+            .check_job_flow("no-such-flow", &Value::Null)
+            .await
+            .is_err()
+    );
+    assert!(
+        flows.check_job_flow(&first, &json!(5)).await.is_err(),
+        "inputs 不是对象，不合 schema"
+    );
+    flows.stop().await;
+}

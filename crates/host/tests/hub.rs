@@ -399,6 +399,8 @@ async fn host_tools_hang_on_the_connection_and_a_user_session_saves_jobs() {
     r.hub
         .handle(Command::RunJobNow {
             job: job.id.clone(),
+            subject: None,
+            prompt_append: None,
         })
         .await
         .unwrap();
@@ -427,7 +429,12 @@ async fn host_tools_hang_on_the_connection_and_a_user_session_saves_jobs() {
     assert_eq!(done.usage.output, 7);
     let Reply::JobHistory(h) = r
         .hub
-        .handle(Command::JobHistory { job: job.id })
+        .handle(Command::JobHistory {
+            job: job.id,
+            before_ms: None,
+            limit: None,
+            outcome: None,
+        })
         .await
         .unwrap()
     else {
@@ -632,8 +639,12 @@ async fn a_job_fired_session_may_change_only_its_own_job() {
         enabled: true,
         catch_up: false,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     };
     let Reply::Job(mine) = r
         .hub
@@ -654,6 +665,8 @@ async fn a_job_fired_session_may_change_only_its_own_job() {
     r.hub
         .handle(Command::RunJobNow {
             job: mine.id.clone(),
+            subject: None,
+            prompt_append: None,
         })
         .await
         .unwrap();
@@ -761,8 +774,12 @@ async fn jobs_follow_the_projects_trust() {
         enabled: true,
         catch_up: false,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     };
     let refused = r.hub.handle(Command::SaveJob { job: job.clone() }).await;
     assert!(refused.is_err(), "不受信的项目存不进作业：{refused:?}");
@@ -860,4 +877,136 @@ async fn rename_and_close_follow_what_the_engine_did() {
         .await
         .expect("冷会话照样关");
     assert!(list(&r).await.iter().all(|s| s.id.0 != "s2"));
+}
+
+fn simple_job(name: &str, prompt: &str) -> port::Job {
+    port::Job {
+        id: port::JobId(String::new()),
+        name: name.into(),
+        cron: "0 2 * * *".into(),
+        kind: port::JobKind::Simple {
+            prompt: prompt.into(),
+            skills: vec![],
+            project: None,
+            scene: None,
+            model: None,
+        },
+        enabled: true,
+        catch_up: false,
+        created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
+        next_fire_ms: None,
+        last: None,
+        running_ms: None,
+    }
+}
+
+/// 校验不落盘：回下几次触发、护栏的生效值（作业写的超过天花板就压下来）、存不进去的原因。
+#[tokio::test]
+async fn validating_a_job_saves_nothing_and_says_what_would_happen() {
+    let r = rig().await;
+    let mut j = simple_job("nightly", "跑测试");
+    j.guard.timeout_ms = Some(48 * 3_600_000);
+    let Reply::JobCheck(c) = r
+        .hub
+        .handle(Command::ValidateJob { job: j.clone() })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(c.problems.is_empty(), "{:?}", c.problems);
+    assert_eq!(c.next_fire_ms.len(), 5);
+    assert_eq!(c.guard.timeout_ms, Some(4 * 3_600_000), "压到天花板");
+    assert_eq!(c.capped, ["timeout"]);
+    assert_eq!(c.guard.max_tokens, Some(2_000_000), "没写的用缺省");
+
+    j.cron = "every day".into();
+    j.kind = port::JobKind::Flow {
+        flow: "#1".into(),
+        subject: String::new(),
+        inputs: Value::Null,
+    };
+    let Reply::JobCheck(c) = r.hub.handle(Command::ValidateJob { job: j }).await.unwrap() else {
+        panic!()
+    };
+    assert!(
+        c.problems.len() >= 3,
+        "cron、主题、流程都不行：{:?}",
+        c.problems
+    );
+    let Reply::Jobs(v) = r.hub.handle(Command::ListJobs).await.unwrap() else {
+        panic!()
+    };
+    assert!(v.is_empty(), "校验不存");
+}
+
+/// 停下正在跑的那一次：打断它的会话，那一轮结束时记成手动停下，不算失败的原因写错。
+#[tokio::test]
+async fn stopping_a_running_firing_interrupts_its_session_and_records_why() {
+    let mut r = rig().await;
+    let Reply::Job(job) = r
+        .hub
+        .handle(Command::SaveJob {
+            job: simple_job("nightly", "跑测试"),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    r.hub
+        .handle(Command::RunJobNow {
+            job: job.id.clone(),
+            subject: None,
+            prompt_append: Some("只看昨天的".into()),
+        })
+        .await
+        .unwrap();
+    r.events().await;
+    let turn = r.calls("session.run_turn").last().cloned().unwrap();
+    assert_eq!(turn["message"], "跑测试\n\n只看昨天的", "这一次补的一句");
+    r.frame("new1", json!({"kind":"turn_start"}));
+    r.events().await;
+    let Reply::Jobs(v) = r.hub.handle(Command::ListJobs).await.unwrap() else {
+        panic!()
+    };
+    assert!(v[0].running_ms.is_some(), "列表看得出正在跑");
+
+    r.hub
+        .handle(Command::StopFiring {
+            job: job.id.clone(),
+            fired_ms: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(r.calls("session.interrupt").len(), 1);
+    r.frame(
+        "new1",
+        json!({"kind":"turn_complete","stop_reason":"cancelled","usage":{"output_tokens":3}}),
+    );
+    let ev = r.events().await;
+    let entry = ev
+        .iter()
+        .find_map(|e| match e {
+            Event::JobFired { entry, .. } => Some(entry.clone()),
+            _ => None,
+        })
+        .expect("结局补上了");
+    assert_eq!(
+        entry.outcome,
+        port::JobOutcome::Stopped {
+            reason: port::StopCause::Manual
+        }
+    );
+    let again = r
+        .hub
+        .handle(Command::StopFiring {
+            job: job.id,
+            fired_ms: None,
+        })
+        .await;
+    assert!(again.is_err(), "没有在跑的就说清楚：{again:?}");
 }

@@ -21,8 +21,12 @@ fn job(name: &str, cron: &str, prompt: &str, catch_up: bool) -> Job {
         enabled: true,
         catch_up,
         created_ms: 0,
+        guard: Default::default(),
+        auto_disabled: None,
+        effective_guard: None,
         next_fire_ms: None,
         last: None,
+        running_ms: None,
     }
 }
 
@@ -120,7 +124,12 @@ async fn run_now_fires_a_job_session_and_records_the_outcome() {
     j.enabled = false;
     let j = save(&c, j).await;
     c.skip_past();
-    c.ok(Command::RunJobNow { job: j.id.clone() }).await;
+    c.ok(Command::RunJobNow {
+        job: j.id.clone(),
+        subject: None,
+        prompt_append: None,
+    })
+    .await;
 
     let running = fired(&mut c, &j.id, "触发（进行中）", |e| {
         e.outcome == JobOutcome::Running
@@ -160,7 +169,15 @@ async fn run_now_fires_a_job_session_and_records_the_outcome() {
     let on_disk = lv.job_history_file(&j.id.0);
     assert_eq!(on_disk.len(), 1);
     assert_eq!(on_disk[0].outcome, JobOutcome::Done);
-    let Reply::JobHistory(h) = c.ok(Command::JobHistory { job: j.id.clone() }).await else {
+    let Reply::JobHistory(h) = c
+        .ok(Command::JobHistory {
+            job: j.id.clone(),
+            before_ms: None,
+            limit: None,
+            outcome: None,
+        })
+        .await
+    else {
         panic!("job_history")
     };
     assert_eq!(h, on_disk);
@@ -189,7 +206,12 @@ async fn fire_long(lv: &Live) -> (live::Client, Job, port::JobEntry) {
     )
     .await;
     c.skip_past();
-    c.ok(Command::RunJobNow { job: j.id.clone() }).await;
+    c.ok(Command::RunJobNow {
+        job: j.id.clone(),
+        subject: None,
+        prompt_append: None,
+    })
+    .await;
     let running = fired(&mut c, &j.id, "触发（进行中）", |e| {
         e.outcome == JobOutcome::Running
     })
@@ -230,7 +252,15 @@ async fn a_firing_left_running_by_a_crash_is_marked_interrupted_on_start() {
     );
 
     let c = lv.start_again().await;
-    let Reply::JobHistory(h) = c.ok(Command::JobHistory { job: j.id.clone() }).await else {
+    let Reply::JobHistory(h) = c
+        .ok(Command::JobHistory {
+            job: j.id.clone(),
+            before_ms: None,
+            limit: None,
+            outcome: None,
+        })
+        .await
+    else {
         panic!("job_history")
     };
     let e = h
@@ -301,5 +331,48 @@ async fn a_missed_firing_is_caught_up_once_only_when_asked() {
     assert!(
         nb.next_fire_ms.unwrap() > live::now_ms(),
         "不补跑的排到下一个整点"
+    );
+}
+
+/// 停下正在跑的那一次：打断它的会话，结局记成手动停下（architecture §8.5）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_running_firing_is_stopped_and_recorded_as_stopped() {
+    let lv = Live::new();
+    let mut c = lv.start_trusted().await;
+    let j = save(
+        &c,
+        job(
+            "slow",
+            "0 3 * * *",
+            "Use the Bash tool to run `sleep 60`, then reply with exactly: SLEPT",
+            false,
+        ),
+    )
+    .await;
+    c.ok(Command::RunJobNow {
+        job: j.id.clone(),
+        subject: None,
+        prompt_append: None,
+    })
+    .await;
+    fired(&mut c, &j.id, "开始", |e| {
+        e.outcome == JobOutcome::Running
+    })
+    .await;
+    c.ok(Command::StopFiring {
+        job: j.id.clone(),
+        fired_ms: None,
+    })
+    .await;
+    let done = fired(&mut c, &j.id, "停下", |e| {
+        e.outcome != JobOutcome::Running
+    })
+    .await;
+    assert_eq!(
+        done.outcome,
+        JobOutcome::Stopped {
+            reason: port::StopCause::Manual
+        }
     );
 }

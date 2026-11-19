@@ -117,7 +117,8 @@ pub(crate) fn outcome(o: &JobOutcome) -> Mark {
         JobOutcome::Running => Mark::Active,
         JobOutcome::Done => Mark::Done,
         JobOutcome::Failed { .. } => Mark::Failed,
-        JobOutcome::Skipped => Mark::Skipped,
+        JobOutcome::Stopped { .. } => Mark::Stopped,
+        JobOutcome::Skipped { .. } => Mark::Skipped,
     }
 }
 

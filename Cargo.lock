@@ -1459,6 +1459,7 @@ dependencies = [
  "croner",
  "futures",
  "harnix-flow",
+ "jsonschema",
  "nix 0.29.0",
  "port",
  "serde",

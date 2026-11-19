@@ -100,6 +100,8 @@ pub enum Confirm {
     StopTask(port::TaskId, String),
     ClearGoal(SessionId),
     CancelRun(port::RunId, String),
+    /// 停下作业正在跑的那一次：作业、哪一次（省略 = 正在跑的那次）、名字。
+    StopFiring(port::JobId, Option<u64>, String),
     ForceStation(port::RunId, port::StationId, String),
     Rework(port::RunId, port::StationId, String),
 }

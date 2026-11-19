@@ -252,7 +252,7 @@ async fn numbers_follow_the_canonical_order_and_ignore_the_filter() {
     assert!(h.text().contains("#3   周报"), "过滤时不重编");
     h.tab(model::Tab::Jobs).await;
     let text = h.text();
-    assert!(text.contains("#1 ○ 每日巡检") && text.contains("#4 ✗ 依赖巡检"));
+    assert!(text.contains("#1 ○ 每日巡检") && text.contains("#4 ⏸ 依赖巡检"));
     h.tab(model::Tab::Sessions).await;
     let n = h.core.state.user_sessions().len();
     let newest = h.core.state.user_sessions()[0].title.clone();

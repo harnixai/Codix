@@ -410,6 +410,9 @@ fn confirmed(s: &mut State, c: Confirm) -> Vec<Effect> {
             vec![s.call(Pending::Ignore, Command::Close { session: id })]
         }
         Confirm::StopTask(task, _) => vec![s.call(Pending::Ignore, Command::StopTask { task })],
+        Confirm::StopFiring(job, fired_ms, _) => {
+            vec![s.call(Pending::Ignore, Command::StopFiring { job, fired_ms })]
+        }
         Confirm::CancelRun(run, _) => vec![s.call(
             Pending::Ignore,
             Command::RunOp {

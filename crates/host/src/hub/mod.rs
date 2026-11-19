@@ -57,6 +57,8 @@ pub(crate) trait FlowPort: Send + Sync {
         inputs: Value,
         job: &Job,
     ) -> Result<(port::RunId, String), String>;
+    /// 流程作业的定义要用的流程：`#n` 或名字认出是哪个，`inputs` 合它的 schema。回流程名。
+    async fn check_job_flow(&self, key: &str, inputs: &Value) -> Result<String, String>;
     /// 挂在连接上的流程工具的声明。
     fn tool_declarations(&self) -> Vec<Value>;
     /// 实例项目的信任变了：重新问引擎，项目自己的流程跟着出现或消失。
@@ -120,6 +122,8 @@ struct Inner {
     jobs: Mutex<Option<Scheduler>>,
     /// 作业触发建的会话 → (作业, 触发时刻, 开始时刻)：那一轮结束时补上结局。
     job_runs: Mutex<std::collections::HashMap<String, (String, u64, u64)>>,
+    /// 作业触发出来的会话被停下的原因：那一轮结束时记成 `Stopped` 而不是 `Failed`。
+    stop_causes: Mutex<HashMap<String, port::StopCause>>,
     /// 侧问分叉出的会话：那一轮结束时把回答作为提示推出去。
     side: Mutex<HashSet<String>>,
     default_model: Mutex<String>,
@@ -203,6 +207,7 @@ impl Hub {
             link: Mutex::new(Link::default()),
             jobs: Mutex::new(None),
             job_runs: Mutex::default(),
+            stop_causes: Mutex::default(),
             side: Mutex::default(),
             default_model: Mutex::default(),
             flows: OnceLock::new(),
@@ -332,6 +337,19 @@ impl Hub {
 
     pub(crate) fn project(&self) -> &str {
         &self.0.project
+    }
+
+    /// 护栏的全局缺省与天花板（`codix.yaml` 的 `jobs:`），存在作业存储里：派生的生效值由它算。
+    pub fn set_guard_config(&self, g: crate::jobs::guard::GuardConfig) {
+        if let Ok(sched) = self.scheduler() {
+            sched.store().locked().set_guard_config(g);
+        }
+    }
+
+    pub(crate) fn guard_config(&self) -> crate::jobs::guard::GuardConfig {
+        self.scheduler()
+            .map(|s| s.store().locked().guard_config().clone())
+            .unwrap_or_default()
     }
 
     /// 下一个接入的 TUI 在 `Hello` 时收到这句提示，只说一次。

@@ -571,9 +571,32 @@ pub(crate) fn outcome(o: &JobOutcome) -> (String, Tone) {
         JobOutcome::Running => i18n::t!("panel.outcome.running"),
         JobOutcome::Done => i18n::t!("panel.outcome.done"),
         JobOutcome::Failed { message } => i18n::t!("panel.outcome.failed", message = message),
-        JobOutcome::Skipped => i18n::t!("panel.outcome.skipped"),
+        JobOutcome::Stopped { reason } => {
+            i18n::t!("panel.outcome.stopped", reason = stop_cause(*reason))
+        }
+        JobOutcome::Skipped { reason } => {
+            i18n::t!("panel.outcome.skipped", reason = skip_cause(*reason))
+        }
     };
     (format!("{} {text}", m.glyph()), m.tone())
+}
+
+pub(crate) fn stop_cause(c: port::StopCause) -> String {
+    match c {
+        port::StopCause::Timeout => i18n::t!("panel.stop_cause.timeout"),
+        port::StopCause::Budget => i18n::t!("panel.stop_cause.budget"),
+        port::StopCause::DailyBudget => i18n::t!("panel.stop_cause.daily_budget"),
+        port::StopCause::Manual => i18n::t!("panel.stop_cause.manual"),
+        port::StopCause::InstanceStopped => i18n::t!("panel.stop_cause.instance_stopped"),
+    }
+}
+
+fn skip_cause(c: port::SkipCause) -> String {
+    match c {
+        port::SkipCause::Overlap => i18n::t!("panel.skip_cause.overlap"),
+        port::SkipCause::DailyBudget => i18n::t!("panel.skip_cause.daily_budget"),
+        port::SkipCause::Busy => i18n::t!("panel.skip_cause.busy"),
+    }
 }
 
 /// 作业定义的一行；流程作业的"流程"那一行可以跳到流程标签里那个流程。
@@ -593,9 +616,10 @@ impl JobDefRow {
 /// 作业的定义（右下）：触发规则、状态，简单作业的提示词与 skills，流程作业的流程与主题。
 /// 会话、流程、作业都是项目级的，所以这里不再写项目。
 pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
-    let (l_trigger, l_status) = (
+    let (l_trigger, l_status, l_guard) = (
         i18n::t!("panel.job_field.trigger"),
         i18n::t!("panel.job_field.status"),
+        i18n::t!("panel.job_field.guard"),
     );
     let (l_a, l_b, l_c) = match &j.kind {
         JobKind::Simple { .. } => (
@@ -609,7 +633,7 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
             i18n::t!("panel.job_field.input"),
         ),
     };
-    let label_w = label_width(&[&l_trigger, &l_status, &l_a, &l_b, &l_c]);
+    let label_w = label_width(&[&l_trigger, &l_status, &l_guard, &l_a, &l_b, &l_c]);
     let field = |k: &str| Line::toned(pad(k, label_w), Tone::Dim);
     let next = j
         .next_fire_ms
@@ -629,14 +653,23 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
             Tone::Dim,
         )),
         JobDefRow::Plain(field(&l_status).push(
-            if j.enabled {
-                i18n::t!("panel.job_on_hint")
-            } else {
-                i18n::t!("panel.job_off_hint")
+            match (&j.auto_disabled, j.enabled) {
+                (Some(a), false) => i18n::t!("panel.job_auto_off_hint", n = a.after),
+                (_, true) => i18n::t!("panel.job_on_hint"),
+                (_, false) => i18n::t!("panel.job_off_hint"),
             },
-            if j.enabled { Tone::Normal } else { Tone::Dim },
+            match (&j.auto_disabled, j.enabled) {
+                (Some(_), false) => Tone::Warn,
+                (_, true) => Tone::Normal,
+                (_, false) => Tone::Dim,
+            },
         )),
     ];
+    if let Some(g) = &j.effective_guard {
+        out.push(JobDefRow::Plain(
+            field(&l_guard).push(guard_text(g), Tone::Normal),
+        ));
+    }
     match &j.kind {
         JobKind::Simple {
             prompt,
@@ -690,6 +723,45 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
     out
 }
 
+/// 护栏的时长按人写的样子：30m、2h、1h30m（不是 `fmt_elapsed` 那种计时的写法）。
+fn fmt_span(ms: u64) -> String {
+    let m = ms / 60_000;
+    match (m / 60, m % 60) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h{m}m"),
+    }
+}
+
+/// 护栏的 token 上限：2.0M、500k。
+fn fmt_budget(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else {
+        format!("{}k", n / 1_000)
+    }
+}
+
+/// 护栏的一行：超时 30m · 单次 2.0M · 重叠时跳过 · 连续失败 3 次停用。
+pub(crate) fn guard_text(g: &port::JobGuard) -> String {
+    let overlap = match g.overlap {
+        Some(port::Overlap::Queue) => i18n::t!("panel.overlap.queue"),
+        Some(port::Overlap::Replace) => i18n::t!("panel.overlap.replace"),
+        _ => i18n::t!("panel.overlap.skip"),
+    };
+    let disable = match g.disable_after {
+        Some(n) if n > 0 => i18n::t!("panel.disable_after", n = n),
+        _ => i18n::t!("panel.disable_never"),
+    };
+    i18n::t!(
+        "panel.job_guard",
+        timeout = fmt_span(g.timeout_ms.unwrap_or(0)),
+        tokens = fmt_budget(g.max_tokens.unwrap_or(0)),
+        overlap = overlap,
+        disable = disable
+    )
+}
+
 /// 作业的执行情况（右下）：次数、成败、成功率，平均耗时与 token。还没触发过就没有。
 pub(crate) fn job_stats(history: &[JobEntry]) -> Vec<Line> {
     if history.is_empty() {
@@ -698,8 +770,8 @@ pub(crate) fn job_stats(history: &[JobEntry]) -> Vec<Line> {
     let n = history.len();
     let count = |f: fn(&JobOutcome) -> bool| history.iter().filter(|e| f(&e.outcome)).count();
     let done = count(|o| matches!(o, JobOutcome::Done));
-    let failed = count(|o| matches!(o, JobOutcome::Failed { .. }));
-    let skipped = count(|o| matches!(o, JobOutcome::Skipped));
+    let failed = count(JobOutcome::is_failure);
+    let skipped = count(|o| matches!(o, JobOutcome::Skipped { .. }));
     let finished = done + failed;
     let rate = (done * 100).checked_div(finished).unwrap_or(0);
     let ended: Vec<&JobEntry> = history

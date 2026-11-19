@@ -464,6 +464,38 @@ impl FlowPort for Flows {
         Ok((s.id, s.subject))
     }
 
+    async fn check_job_flow(&self, key: &str, inputs: &Value) -> Result<String, String> {
+        let flows = self.summaries().await;
+        let name = port::order::resolve(&port::order::flows(&flows), key, |f| &f.name)
+            .map(|f| f.name.clone())
+            .ok_or_else(|| format!("no flow {key} in this project (flow_list lists them)"))?;
+        let (def, _) = self
+            .packs()
+            .flow(&name)
+            .ok_or_else(|| format!("no flow {name}"))?;
+        let schema = def.inputs_schema();
+        let empty = Value::Object(Default::default());
+        let inputs = if inputs.is_null() { &empty } else { inputs };
+        let v = jsonschema::validator_for(&schema)
+            .map_err(|e| format!("flow {name}: its inputs schema is not valid: {e}"))?;
+        let errs: Vec<String> = v
+            .iter_errors(inputs)
+            .map(|e| {
+                let at = e.instance_path().to_string();
+                if at.is_empty() {
+                    e.to_string()
+                } else {
+                    format!("{at}: {e}")
+                }
+            })
+            .collect();
+        if errs.is_empty() {
+            Ok(name)
+        } else {
+            Err(format!("inputs for flow {name}: {}", errs.join("; ")))
+        }
+    }
+
     fn tool_declarations(&self) -> Vec<Value> {
         tools::declarations()
     }

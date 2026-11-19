@@ -218,10 +218,11 @@ impl Hub {
         }
         let run = self.0.job_runs.locked().remove(session);
         if let (Some((job, fired, started)), Ok(sched)) = (run, self.scheduler()) {
-            let outcome = if ok {
-                JobOutcome::Done
-            } else {
-                JobOutcome::Failed { message: text }
+            let stopped = self.0.stop_causes.locked().remove(session);
+            let outcome = match (stopped, ok) {
+                (Some(reason), _) => JobOutcome::Stopped { reason },
+                (None, true) => JobOutcome::Done,
+                (None, false) => JobOutcome::Failed { message: text },
             };
             let elapsed = self.now().saturating_sub(started);
             let store = sched.store();

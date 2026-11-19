@@ -113,11 +113,17 @@ impl Scheduler {
 
     /// 立刻触发，不看 `enabled`，也不动调度基线（手动跑一次不该吞掉下一次定时触发）。
     pub fn run_now(&self, id: &str) -> Result<u64, String> {
+        self.run_now_with(id, |_| {})
+    }
+
+    /// 立即跑一次，这一次的作业先经 `edit` 改一下（换主题、补一句），定义不变。
+    pub fn run_now_with(&self, id: &str, edit: impl FnOnce(&mut Job)) -> Result<u64, String> {
         let now = self.now();
-        let job = self
+        let mut job = self
             .lock()
             .get(id, now)
-            .ok_or_else(|| format!("没有这个作业：{id}"))?;
+            .ok_or_else(|| format!("no job {id}"))?;
+        edit(&mut job);
         self.spawn_fire(job, now);
         Ok(now)
     }
@@ -220,8 +226,12 @@ mod tests {
             enabled: true,
             catch_up,
             created_ms: 0,
+            guard: Default::default(),
+            auto_disabled: None,
+            effective_guard: None,
             next_fire_ms: None,
             last: None,
+            running_ms: None,
         }
     }
 

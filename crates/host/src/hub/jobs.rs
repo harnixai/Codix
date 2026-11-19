@@ -108,3 +108,113 @@ impl Hub {
         }
     }
 }
+
+impl Hub {
+    /// 存之前：流程作业的 `flow`（`#n` 或名字）认成流程名、`inputs` 合它的 schema；简单作业要有提示词。
+    pub(super) async fn normalize_job(&self, mut job: Job) -> Result<Job, String> {
+        match &mut job.kind {
+            JobKind::Flow { flow, inputs, .. } => {
+                let f = self
+                    .flows()
+                    .ok_or("flows are not available in this instance")?;
+                *flow = f.check_job_flow(flow, inputs).await?;
+            }
+            JobKind::Simple { prompt, .. } if prompt.trim().is_empty() => {
+                return Err("prompt must not be empty".into());
+            }
+            JobKind::Simple { .. } => {}
+        }
+        Ok(job)
+    }
+
+    /// 校验一份作业定义，不落盘（`ValidateJob`、`job_validate`）。
+    pub(super) async fn check_job(&self, job: &Job) -> port::JobCheck {
+        let mut problems = vec![];
+        if job.name.trim().is_empty() {
+            problems.push("name must not be empty".to_string());
+        }
+        if let Err(e) = crate::jobs::cron::validate(&job.cron) {
+            problems.push(e);
+        }
+        match &job.kind {
+            JobKind::Simple { prompt, .. } if prompt.trim().is_empty() => {
+                problems.push("prompt must not be empty".into())
+            }
+            JobKind::Simple { .. } => {}
+            JobKind::Flow {
+                flow,
+                subject,
+                inputs,
+            } => {
+                if subject.trim().is_empty() {
+                    problems.push("subject must not be empty".into());
+                }
+                match self.flows() {
+                    Some(f) => {
+                        if let Err(e) = f.check_job_flow(flow, inputs).await {
+                            problems.push(e);
+                        }
+                    }
+                    None => problems.push("flows are not available in this instance".into()),
+                }
+            }
+        }
+        let mut next = vec![];
+        let mut at = self.now();
+        while next.len() < 5 {
+            match crate::jobs::cron::next_after(&job.cron, at) {
+                Some(t) => {
+                    next.push(t);
+                    at = t;
+                }
+                None => break,
+            }
+        }
+        let (guard, capped) = self.guard_config().effective(&job.guard);
+        port::JobCheck {
+            next_fire_ms: next,
+            guard,
+            capped,
+            problems,
+        }
+    }
+
+    /// 停下一个作业正在跑的那次触发（`fired_ms` 省略 = 正在跑的那次）。简单作业打断它的会话，那一轮
+    /// 结束时记成 `Stopped{reason}`；流程作业取消它起的、还没结束的运行。
+    pub(crate) async fn stop_firing(
+        &self,
+        job: &str,
+        fired_ms: Option<u64>,
+        reason: port::StopCause,
+    ) -> Result<(), String> {
+        let sched = self.scheduler().map_err(|e| e.to_string())?;
+        let entry = {
+            let store = sched.store();
+            let s = store.locked();
+            s.history(job, 100).into_iter().find(|e| {
+                fired_ms.is_none_or(|f| e.fired_ms == f)
+                    && (e.outcome == JobOutcome::Running
+                        || matches!(e.target, Some(JobTarget::Run { .. })))
+            })
+        };
+        match entry.and_then(|e| e.target) {
+            Some(JobTarget::Session { id, .. }) => {
+                self.0.stop_causes.locked().insert(id.0.clone(), reason);
+                self.interrupt(&id.0).await.map_err(|e| e.to_string())
+            }
+            Some(JobTarget::Run { id, .. }) => {
+                let f = self
+                    .flows()
+                    .ok_or("flows are not available in this instance")?;
+                f.command(Command::RunOp {
+                    run: id,
+                    op: port::RunOp::Cancel,
+                })
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            }
+            None => Err(format!("job {job} has no firing running")),
+        }
+    }
+}

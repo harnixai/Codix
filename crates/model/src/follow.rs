@@ -78,6 +78,9 @@ fn title_of(s: &State, id: &SessionId) -> String {
 }
 
 /// 只发一次的加载。
+/// 作业下半一次取多少条触发记录。
+const JOB_HISTORY_PAGE: u32 = 50;
+
 fn load(s: &mut State, key: String, what: Pending, cmd: Command) -> Vec<Effect> {
     if !s.ui.loading.insert(key) {
         return vec![];
@@ -407,7 +410,12 @@ fn data(s: &mut State) -> Vec<Effect> {
                     s,
                     format!("history:{id}"),
                     Pending::JobHistory(id.clone()),
-                    Command::JobHistory { job: id },
+                    Command::JobHistory {
+                        job: id,
+                        before_ms: None,
+                        limit: Some(JOB_HISTORY_PAGE),
+                        outcome: None,
+                    },
                 ));
             }
         }

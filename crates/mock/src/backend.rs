@@ -506,12 +506,54 @@ impl ScriptedBackend {
             ListJobs => Ok(Reply::Jobs(
                 st().jobs.values().map(|(j, _)| j.clone()).collect(),
             )),
-            JobHistory { job } => Ok(Reply::JobHistory(
+            JobHistory {
+                job,
+                before_ms,
+                limit,
+                outcome,
+            } => Ok(Reply::JobHistory(
                 st().jobs
                     .get(job)
-                    .map(|(_, h)| h.clone())
+                    .map(|(_, h)| {
+                        h.iter()
+                            .filter(|e| before_ms.is_none_or(|b| e.fired_ms < b))
+                            .filter(|e| outcome.is_none_or(|k| e.outcome.kind() == k))
+                            .take(limit.unwrap_or(u32::MAX) as usize)
+                            .cloned()
+                            .collect()
+                    })
                     .unwrap_or_default(),
             )),
+            ValidateJob { job } => Ok(Reply::JobCheck(port::JobCheck {
+                next_fire_ms: job.next_fire_ms.into_iter().collect(),
+                guard: job.guard.clone(),
+                capped: vec![],
+                problems: vec![],
+            })),
+            StopFiring { job, fired_ms } => {
+                let mut state = st();
+                let Some((_, history)) = state.jobs.get_mut(job) else {
+                    return Err(PortError::Failed(format!("没有作业 {job}")));
+                };
+                let Some(e) = history.iter_mut().find(|e| {
+                    e.outcome == port::JobOutcome::Running
+                        && fired_ms.is_none_or(|f| e.fired_ms == f)
+                }) else {
+                    return Err(PortError::Failed("没有正在跑的触发".into()));
+                };
+                e.outcome = port::JobOutcome::Stopped {
+                    reason: port::StopCause::Manual,
+                };
+                let entry = e.clone();
+                drop(state);
+                if effects {
+                    self.emit_now(Event::JobFired {
+                        job: job.clone(),
+                        entry,
+                    });
+                }
+                Ok(Reply::Ok)
+            }
             SaveJob { job } => {
                 self.emit_now(Event::JobUpserted(job.clone()));
                 Ok(Reply::Job(job.clone()))
@@ -530,7 +572,7 @@ impl ScriptedBackend {
                 }
                 Ok(Reply::Ok)
             }
-            RunJobNow { job } => {
+            RunJobNow { job, .. } => {
                 let found = st().jobs.get(job).cloned();
                 if effects && let Some((j, _)) = found {
                     let target = match &j.kind {
