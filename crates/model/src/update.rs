@@ -104,6 +104,8 @@ pub(crate) enum Pending {
     JobHistory(port::JobId),
     /// `/trust`：信任（`true`）或不再信任实例的项目。
     Trusted(bool),
+    /// `/notify`：测试通知出口。
+    Notified,
     /// Shift+Tab 切了这个会话的权限模式（请求的是第二项），回复里是实际生效的。
     PermissionSet(port::SessionId, port::PermissionMode),
 }
@@ -649,6 +651,25 @@ fn action(s: &mut State, a: Action) -> Vec<Effect> {
             Some(c) => exit_choice(s, c),
             None => vec![],
         };
+    }
+    if let Some(Overlay::Away {
+        alerts, selected, ..
+    }) = &mut s.ui.overlay
+    {
+        match a {
+            Action::Up => *selected = selected.saturating_sub(1),
+            Action::Down => *selected = (*selected + 1).min(alerts.len().saturating_sub(1)),
+            Action::Confirm | Action::Open | Action::Submit => {
+                let target = alerts.get(*selected).and_then(|x| x.target.clone());
+                s.ui.overlay = None;
+                if let Some(t) = target {
+                    crate::follow::go_to(s, &crate::follow::Attention::from(t));
+                }
+            }
+            Action::Back | Action::No => s.ui.overlay = None,
+            _ => {}
+        }
+        return vec![];
     }
     if let Some(Overlay::Text { scroll, .. } | Overlay::EventLog { scroll }) = &mut s.ui.overlay {
         match a {
@@ -1200,6 +1221,13 @@ fn event(s: &mut State, e: Event) -> Vec<Effect> {
         },
         Event::JobRemoved { job } => d.jobs.retain(|x| x.id != job),
         Event::Notice { level, text } => s.notice(text, level == port::NoticeLevel::Error),
+        Event::AwaySummary { since_ms, alerts } => {
+            s.ui.overlay = Some(Overlay::Away {
+                since_ms,
+                alerts,
+                selected: 0,
+            });
+        }
         _ => {}
     }
     std::mem::take(&mut out)

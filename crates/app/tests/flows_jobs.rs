@@ -4,7 +4,7 @@ mod common;
 
 use common::Harness;
 use model::{FlowLower, FlowRow, JobLower};
-use port::{Command, RunOp};
+use port::{Command, Event, RunOp};
 use tui::Size;
 
 const SIZE: Size = Size::new(160, 45);
@@ -556,5 +556,50 @@ async fn jobs_show_guards_and_stop_or_retry_a_firing() {
         h.calls("dev")[before..]
             .iter()
             .any(|c| matches!(c, Command::RunJobNow { job, .. } if job.as_str() == "j1"))
+    );
+}
+
+/// 接入时实例推来"离开期间"：浮层列出每件事，Enter 跳到那里（与 ^R 同一个落点），Esc 关掉（交互 §5.5）。
+#[tokio::test(start_paused = true)]
+async fn the_away_summary_lists_what_happened_and_enter_goes_there() {
+    let mut h = Harness::new("default", SIZE).await;
+    let alert = |kind, title: &str, target| port::Alert {
+        kind,
+        level: port::NoticeLevel::Error,
+        title: title.into(),
+        text: "provider 返回 429".into(),
+        at_ms: 0,
+        target: Some(target),
+    };
+    h.core
+        .handle(model::Msg::Event(Box::new(Event::AwaySummary {
+            since_ms: 0,
+            alerts: vec![
+                alert(
+                    port::AlertKind::JobFailed,
+                    "job \"依赖巡检\" failed",
+                    port::AlertTarget::Job(port::JobId("j4".into())),
+                ),
+                alert(
+                    port::AlertKind::Station,
+                    "run \"导出 CSV\" is waiting for you",
+                    port::AlertTarget::Run {
+                        flow: "feature-to-ship".into(),
+                        run: port::RunId("r2".into()),
+                    },
+                ),
+            ],
+        })));
+    h.settle().await;
+    let text = h.text();
+    assert!(text.contains("job \"依赖巡检\" failed"), "{text}");
+    assert!(text.contains("run \"导出 CSV\" is waiting for you"));
+    h.keys("Down Enter").await;
+    h.settle().await;
+    assert!(h.core.state.ui.overlay.is_none(), "Enter 关掉浮层");
+    assert_eq!(h.core.state.ui.tab, model::Tab::Flows);
+    assert!(
+        matches!(h.core.state.selected_flow_row(), Some(FlowRow::Run(_, id)) if id.as_str() == "r2"),
+        "跳到那次运行"
     );
 }

@@ -175,6 +175,8 @@ pub enum Command {
     ValidateJob {
         job: Job,
     },
+    /// 经配置的通知出口发一条测试通知（architecture §8.10）。
+    TestNotify,
     /// 停下正在跑的那一次（`fired_ms` 省略 = 正在跑的那次）。
     StopFiring {
         job: JobId,
@@ -225,6 +227,7 @@ impl Command {
             Command::JobHistory { .. } => "job_history",
             Command::ValidateJob { .. } => "validate_job",
             Command::StopFiring { .. } => "stop_firing",
+            Command::TestNotify => "test_notify",
         }
     }
 }
@@ -333,4 +336,5 @@ pub enum Reply {
     Job(Job),
     JobHistory(Vec<JobEntry>),
     JobCheck(JobCheck),
+    Notified(Vec<crate::SinkResult>),
 }

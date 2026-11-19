@@ -251,12 +251,20 @@ impl Hub {
             }
         });
         let cfg = self.guard_config();
+        let text = format!(
+            "unattended work used up today's budget ({} tokens): running jobs stopped, the rest of today's firings are skipped",
+            crate::jobs::guard::fmt_tokens(cfg.daily_tokens)
+        );
+        self.alert(
+            port::AlertKind::DailyBudget,
+            port::NoticeLevel::Warn,
+            format!("daily:{}", day_of(self.now())),
+            "today's unattended budget is used up".into(),
+            text.clone(),
+        );
         self.emit_events(vec![Event::Notice {
             level: port::NoticeLevel::Warn,
-            text: format!(
-                "unattended work used up today's budget ({} tokens): running jobs stopped, the rest of today's firings are skipped",
-                crate::jobs::guard::fmt_tokens(cfg.daily_tokens)
-            ),
+            text,
         }]);
     }
 

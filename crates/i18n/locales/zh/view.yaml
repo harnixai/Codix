@@ -74,6 +74,9 @@ view:
     stop_firing: "停下「{name}」正在跑的那一次？ · y 确认 / 其他键放弃"
     force_station: "强制放行「{title}」？出口条件不再检查 · y 确认 / 其他键放弃"
     rework: "退回到「{title}」重做？它之后的站都要重来 · y 确认 / 其他键放弃"
+  away:
+    title: "离开期间（{elapsed}）"
+    keys: "↑↓ 选择 · Enter 去处理 · Esc 关掉"
   event_log:
     empty: "还没有事件"
     title: "事件日志（新的在上）· Esc 关闭"

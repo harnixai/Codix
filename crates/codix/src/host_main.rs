@@ -79,12 +79,44 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         tracing::warn!("codix.yaml: {p}");
     }
     hub.set_guard_config(guard);
+    if !cfg.notify.is_null() {
+        match serde_yaml::from_value::<host::notify::NotifyConfig>(cfg.notify.clone()) {
+            Ok(n) => {
+                let mut n = host::notify::Notifier::new(
+                    n,
+                    host::notify::Origin {
+                        instance: name.clone(),
+                        host: hostname.clone(),
+                        project: project_str.clone(),
+                    },
+                    Some(state.dir().join("notify.jsonl")),
+                );
+                // 只给 LIVE 测试用：合并窗口缩短，免得每条用例干等一分钟。不进 codix.yaml。
+                if let Some(ms) = std::env::var("CODIX_TEST_NOTIFY_WINDOW_MS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                {
+                    n.window_ms = ms;
+                }
+                hub.set_notifier(n);
+            }
+            Err(e) => tracing::warn!("codix.yaml: notify is not understood, nothing is sent: {e}"),
+        }
+    }
     if let Some(q) = project_claim.quarantined() {
         tracing::warn!(to = %q.display(), "project state not written on this machine; quarantined");
-        hub.notice_on_attach(format!(
+        let text = format!(
             "Codix state in this project was not written on this machine: moved to {}, starting empty",
             q.display()
-        ));
+        );
+        hub.alert(
+            port::AlertKind::Quarantined,
+            port::NoticeLevel::Warn,
+            format!("quarantined:{}", q.display()),
+            "project state quarantined".into(),
+            text.clone(),
+        );
+        hub.notice_on_attach(text);
     }
     let flows = host::flows::start(
         &hub,

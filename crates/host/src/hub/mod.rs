@@ -1,6 +1,7 @@
 //! 会话代理（architecture §8.4）：端口命令 → Agix 方法，Agix 的帧 → 领域事件，再加上作业的
 //! 触发。实例是引擎唯一的客户端：它订阅内存里的每个会话，所以状态不依赖 TUI 在不在。
 
+mod attention;
 mod dispatch;
 mod guard;
 mod history;
@@ -147,6 +148,9 @@ struct Inner {
     run_seen: Mutex<HashMap<String, u64>>,
     paused_runs: Mutex<HashSet<String>>,
     exhausted: Mutex<Option<String>>,
+    /// 等人处理的事与通知出口（`attention.rs`）。
+    alerts: Mutex<attention::Alerts>,
+    notifier: Mutex<Option<Arc<crate::notify::Notifier>>>,
     /// 侧问分叉出的会话：那一轮结束时把回答作为提示推出去。
     side: Mutex<HashSet<String>>,
     default_model: Mutex<String>,
@@ -236,6 +240,8 @@ impl Hub {
             run_seen: Mutex::default(),
             paused_runs: Mutex::default(),
             exhausted: Mutex::default(),
+            alerts: Mutex::default(),
+            notifier: Mutex::default(),
             side: Mutex::default(),
             default_model: Mutex::default(),
             flows: OnceLock::new(),
@@ -429,6 +435,7 @@ impl Hub {
     // ---- 事件出口 ----
 
     fn emit(&self, out: Out) {
+        self.observe(&out.events);
         {
             let st = self.0.st.locked();
             let link = self.0.link.locked();
@@ -441,12 +448,21 @@ impl Hub {
     /// 快照里有的不会再作为事件来一遍，快照里没有的一定作为事件来。
     fn apply(&self, f: impl FnOnce(&mut St, &mut Out)) {
         let mut out = Out::default();
-        {
+        let notable = {
             let mut st = self.0.st.locked();
             f(&mut st, &mut out);
+            let events = std::mem::take(&mut out.events);
+            // 认等人处理的事要再读会话状态，放了锁再认；文字增量这类不挑出来，免得每帧都复制。
+            let notable: Vec<Event> = events
+                .iter()
+                .filter(|e| attention::notable(e))
+                .cloned()
+                .collect();
             let link = self.0.link.locked();
-            send(&link, &st, std::mem::take(&mut out.events));
-        }
+            send(&link, &st, events);
+            notable
+        };
+        self.observe(&notable);
         self.spawn_todo(out.todo);
     }
 
@@ -527,6 +543,7 @@ impl Service for Hub {
                     .collect(),
             );
         }
+        self.attached(attached);
     }
 
     fn hello(&self) -> (InstanceInfo, bool, bool) {

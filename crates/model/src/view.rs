@@ -709,6 +709,40 @@ fn overlay(s: &State, o: &Overlay) -> tui::Overlay {
             }
             text(&i18n::t!("view.event_log.title"), lines, *scroll)
         }
+        Overlay::Away {
+            since_ms,
+            alerts,
+            selected,
+        } => {
+            let away = crate::sessions::fmt_elapsed(s.ui.now_ms.saturating_sub(*since_ms));
+            let mut lines = vec![];
+            for (i, a) in alerts.iter().enumerate() {
+                let (g, tone) = match a.level {
+                    port::NoticeLevel::Error => ("✗", Tone::Error),
+                    port::NoticeLevel::Warn => ("◐", Tone::Warn),
+                    port::NoticeLevel::Info => ("✓", Tone::Ok),
+                };
+                let mark = if i == *selected { "› " } else { "  " };
+                let mut l = Line::plain(mark)
+                    .push(format!("{g} "), tone)
+                    .push(a.title.clone(), Tone::Normal);
+                if !a.text.is_empty() {
+                    l = l.push(format!("  {}", a.text), Tone::Dim);
+                }
+                if i == *selected {
+                    l = l.with_tone(Tone::Selected);
+                }
+                lines.push(l);
+            }
+            lines.push(Line::default());
+            lines.push(Line::toned(i18n::t!("view.away.keys"), Tone::Dim));
+            tui::Overlay {
+                title: i18n::t!("view.away.title", elapsed = away),
+                height: (lines.len() as u16 + 2).min(s.ui.size.rows.saturating_sub(4)),
+                lines,
+                width: (s.ui.size.cols.saturating_sub(10)).min(100),
+            }
+        }
         Overlay::Exit { selected } => {
             let name =
                 s.ui.attached

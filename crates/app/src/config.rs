@@ -29,6 +29,8 @@ pub struct Config {
     pub ui: UiConfig,
     pub instance: InstanceConfig,
     pub jobs: JobsConfig,
+    /// 通知出口（architecture §8.10），原样交给实例去解析（`host::notify::NotifyConfig`）。
+    pub notify: serde_yaml::Value,
 }
 
 /// 作业的护栏（architecture §8.5）：缺省与这台机器的天花板。按原样交给实例去解析（`host::jobs::guard`），

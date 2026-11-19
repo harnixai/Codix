@@ -17,7 +17,7 @@ const DETACH_ARM_MS: u64 = 800;
 /// 本地命令（交互 §4.5）：不联系后端，或只换个后端命令。
 const LOCAL: &[&str] = &[
     "help", "new", "rename", "sessions", "model", "goal", "btw", "trust", "doctor", "quit", "exit",
-    "stop", "mouse", "events",
+    "stop", "mouse", "events", "notify",
 ];
 
 impl State {
@@ -651,6 +651,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
                 text: arg,
             },
         )],
+        "notify" => vec![s.call(Pending::Notified, Command::TestNotify)],
         "doctor" => {
             s.notice(i18n::t!("chat_update.doctor_todo"), false);
             vec![]
@@ -731,6 +732,26 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
                     true,
                 );
             }
+            vec![]
+        }
+        (Pending::Notified, Reply::Notified(results)) => {
+            let text = if results.is_empty() {
+                i18n::t!("chat_update.notify_none")
+            } else {
+                results
+                    .iter()
+                    .map(|r| {
+                        if r.ok {
+                            format!("{} ✓", r.name)
+                        } else {
+                            format!("{} ✗ {}", r.name, r.detail)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            };
+            let failed = results.iter().any(|r| !r.ok);
+            s.notice(i18n::t!("chat_update.notify_result", text = text), failed);
             vec![]
         }
         (Pending::Trusted(t), Reply::Ok) => {

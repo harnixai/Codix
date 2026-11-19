@@ -43,3 +43,19 @@ jobs:
     max_tokens: 20M
   daily_tokens: 50M     # all unattended work of this instance in one day; 0 = no limit
   max_concurrent: 2     # firings running at the same time
+
+# Notifications: commands run when something in the instance needs you (a run waits for
+# confirmation, a job failed, the daily budget is used up …). Not configured = nothing is sent;
+# you see it under "while you were away" next time you attach. Only this file is read for it,
+# never a project's files. Placeholders: {instance} {project} {kind} {level} {title} {text} {attach}
+# ({attach} is the ssh command that gets you back).
+# notify:
+#   when: detached        # detached: only while no TUI is attached; always
+#   min_level: warn       # info | warn | error
+#   sinks:
+#     - name: desktop
+#       command: ["terminal-notifier", "-title", "Codix {instance}", "-message", "{title}"]
+#     - name: phone
+#       command: ["sh", "-c", "curl -s -d @- https://ntfy.sh/$CODIX_NTFY_TOPIC"]
+#       stdin: json       # the whole notification as JSON on stdin
+#       min_level: error

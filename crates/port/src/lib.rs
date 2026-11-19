@@ -3,6 +3,7 @@
 //! 阶段 2 由 `mock` 实现，阶段 3 由实例客户端实现。这里的消息都能序列化，序列化后就是
 //! TUI 与实例之间的协议，所以领域类型只用 Codix 自己的词，不出现 Agix 或 Harnix 的类型。
 
+mod alert;
 mod backend;
 mod command;
 mod common;
@@ -16,6 +17,7 @@ pub mod order;
 mod session;
 mod task;
 
+pub use alert::{Alert, AlertKind, AlertTarget, SinkResult};
 pub use backend::{Backend, Instances, PortError};
 pub use command::{
     Command, GoalAction, PermissionMode, Reply, SessionFilter, SlashCommand, SubmitMode, Watched,

@@ -426,3 +426,50 @@ async fn a_firing_past_the_configured_timeout_is_stopped() {
         "{done:?}"
     );
 }
+
+/// 通知出口在真实实例上：作业的一次触发失败了，配好的命令收到整条通知（JSON 进 stdin）；
+/// TestNotify 回每个出口的结果（architecture §8.10）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_failed_firing_reaches_the_configured_notification_command() {
+    let out = tempfile::tempdir().unwrap();
+    let file = out.path().join("alert.json");
+    let yaml = format!(
+        "notify:\n  when: always\n  min_level: error\n  sinks:\n    - name: file\n      command: [\"sh\", \"-c\", \"cat > {}\"]\n      stdin: json\n",
+        file.display()
+    );
+    let lv = Live::with(live::Opts {
+        codix_yaml: Some(yaml),
+        env: vec![("CODIX_TEST_NOTIFY_WINDOW_MS".into(), "300".into())],
+    });
+    let c = lv.start_trusted().await;
+    let Reply::Notified(results) = c.ok(Command::TestNotify).await else {
+        panic!("test_notify")
+    };
+    assert_eq!(results.len(), 1);
+    assert!(results[0].ok, "{results:?}");
+    std::fs::remove_file(&file).unwrap();
+
+    let mut j = job("broken", "0 3 * * *", "say hi", false);
+    if let port::JobKind::Simple { model, .. } = &mut j.kind {
+        *model = Some("no-such-model-anywhere".into());
+    }
+    let j = save(&c, j).await;
+    c.ok(Command::RunJobNow {
+        job: j.id.clone(),
+        subject: None,
+        prompt_append: None,
+    })
+    .await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !file.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).expect("出口收到了通知")).unwrap();
+    assert_eq!(v["alerts"][0]["kind"], "job_failed", "{v}");
+    assert!(
+        v["attach"].as_str().unwrap().contains("codix attach"),
+        "{v}"
+    );
+}

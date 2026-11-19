@@ -42,3 +42,17 @@ jobs:
     max_tokens: 20M
   daily_tokens: 50M     # 这个实例所有无人值守的工作一天合计；0 不限
   max_concurrent: 2     # 同时在跑的触发
+
+# 通知：实例里有事等你处理（运行等确认、作业失败、额度用完……）时执行的命令。不配就不发，
+# 下次接入时在"离开期间"里看到。只认这里的配置，项目里的文件改不了它。
+# 占位符：{instance} {project} {kind} {level} {title} {text} {attach}（attach 是回来的那句 ssh 命令）。
+# notify:
+#   when: detached        # detached：没有 TUI 接着时才发；always：一直发
+#   min_level: warn       # info | warn | error
+#   sinks:
+#     - name: desktop
+#       command: ["terminal-notifier", "-title", "Codix {instance}", "-message", "{title}"]
+#     - name: phone
+#       command: ["sh", "-c", "curl -s -d @- https://ntfy.sh/$CODIX_NTFY_TOPIC"]
+#       stdin: json       # 整条通知以 JSON 写进 stdin
+#       min_level: error

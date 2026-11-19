@@ -411,6 +411,7 @@ impl Hub {
                 );
                 Ok(Reply::JobHistory(page))
             }
+            C::TestNotify => Ok(Reply::Notified(self.test_notify().await)),
             C::ValidateJob { job } => Ok(Reply::JobCheck(self.check_job(&job).await)),
             C::StopFiring { job, fired_ms } => {
                 self.stop_firing(&job.0, fired_ms, port::StopCause::Manual)

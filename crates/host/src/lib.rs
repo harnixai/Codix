@@ -7,6 +7,7 @@ pub mod flows;
 pub mod hub;
 pub mod instance;
 pub mod jobs;
+pub mod notify;
 pub mod project;
 pub mod server;
 pub mod service;

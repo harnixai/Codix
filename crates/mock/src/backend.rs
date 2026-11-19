@@ -524,6 +524,7 @@ impl ScriptedBackend {
                     })
                     .unwrap_or_default(),
             )),
+            TestNotify => Ok(Reply::Notified(vec![])),
             ValidateJob { job } => Ok(Reply::JobCheck(port::JobCheck {
                 next_fire_ms: job.next_fire_ms.into_iter().collect(),
                 guard: job.guard.clone(),

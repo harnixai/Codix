@@ -106,6 +106,7 @@ pub(crate) fn after_update(s: &mut State) -> Vec<Effect> {
         s.ui.flow_auto = Some(name);
     }
     reanchor(s);
+    land(s);
     let mut out = data(s);
     out.extend(follow(s));
     if s.ui.focus.in_side() {
@@ -561,6 +562,16 @@ pub enum Attention {
     Job(port::JobId),
 }
 
+impl From<port::AlertTarget> for Attention {
+    fn from(t: port::AlertTarget) -> Self {
+        match t {
+            port::AlertTarget::Session(id) => Attention::Session(id),
+            port::AlertTarget::Run { flow, run } => Attention::Run(flow, run),
+            port::AlertTarget::Job(id) => Attention::Job(id),
+        }
+    }
+}
+
 impl State {
     pub fn attention(&self) -> Vec<Attention> {
         let mut out = vec![];
@@ -629,11 +640,43 @@ pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
     }
     let i = s.ui.attention_cursor % items.len();
     s.ui.attention_cursor = i + 1;
+    go_to(s, &items[i]);
+    s.notice(
+        i18n::t!("follow.position", n = i + 1, total = items.len()),
+        false,
+    );
+    vec![]
+}
+
+/// 跳到一件等人处理的事：^R 与"离开期间"浮层的 Enter 同一个落点。
+pub(crate) fn go_to(s: &mut State, item: &Attention) {
     s.ui.side_collapsed = false;
     s.ui.showing = tui::ShowPane::Side;
     s.ui.focus = Focus::SideUpper;
     s.ui.filter = Default::default();
-    match &items[i] {
+    // 那一行可能还没取回来（流程的运行列表、作业列表）：记下，数据到了再选中（`land`）。
+    s.ui.pending_jump = Some(item.clone());
+    s.ui.pending_jump_set = false;
+    land(s);
+}
+
+/// 待跳转的那一行出现了就选中它；人自己改了标签就作废。
+fn land(s: &mut State) {
+    let Some(item) = s.ui.pending_jump.clone() else {
+        return;
+    };
+    let want = match item {
+        Attention::Session(_) => Tab::Sessions,
+        Attention::Run(..) => Tab::Flows,
+        Attention::Job(_) => Tab::Jobs,
+    };
+    if s.ui.tab != want && s.ui.pending_jump_set {
+        s.ui.pending_jump = None;
+        return;
+    }
+    s.ui.pending_jump_set = true;
+    let item = &item;
+    match item {
         Attention::Session(id) => {
             s.ui.tab = Tab::Sessions;
             if let Some(k) = s
@@ -642,6 +685,7 @@ pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
                 .position(|r| r == &SessRow::Session(id.clone()))
             {
                 select(s, s.ui.tab, true, k);
+                s.ui.pending_jump = None;
             }
         }
         Attention::Run(flow, id) => {
@@ -653,18 +697,15 @@ pub(crate) fn next_attention(s: &mut State) -> Vec<Effect> {
                 .position(|r| r == &FlowRow::Run(flow.clone(), id.clone()))
             {
                 select(s, s.ui.tab, true, k);
+                s.ui.pending_jump = None;
             }
         }
         Attention::Job(id) => {
             s.ui.tab = Tab::Jobs;
             if let Some(k) = s.job_rows().iter().position(|x| x == id) {
                 select(s, s.ui.tab, true, k);
+                s.ui.pending_jump = None;
             }
         }
     }
-    s.notice(
-        i18n::t!("follow.position", n = i + 1, total = items.len()),
-        false,
-    );
-    vec![]
 }

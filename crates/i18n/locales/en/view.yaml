@@ -74,6 +74,9 @@ view:
     stop_firing: "Stop the running firing of “{name}”? · y to confirm / any other key to cancel"
     force_station: "Force \"{title}\" through? Exit conditions will no longer be checked · y to confirm / any other key to cancel"
     rework: "Send back to \"{title}\" for rework? All stations after it will be redone · y to confirm / any other key to cancel"
+  away:
+    title: "While you were away ({elapsed})"
+    keys: "↑↓ select · Enter to go there · Esc to close"
   event_log:
     empty: "No events yet"
     title: "Event log (newest first) · Esc to close"

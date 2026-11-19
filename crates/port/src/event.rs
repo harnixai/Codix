@@ -164,6 +164,12 @@ pub enum Event {
         job: JobId,
         entry: JobEntry,
     },
+
+    /// 接入时：上一次有人脱离之后攒下的等人处理的事（architecture §8.10）。
+    AwaySummary {
+        since_ms: Millis,
+        alerts: Vec<crate::Alert>,
+    },
 }
 
 impl Event {

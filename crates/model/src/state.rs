@@ -125,6 +125,12 @@ pub enum Overlay {
     EventLog {
         scroll: usize,
     },
+    /// 接入时：离开期间攒下的等人处理的事（交互 §5.5）。
+    Away {
+        since_ms: u64,
+        alerts: Vec<port::Alert>,
+        selected: usize,
+    },
 }
 
 /// 一个标签自己的选中与滚动；切标签再切回来保持原样。
@@ -249,6 +255,10 @@ pub struct Ui {
     /// 正在给这个会话改名：输入框里是新名字（交互 §5.2 `r`）。
     pub rename: Option<SessionId>,
     pub flow_expanded: std::collections::HashSet<String>,
+    /// ^R / "离开期间"要跳去的那一行还没取回来：数据到了再选中（`follow::land`）。
+    pub pending_jump: Option<crate::follow::Attention>,
+    /// 待跳转已经切过一次标签：之后标签变了就是人自己换走了。
+    pub pending_jump_set: bool,
     /// 「已结束」展开着（缺省收起）。
     pub ended_expanded: bool,
     /// 上一次提示过"运行已结束"的运行：同一个只提示一次。
@@ -374,6 +384,8 @@ impl State {
                 rename: None,
                 flow_expanded: Default::default(),
                 ended_expanded: false,
+                pending_jump: None,
+                pending_jump_set: false,
                 ended_noticed: None,
                 station_collapsed: Default::default(),
                 flow_auto: None,

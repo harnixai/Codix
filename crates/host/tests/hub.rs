@@ -1234,3 +1234,50 @@ async fn repeated_failures_disable_the_job_on_this_machine() {
     };
     assert!(v[0].enabled && v[0].auto_disabled.is_none(), "启用时清掉");
 }
+
+/// 没 TUI 接着时出的事攒成"离开期间"：重新接入时推一次，之后不再重复。
+#[tokio::test]
+async fn what_happened_while_detached_is_shown_on_attach() {
+    let r = rig_with(Box::new(|m, p| match m {
+        "session.run_turn" => Err(RpcError::Remote {
+            code: -32002,
+            message: "no_credentials: no API key".into(),
+            data: Value::Null,
+        }),
+        _ => default_handler(m, p),
+    }))
+    .await;
+    let job = save_job(&r, simple_job("nightly", "跑测试")).await;
+    r.hub.attach(None);
+    run_now(&r, &job.id).await;
+    let (tx, mut out) = mpsc::unbounded_channel();
+    r.hub.attach(Some(tx));
+    let mut away = None;
+    while let Ok(f) = out.try_recv() {
+        if let ServerFrame::Event {
+            event: Event::AwaySummary { alerts, .. },
+        } = f
+        {
+            away = Some(alerts);
+        }
+    }
+    let alerts = away.expect("接入时推了离开期间");
+    assert!(
+        alerts.iter().any(|a| a.kind == port::AlertKind::JobFailed
+            && a.target == Some(port::AlertTarget::Job(job.id.clone()))),
+        "{alerts:?}"
+    );
+    let (tx, mut out) = mpsc::unbounded_channel();
+    r.hub.attach(Some(tx));
+    while let Ok(f) = out.try_recv() {
+        assert!(
+            !matches!(
+                f,
+                ServerFrame::Event {
+                    event: Event::AwaySummary { .. }
+                }
+            ),
+            "只推一次"
+        );
+    }
+}
