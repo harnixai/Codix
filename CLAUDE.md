@@ -1,6 +1,6 @@
 # Codix
 
-Codix 是跑在终端里的 agent 工作台，引擎是 [Agix](https://github.com/openatta/Agix)。可以在本地用，也可以远程用，不限定于编程场景。
+Codix 是跑在终端里的 agent 工作台，引擎是 [Agix](https://github.com/harnixai/Agix)。可以在本地用，也可以远程用，不限定于编程场景。
 
 - 左边是对话区。
 - 右边是三个标签：
@@ -29,7 +29,7 @@ Codix 不跟 Claude Code 这类聊天式编程 CLI 拼打磨。它的位置是 A
 - **项目级的放项目，全局的放全局。** 会话、流程、作业都是项目的，放在项目的 `.codix/`（Agix 的项目层目录）里：定义（流程、作业）进 git，本机数据与过程数据在 `.codix/state/` 下、不进 git，Codix 自己的在 `state/codix/`。全局目录是 `~/.codix`（可以用 `CODIX_HOME` 改），Agix 的 `data_root` 也指向这里，不使用 `~/.agix`；它只放用户级的配置（`codix.yaml`、`flows/` 等）和实例的运行时文件（`instances/`），不往 Agix 的 `settings.json` 里写东西。布局见 `docs/design/architecture.md` §8.1。
 - **TUI 与后端之间只有一个端口**：`Instances` 和 `Backend` 两个 trait 加上领域事件，定义见 `docs/design/architecture.md` §3。mock 与真实实现走的是同一个端口；端口的消息序列化之后就是 TUI 与实例之间的协议。
 - **流程来自 Harnix**：拷贝，不引用，见下面的 `3rds/`。流程格式与 Harnix 兼容。流程不放进 Agix。
-- **不做**：ACP（已作为需求提给 Agix：openatta/Agix#74）、Web 界面。
+- **不做**：ACP（已作为需求提给 Agix：harnixai/Agix#74）、Web 界面。
 
 ## 仓库布局
 
@@ -47,7 +47,7 @@ archive/       旧实现 AttaCode 的本地副本，不入库，只作参考
 - 跟 `origin/main`，不钉版本。gitlink 记录的仍然是具体 SHA，所以任何一次 checkout 都能复现。
 - 跟到最新：`git submodule update --remote --merge agix`，然后 `git -C agix checkout main`，不要停在 detached HEAD。
 - 升级之前读两个 Agix 标签之间的标签消息，嵌入面有变化的发布会单列出来。
-- Agix 本身不在这里改。缺什么就到 openatta/Agix 提 issue：标签 `codix`，标题 `[Codix NN] …`。
+- Agix 本身不在这里改。缺什么就到 harnixai/Agix 提 issue：标签 `codix`，标题 `[Codix NN] …`。
 
 ## `3rds/`：拷贝来的代码
 
@@ -57,7 +57,7 @@ archive/       旧实现 AttaCode 的本地副本，不入库，只作参考
 
 ## 旧实现
 
-`archive/attacode/` 是 AttaCode 在 `acc3ca4` 的代码；`archive/attacode.git` 是它原来的 git 目录。远端是 openatta/AttaCode，不再改动。
+`archive/attacode/` 是 AttaCode 在 `acc3ca4` 的代码；`archive/attacode.git` 是它原来的 git 目录。远端是 harnixai/AttaCode，不再改动。
 
 旧代码可以拿来参考，**需要哪段就拷哪段**，不整体搬。旧实现踩过的坑写在 `docs/design/` 里。
 

@@ -4,12 +4,12 @@
 
 | 依赖 | 内容 |
 |---|---|
-| openatta/Agix#90 | JS 基础库只叫 `agix`，`codix` 这个全局名留给宿主 |
-| openatta/Agix#91 | 嵌入方经 `EmbedConfig` 给插件命令注册宿主 JS 库（JSON 进出，不交出 rquickjs 类型），插件以 `uses` 声明 |
-| openatta/Agix#92 | `ext.run`：宿主经 RPC 运行插件命令，取回结构化结果 |
-| openatta/Harnix#68 | 流程包来源加一种"插件"（`Origin::Plugin`） |
+| harnixai/Agix#90 | JS 基础库只叫 `agix`，`codix` 这个全局名留给宿主 |
+| harnixai/Agix#91 | 嵌入方经 `EmbedConfig` 给插件命令注册宿主 JS 库（JSON 进出，不交出 rquickjs 类型），插件以 `uses` 声明 |
+| harnixai/Agix#92 | `ext.run`：宿主经 RPC 运行插件命令，取回结构化结果 |
+| harnixai/Harnix#68 | 流程包来源加一种"插件"（`Origin::Plugin`） |
 
-XForge 原来的实现（TypeScript + Node，`openatta/xforge`）只作参考：**数据归插件命令，过程归 Harnix 流程**。
+XForge 原来的实现（TypeScript + Node，`harnixai/xforge`）只作参考：**数据归插件命令，过程归 Harnix 流程**。
 XForge 自己的状态机、编排者、往 `.claude/` `.codex/` 投影的脚手架、PreToolUse 钩子都不搬。
 
 ## 1. 三条通道

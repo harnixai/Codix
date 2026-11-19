@@ -208,7 +208,7 @@ Codix 不和 Claude Code、Codex、opencode 拼"聊天写代码"的打磨程度�
 ## 6. 不做
 
 - 监听网络端口（TCP / WebSocket）。远程访问一律通过 ssh 登录。
-- ACP。已经作为需求提给 Agix（openatta/Agix#74），Codix 本身不做。
+- ACP。已经作为需求提给 Agix（harnixai/Agix#74），Codix 本身不做。
 - Web 界面。
 - Vim 模式。
 - 在终端里显示图片。
@@ -219,7 +219,7 @@ Codix 不和 Claude Code、Codex、opencode 拼"聊天写代码"的打磨程度�
 | 需要 | 现状 | 处理 |
 |---|---|---|
 | 数据目录用 `~/.codix` | Agix 的全局数据根可以通过 `EmbedConfig::new(data_root)` 指定 | 直接支持 |
-| 项目里的配置目录也叫 `.codix` | Agix 把项目层的 `<项目>/.agix/`（项目设置、规则、agents、hooks、worktrees 等）写死在 40 多个文件里，其中包括路径安全和沙箱掩码 | 已提 openatta/Agix#86（`EmbedConfig.project_dir`，安全保护随名字生效）。落地之前先沿用 `.agix/`，落地之后改成 `.codix/` |
+| 项目里的配置目录也叫 `.codix` | Agix 把项目层的 `<项目>/.agix/`（项目设置、规则、agents、hooks、worktrees 等）写死在 40 多个文件里，其中包括路径安全和沙箱掩码 | 已提 harnixai/Agix#86（`EmbedConfig.project_dir`，安全保护随名字生效）。落地之前先沿用 `.agix/`，落地之后改成 `.codix/` |
 | todo 列表 | Agix 没有专门的方法或事件，只能从 `TodoWrite` 工具调用的入参里读出来 | 接缝时先从事件里取，不够用再给 Agix 提 issue |
 | 流程 | 不在 Agix 里，在 Harnix 的 flow 里 | 拷贝到 `3rds/harnix-flow`，等 Harnix#66 拆分完成 |
 | 作业 | Agix 的 `schedule.*` 只能定时跑一轮对话，启动不了流程 | 由 Codix 实例自己调度 |

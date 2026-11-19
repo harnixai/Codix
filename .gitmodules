@@ -1,4 +1,4 @@
 [submodule "agix"]
 	path = agix
-	url = https://github.com/openatta/Agix.git
+	url = https://github.com/harnixai/Agix.git
 	branch = main
