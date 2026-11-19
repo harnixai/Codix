@@ -20,4 +20,7 @@ jobs:
   prefill_delete: "删除作业 #{n}「{name}」"
   view_title: "作业 #{n}「{name}」"
   history_all: "触发记录（{n} 次）"
+  audit_calls: "工具 {n} 次"
+  audit_files: " · 改 {n} 个文件"
+  audit_errors: " · 出错 {n}"
   no_flow: "这个项目里没有流程 {name}"

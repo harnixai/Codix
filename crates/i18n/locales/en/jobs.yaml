@@ -19,4 +19,7 @@ jobs:
   prefill_delete: "Delete job #{n} \"{name}\""
   view_title: "Job #{n} \"{name}\""
   history_all: "Fire history ({n})"
+  audit_calls: "{n} tool calls"
+  audit_files: " · {n} files changed"
+  audit_errors: " · {n} errors"
   no_flow: "No flow {name} in this project"

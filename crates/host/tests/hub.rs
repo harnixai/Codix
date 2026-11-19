@@ -1387,3 +1387,45 @@ async fn doctor_reports_the_engines_checks_and_the_instances_own() {
     );
     assert!(status("codix.notify").is_some() && status("codix.gitignore").is_some());
 }
+
+/// 无人值守的这一次做了什么记进触发记录：调了哪些工具各几次、出错几次、改了哪些文件。
+#[tokio::test]
+async fn a_firing_records_what_it_did() {
+    let mut r = rig().await;
+    let job = save_job(&r, simple_job("nightly", "跑测试")).await;
+    run_now(&r, &job.id).await;
+    r.frame("new1", json!({"kind":"turn_start"}));
+    for (id, name) in [("a", "Bash"), ("b", "Bash"), ("c", "Write")] {
+        r.frame(
+            "new1",
+            json!({"kind":"tool_use","id":id,"name":name,"input":{}}),
+        );
+    }
+    r.frame(
+        "new1",
+        json!({"kind":"tool_result","id":"a","name":"Bash","content":"denied","is_error":true}),
+    );
+    r.frame(
+        "new1",
+        json!({"kind":"tool_result","id":"c","name":"Write","content":"ok",
+               "file_changes":[{"path":"src/a.rs","op":"modify"}]}),
+    );
+    r.frame(
+        "new1",
+        json!({"kind":"turn_complete","stop_reason":"end_turn"}),
+    );
+    let ev = r.events().await;
+    let audit = ev
+        .iter()
+        .find_map(|e| match e {
+            Event::JobFired { entry, .. } if entry.outcome == port::JobOutcome::Done => {
+                entry.audit.clone()
+            }
+            _ => None,
+        })
+        .expect("收尾的那条带着明细");
+    assert_eq!(audit.tools.get("Bash"), Some(&2));
+    assert_eq!(audit.tools.get("Write"), Some(&1));
+    assert_eq!(audit.errors, 1);
+    assert_eq!(audit.files, ["src/a.rs"]);
+}

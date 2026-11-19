@@ -218,7 +218,7 @@ impl Hub {
             }]);
         }
         let run = self.0.job_runs.locked().remove(session);
-        self.meter_end(session);
+        let audit = self.meter_take(session);
         if let (Some((job, fired, started)), Ok(sched)) = (run, self.scheduler()) {
             let stopped = self.0.stop_causes.locked().remove(session);
             let outcome = match (stopped, ok) {
@@ -230,7 +230,7 @@ impl Hub {
             let store = sched.store();
             let entry = {
                 let s = store.locked();
-                let _ = s.finish(&job, fired, outcome, elapsed, usage);
+                let _ = s.finish(&job, fired, outcome, elapsed, usage, audit);
                 s.history(&job, 50)
                     .into_iter()
                     .find(|e| e.fired_ms == fired)

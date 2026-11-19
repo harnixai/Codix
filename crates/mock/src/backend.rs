@@ -698,6 +698,7 @@ impl ScriptedBackend {
                                     ..Usage::default()
                                 },
                                 target: Some(target),
+                                audit: None,
                             },
                         },
                     );

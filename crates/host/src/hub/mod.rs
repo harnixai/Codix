@@ -306,6 +306,7 @@ impl Hub {
                                 },
                                 e.elapsed_ms,
                                 e.usage,
+                                None,
                             );
                         }
                     }

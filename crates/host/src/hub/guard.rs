@@ -18,6 +18,8 @@ pub(super) struct Meter {
     counted: u64,
     /// 已经在停了：别再停一次。
     stopping: bool,
+    /// 这一次做了什么：触发收尾时写进触发记录。
+    audit: port::FiringAudit,
 }
 
 /// 没能马上跑的一次到点触发：重叠策略是 `queue`，或同时在跑的满了。过了 `deadline`（下一次到点）还没轮到就跳过。
@@ -133,6 +135,7 @@ impl Hub {
             elapsed_ms: 0,
             usage: Usage::default(),
             target: None,
+            audit: None,
         };
         let _ = sched.store().locked().append(&job.id.0, &entry);
         let mut events = vec![Event::JobFired {
@@ -155,12 +158,14 @@ impl Hub {
                 tasks: HashMap::new(),
                 counted: 0,
                 stopping: false,
+                audit: Default::default(),
             },
         );
     }
 
-    pub(super) fn meter_end(&self, session: &str) {
-        self.0.meters.locked().remove(session);
+    /// 触发收尾：不再记账，交出这一次做了什么。
+    pub(super) fn meter_take(&self, session: &str) -> Option<port::FiringAudit> {
+        self.0.meters.locked().remove(session).map(|m| m.audit)
     }
 
     /// 作业的会话来了一帧：每次调用、子 Agent 的累计用量记进账，超了单次上限或每日额度就停。
@@ -172,6 +177,25 @@ impl Hub {
                 return;
             };
             match ev {
+                SessionEvent::ToolUse { name, .. } => {
+                    *m.audit.tools.entry(name.clone()).or_insert(0) += 1;
+                    return;
+                }
+                SessionEvent::ToolResult {
+                    is_error,
+                    file_changes,
+                    ..
+                } => {
+                    if *is_error == Some(true) {
+                        m.audit.errors += 1;
+                    }
+                    for f in file_changes {
+                        if !m.audit.files.contains(&f.path) {
+                            m.audit.files.push(f.path.clone());
+                        }
+                    }
+                    return;
+                }
                 SessionEvent::StepEnd { usage } => m.steps += tokens(usage),
                 SessionEvent::TaskStarted { task }
                 | SessionEvent::TaskUpdated { task }

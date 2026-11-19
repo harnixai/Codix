@@ -55,6 +55,7 @@ impl Hub {
                                 id: SessionId(sid.clone()),
                                 title: job.name.clone(),
                             }),
+                            audit: None,
                         },
                         Some((sid, prompt.clone())),
                     ),
@@ -67,6 +68,7 @@ impl Hub {
                             elapsed_ms: 0,
                             usage: Usage::default(),
                             target: None,
+                            audit: None,
                         },
                         None,
                     ),
@@ -93,6 +95,7 @@ impl Hub {
                         elapsed_ms: 0,
                         usage: Usage::default(),
                         target,
+                        audit: None,
                     },
                     None,
                 )

@@ -415,6 +415,7 @@ impl JobStore {
         outcome: JobOutcome,
         elapsed_ms: u64,
         usage: Usage,
+        audit: Option<port::FiringAudit>,
     ) -> Result<(), String> {
         let target = self
             .history(id, usize::MAX)
@@ -429,6 +430,7 @@ impl JobStore {
                 elapsed_ms,
                 usage,
                 target,
+                audit,
             },
         )
     }
@@ -534,6 +536,7 @@ mod tests {
             elapsed_ms: 0,
             usage: Usage::default(),
             target: None,
+            audit: None,
         }
     }
 
@@ -602,7 +605,7 @@ mod tests {
         s.upsert(job("a", "* * * * *"), 0).unwrap();
         s.append("a", &entry(100, JobOutcome::Running)).unwrap();
         s.append("a", &entry(200, JobOutcome::Running)).unwrap();
-        s.finish("a", 100, JobOutcome::Done, 7, Usage::default())
+        s.finish("a", 100, JobOutcome::Done, 7, Usage::default(), None)
             .unwrap();
         let mut f = fs::OpenOptions::new()
             .append(true)

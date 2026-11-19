@@ -179,8 +179,16 @@ fn entry_line(e: &port::JobEntry, width: usize) -> Line {
         Some(JobTarget::Run { subject, .. }) => i18n::t!("jobs.target_run", subject = subject),
         None => String::new(),
     };
+    let mut left = Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim).push(o, tone);
+    if let Some(a) = e
+        .audit
+        .as_ref()
+        .filter(|a| a.calls() > 0 || !a.files.is_empty())
+    {
+        left = left.push(format!("  {}", audit_text(a)), Tone::Dim);
+    }
     crate::sessions::split_line(
-        Line::toned(format!("{}  ", fmt_clock(e.fired_ms)), Tone::Dim).push(o, tone),
+        left,
         Line::toned(
             format!(
                 "{}  {}  {target}",
@@ -238,7 +246,12 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
             lines.extend(job_stats(&history).iter().map(Line::text));
             lines.push(String::new());
             lines.push(i18n::t!("jobs.history_all", n = history.len()));
-            lines.extend(history.iter().map(|e| entry_line(e, 200).text()));
+            for e in &history {
+                lines.push(entry_line(e, 200).text());
+                if let Some(a) = &e.audit {
+                    lines.extend(audit_lines(a));
+                }
+            }
             s.ui.overlay = Some(crate::state::Overlay::Text {
                 title: i18n::t!("jobs.view_title", n = n, name = j.name),
                 lines,
@@ -309,6 +322,31 @@ pub(crate) fn action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         }
         _ => return None,
     })
+}
+
+/// 无人值守的这一次做了什么：工具 12 次 · 改 3 个文件 · 出错 1。
+fn audit_text(a: &port::FiringAudit) -> String {
+    let mut t = i18n::t!("jobs.audit_calls", n = a.calls());
+    if !a.files.is_empty() {
+        t.push_str(&i18n::t!("jobs.audit_files", n = a.files.len()));
+    }
+    if a.errors > 0 {
+        t.push_str(&i18n::t!("jobs.audit_errors", n = a.errors));
+    }
+    t
+}
+
+/// `v` 浮层里一次触发的明细：每个工具几次、改了哪些文件。
+fn audit_lines(a: &port::FiringAudit) -> Vec<String> {
+    let mut out = vec![];
+    if !a.tools.is_empty() {
+        let tools: Vec<String> = a.tools.iter().map(|(k, v)| format!("{k} ×{v}")).collect();
+        out.push(format!("    {}", tools.join(" · ")));
+    }
+    for f in &a.files {
+        out.push(format!("    ✎ {f}"));
+    }
+    out
 }
 
 fn selected_entry(s: &State) -> Option<port::JobEntry> {

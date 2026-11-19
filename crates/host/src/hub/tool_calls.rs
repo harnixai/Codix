@@ -401,8 +401,23 @@ fn firing_line(e: &port::JobEntry) -> String {
         Some(port::JobTarget::Run { id, subject }) => format!("  → run \"{subject}\" ({id})"),
         None => String::new(),
     };
+    let audit = e
+        .audit
+        .as_ref()
+        .map(|a| {
+            let tools: Vec<String> = a.tools.iter().map(|(k, v)| format!("{k}×{v}")).collect();
+            let mut t = format!("  tools [{}]", tools.join(", "));
+            if a.errors > 0 {
+                t.push_str(&format!("  {} errors", a.errors));
+            }
+            if !a.files.is_empty() {
+                t.push_str(&format!("  changed [{}]", a.files.join(", ")));
+            }
+            t
+        })
+        .unwrap_or_default();
     format!(
-        "{} (fired_ms {})  {}  {}s  {} tokens{target}",
+        "{} (fired_ms {})  {}  {}s  {} tokens{target}{audit}",
         local_time(e.fired_ms),
         e.fired_ms,
         outcome_text(&e.outcome),

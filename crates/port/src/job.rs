@@ -122,6 +122,28 @@ pub struct JobEntry {
     pub usage: Usage,
     #[serde(default)]
     pub target: Option<JobTarget>,
+    /// 无人值守的这一次做了什么（简单作业）：调了哪些工具、出错几次、改了哪些文件。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<FiringAudit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FiringAudit {
+    /// 工具名 → 调了几次。
+    #[serde(default)]
+    pub tools: std::collections::BTreeMap<String, u32>,
+    /// 出错的工具调用（含被拒的权限：无人值守的会话里询问直接按拒绝）。
+    #[serde(default)]
+    pub errors: u32,
+    /// 改过的文件（文件工具报的）。
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+impl FiringAudit {
+    pub fn calls(&self) -> u32 {
+        self.tools.values().sum()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
