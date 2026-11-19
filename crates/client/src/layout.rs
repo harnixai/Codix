@@ -1,4 +1,4 @@
-//! 实例目录的布局与发现文件（architecture §8.1）。实例进程写，TUI 读，两边共用这一份定义。
+//! 全局目录与项目里的布局、发现文件（architecture §8.1）。实例进程写，TUI 读，两边共用这一份定义。
 
 use std::path::{Path, PathBuf};
 
@@ -44,20 +44,6 @@ impl Layout {
         self.instance(name).join("groups.json")
     }
 
-    pub fn sessions(&self, name: &str) -> PathBuf {
-        self.instance(name).join("sessions.json")
-    }
-
-    pub fn jobs(&self, name: &str) -> PathBuf {
-        self.instance(name).join("jobs.json")
-    }
-
-    pub fn job_history(&self, name: &str, job: &str) -> PathBuf {
-        self.instance(name)
-            .join("jobs")
-            .join(format!("{job}.jsonl"))
-    }
-
     pub fn log(&self, name: &str) -> PathBuf {
         self.instance(name).join("host.log")
     }
@@ -94,22 +80,90 @@ impl Layout {
         self.home.join("flows")
     }
 
-    /// 流程运行的记录。
-    pub fn flow_runs(&self, name: &str) -> PathBuf {
-        self.instance(name).join("flow-runs")
-    }
-
-    /// 流程运行的 worktree 与没有项目的运行的工作目录。
-    pub fn flow_worktrees(&self, name: &str) -> PathBuf {
-        self.instance(name).join("worktrees")
-    }
-
-    pub fn flow_workspaces(&self, name: &str) -> PathBuf {
-        self.instance(name).join("workspaces")
-    }
-
     pub fn meta(&self, name: &str) -> PathBuf {
         self.instance(name).join("meta.json")
+    }
+
+    /// 认领过的项目：凭证 → 项目路径（architecture §8.9）。
+    pub fn known_projects(&self) -> PathBuf {
+        self.home.join("known-projects.json")
+    }
+
+    pub fn known_projects_lock(&self) -> PathBuf {
+        self.home.join("known-projects.lock")
+    }
+}
+
+/// 项目层目录，与引擎的同一个（`EmbedConfig.project_dir`）。
+pub const PROJECT_DIR: &str = ".codix";
+
+/// 一个项目里 Codix 的东西：定义在项目层目录下随项目提交，本机状态在 `state/codix/`——Agix 给嵌入方的
+/// `state/<产品名小写>/`（`Layout::host_state_dir`），引擎不写它、按配置目录保护它。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectState {
+    project: PathBuf,
+}
+
+impl ProjectState {
+    pub fn new(project: impl Into<PathBuf>) -> ProjectState {
+        ProjectState {
+            project: project.into(),
+        }
+    }
+
+    pub fn project(&self) -> &Path {
+        &self.project
+    }
+
+    pub fn data_dir(&self) -> PathBuf {
+        self.project.join(PROJECT_DIR)
+    }
+
+    /// `state/codix/`。
+    pub fn dir(&self) -> PathBuf {
+        self.data_dir().join("state").join("codix")
+    }
+
+    pub fn owner(&self) -> PathBuf {
+        self.dir().join("owner.json")
+    }
+
+    pub fn lock(&self) -> PathBuf {
+        self.dir().join("host.lock")
+    }
+
+    pub fn quarantine(&self) -> PathBuf {
+        self.dir().join("quarantine")
+    }
+
+    pub fn sessions(&self) -> PathBuf {
+        self.dir().join("sessions.json")
+    }
+
+    /// 作业定义：随项目提交。
+    pub fn jobs(&self) -> PathBuf {
+        self.data_dir().join("jobs.json")
+    }
+
+    /// 作业在这台机器上的启用状态与调度基线。
+    pub fn jobs_state(&self) -> PathBuf {
+        self.dir().join("jobs-state.json")
+    }
+
+    pub fn job_history_dir(&self) -> PathBuf {
+        self.dir().join("jobs")
+    }
+
+    pub fn job_history(&self, job: &str) -> PathBuf {
+        self.job_history_dir().join(format!("{job}.jsonl"))
+    }
+
+    pub fn flow_runs(&self) -> PathBuf {
+        self.dir().join("flow-runs")
+    }
+
+    pub fn flow_workspaces(&self) -> PathBuf {
+        self.dir().join("workspaces")
     }
 }
 

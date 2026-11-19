@@ -45,12 +45,31 @@ async fn a_new_instance_is_listed_with_its_discovery_file_meta_and_private_socke
 async fn a_second_host_with_the_same_name_cannot_take_the_lock() {
     let lv = Live::new();
     let _c = lv.start().await;
-    let out = lv.run_host_directly(NAME);
+    let elsewhere = live::new_project("elsewhere");
+    let out = lv.run_host_directly_in(NAME, &elsewhere.path().to_string_lossy());
     assert!(!out.status.success(), "同名的第二个实例进程应当立即退出");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("already running"), "{err}");
     let list = lv.instances.list(false).await.unwrap();
     assert_eq!(list[0].state, InstanceState::Running, "原来的实例不受影响");
+}
+
+/// 作业属于项目：同一个项目上换个名字再起一个实例也不行，报出占着它的是谁（architecture §8.9）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_second_instance_on_the_same_project_is_refused() {
+    let lv = Live::new();
+    let _c = lv.start().await;
+    let out = lv.run_host_directly("other");
+    assert!(!out.status.success(), "同一项目的第二个实例应当立即退出");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("already served by instance") && err.contains(NAME),
+        "{err}"
+    );
+    assert!(lv.state().owner().exists(), "第一个实例认领了项目状态");
+    let all = lv.instances.list(true).await.unwrap();
+    assert_eq!(all.len(), 1, "第二个没起来，也没留下 meta.json：{all:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

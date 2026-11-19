@@ -1,13 +1,13 @@
 //! `codix host`：实例进程的入口（architecture §8.7）。由 `codix new` / `start` 拉起，stdout 与
-//! stderr 已接到 `host.log`。认领实例目录 → 起引擎 → 起会话代理 → 监听 socket → 写发现文件 →
-//! 服务到被停 → 依次收尾。
+//! stderr 已接到 `host.log`。认领项目状态 → 认领实例目录 → 起引擎 → 起会话代理 → 监听 socket →
+//! 写发现文件 → 服务到被停 → 依次收尾。
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use app::config;
-use client::{InstanceFile, Layout};
+use client::{InstanceFile, Layout, ProjectState};
 use host::server::{ServeEnd, ServeOptions};
 use host::{Hub, HubConfig};
 use tokio::signal::unix::{SignalKind, signal};
@@ -31,8 +31,12 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("project {}", project.display()))?;
     let project_str = project.to_string_lossy().into_owned();
-    let claim = host::instance::claim(&layout, &name, Some(&project_str))?;
     let started_ms = host::instance::now_ms();
+    // 先认领项目：项目已有实例时这个名字不该留下 `meta.json`，否则 `list --all` 多出一个停着的实例。
+    let project_claim =
+        host::project::claim(&layout, ProjectState::new(&project), &name, started_ms)?;
+    let state = project_claim.state().clone();
+    let claim = host::instance::claim(&layout, &name, Some(&project_str))?;
     let hostname = host::instance::hostname();
     let version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -49,23 +53,30 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
         HubConfig {
             instance: name.clone(),
             host: hostname.clone(),
-            project,
+            project: project.clone(),
             version: version.clone(),
             started_ms,
-            registry: host::hub::Registry::open(layout.sessions(&name)),
-            jobs: Some(host::jobs::JobStore::open_in(&layout, &name)),
+            registry: host::hub::Registry::open(state.sessions()),
+            jobs: Some(host::jobs::JobStore::open_in(&state)),
             clock,
         },
     )
     .await
     .context("connect to the engine")?;
+    if let Some(q) = project_claim.quarantined() {
+        tracing::warn!(to = %q.display(), "project state not written on this machine; quarantined");
+        hub.notice_on_attach(format!(
+            "Codix state in this project was not written on this machine: moved to {}, starting empty",
+            q.display()
+        ));
+    }
     let flows = host::flows::start(
         &hub,
         host::flows::FlowsConfig {
             flows_dir: layout.flows(),
-            runs_dir: layout.flow_runs(&name),
-            worktrees_dir: layout.flow_worktrees(&name),
-            workspaces_dir: layout.flow_workspaces(&name),
+            runs_dir: state.flow_runs(),
+            worktrees_dir: host::flows::worktrees_root(&project),
+            workspaces_dir: state.flow_workspaces(),
         },
     )
     .await;
@@ -136,5 +147,6 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     hub.shutdown();
     embedded.shutdown().await;
     claim.release()?;
+    drop(project_claim);
     Ok(())
 }

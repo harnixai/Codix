@@ -188,7 +188,7 @@ mock 那一套不动，真实后端按层另加用例，全部离线、不调模
 
 | 文件 | 覆盖 |
 |---|---|
-| `live_instance.rs` | 新建、列出、发现文件与 `meta.json`、目录 0700 与 socket 0600、同名第二个实例拿不到锁、停掉再照 `meta.json` 拉起、被杀后列为残留并清理 |
+| `live_instance.rs` | 新建、列出、发现文件与 `meta.json`、目录 0700 与 socket 0600、同名第二个实例拿不到锁、同一项目的第二个实例被拒并报出占着它的实例、停掉再照 `meta.json` 拉起、被杀后列为残留并清理 |
 | `live_attach.rs` | `Hello` 与能力位、被占用、强制接入踢人、脱离放开接入、空闲脱离、心跳超时断开后重连、实例被停与 `StopInstance` |
 | `live_sessions.rs` | 只列本项目的会话、第一句话做名字、改名与关闭跨重启保留、换模型、命令表、Watch 快照的历史与 todo、拒绝逐轮权限模式 |
 | `live_turns.rs` | 文字与用量、忙时退回、插话送达、排队、中断、权限与模型提问的作答、侧问分叉、goal 的事件与快照、后台任务的输出与停止、子 Agent 的侧链会话与给它发消息 |
@@ -207,7 +207,8 @@ catch_up`（再按名字过滤）。凭据取仓库根的 `.env`（worktree 里�
 
 - `Live`：一个用例的世界——/tmp 下短路径的 `CODIX_HOME`（socket 路径有 104 字节的上限）、一个 git
   示例项目、写好模型名的 Agix `settings.json`、可选的 `codix.yaml` 与只给实例的环境变量。`start`、
-  `attach`、`stop`、`restart`、`start_again`；`read("sessions.json")` 这类读实例目录的文件；`Drop` 时
+  `attach`、`stop`、`restart`、`start_again`；`read("meta.json")` 读实例目录的文件、`read_state("sessions.json")`
+  读项目状态 `state/codix/` 里的；`Drop` 时
   不论成败停掉它起的所有实例。
 - `tui::Tui`（`live/tui.rs`）：真的界面接真实实例。`Tui::create` / `Tui::attach` 经界面新建或接入；
   `keys("^G ^N")`、`type_str`、`say`（打字加回车）；`until(说明, 超时, |t| …)` 用墙上时间等，一边收实例的

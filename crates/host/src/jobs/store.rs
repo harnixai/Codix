@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use client::Layout;
+use client::ProjectState;
 use port::{Job, JobEntry, JobId, JobOutcome, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -60,10 +60,8 @@ impl JobStore {
         }
     }
 
-    pub fn open_in(layout: &Layout, instance: &str) -> JobStore {
-        let history = layout.job_history(instance, "x");
-        let dir = history.parent().map(Path::to_path_buf).unwrap_or_default();
-        JobStore::open(layout.jobs(instance), dir)
+    pub fn open_in(state: &ProjectState) -> JobStore {
+        JobStore::open(state.jobs(), state.job_history_dir())
     }
 
     fn history_path(&self, id: &str) -> PathBuf {
@@ -243,6 +241,7 @@ impl JobStore {
 mod tests {
     use super::*;
     use port::JobKind;
+    use std::path::Path;
 
     fn job(id: &str, cron: &str) -> Job {
         Job {

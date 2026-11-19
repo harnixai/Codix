@@ -10,7 +10,7 @@ mod tests;
 pub(crate) mod tools;
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -38,15 +38,51 @@ const AGENT_DIRS: [&str; 2] = ["state/scratchpad", "state/memory"];
 /// 定义里写的场景就是 Agix 的场景名；Codix 只开 `code`。
 const SCENE: &str = "code";
 
+/// 引擎放 worktree 的目录名（Agix 的 `worktree_dir` 缺省值）：在仓库根，Agix 认得它下面第一层是
+/// worktree，把那里的路径映射回主仓库做保护，所以运行的 worktree 只能是 `.wkts/<运行>`，不能再分一层。
+pub const WORKTREES_DIR: &str = ".wkts";
+
 pub struct FlowsConfig {
     /// 全局流程包（可写层）：`~/.codix/flows/`。
     pub flows_dir: PathBuf,
-    /// 运行记录：`instances/<名>/flow-runs/`。
+    /// 运行记录：`.codix/state/codix/flow-runs/`。
     pub runs_dir: PathBuf,
-    /// 运行的 worktree：`instances/<名>/worktrees/`。
+    /// 运行的 worktree：[`worktrees_root`]。
     pub worktrees_dir: PathBuf,
     /// 没有项目的运行在这里各有一个目录。
     pub workspaces_dir: PathBuf,
+}
+
+/// 项目所在仓库的根下的 [`WORKTREES_DIR`]；不在仓库里就是项目下的（那样的运行开不出 worktree）。
+pub fn worktrees_root(project: &Path) -> PathBuf {
+    let root = project
+        .ancestors()
+        .find(|d| d.join(".git").exists())
+        .unwrap_or(project);
+    root.join(WORKTREES_DIR)
+}
+
+/// 引擎只在自己第一次建 worktree 时往仓库根的 `.gitignore` 加 `.wkts/`；流程先建的话主仓库会把
+/// 它当成未跟踪的目录。目录里放一个忽略一切的 `.gitignore`，不用去改仓库自己的。
+fn prepare_worktrees_dir(dir: &Path) {
+    if dir.parent().is_none_or(|r| !r.join(".git").exists()) {
+        return;
+    }
+    let ignore = dir.join(".gitignore");
+    let made = std::fs::create_dir_all(dir).and_then(|_| {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&ignore)
+        {
+            Ok(mut f) => std::io::Write::write_all(&mut f, b"*\n"),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(e) => Err(e),
+        }
+    });
+    if let Err(e) = made {
+        tracing::warn!(dir = %dir.display(), "worktrees directory not prepared: {e}");
+    }
 }
 
 pub struct Flows {
@@ -76,6 +112,7 @@ pub async fn start(hub: &Hub, cfg: FlowsConfig) -> anyhow::Result<Arc<Flows>> {
         hook_headers: "X-Codix".into(),
         ..RunnerConfig::default()
     };
+    prepare_worktrees_dir(&cfg.worktrees_dir);
     let layout =
         ProjectLayout::new(".codix", cfg.worktrees_dir, BRANCH_PREFIX).with_agent_dirs(AGENT_DIRS);
     // 随 Codix 发布的流程包：库自带的示例包。

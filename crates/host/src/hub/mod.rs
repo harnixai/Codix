@@ -122,6 +122,8 @@ struct Inner {
     taps: Mutex<HashMap<String, Vec<mpsc::UnboundedSender<Tapped>>>>,
     /// 经 `run_turn` 发出、还没开始的轮：会话 → (轮, 那句话)，按发出的先后。
     sent: Mutex<HashMap<String, VecDeque<(String, String)>>>,
+    /// 实例起来时就有、要等到有人接入才说得出的话（如项目状态被挪进 quarantine）。
+    on_attach: Mutex<Vec<String>>,
 }
 
 #[derive(Default)]
@@ -200,6 +202,7 @@ impl Hub {
             flows: OnceLock::new(),
             taps: Mutex::default(),
             sent: Mutex::default(),
+            on_attach: Mutex::default(),
         }));
         hub.call("daemon.subscribeEvents", json!({})).await?;
         hub.register_tools().await;
@@ -473,6 +476,11 @@ impl Hub {
 
     pub(crate) fn project(&self) -> &str {
         &self.0.project
+    }
+
+    /// 下一个接入的 TUI 在 `Hello` 时收到这句提示，只说一次。
+    pub fn notice_on_attach(&self, text: String) {
+        self.0.on_attach.lock().unwrap().push(text);
     }
 
     pub fn shutdown(&self) {
@@ -1911,10 +1919,25 @@ fn rand_suffix() -> String {
 #[async_trait]
 impl Service for Hub {
     fn attach(&self, sink: Option<Sink>) {
-        let mut link = self.0.link.lock().unwrap();
-        link.sink = sink;
-        link.watched.clear();
-        link.epoch += 1;
+        let attached = sink.is_some();
+        {
+            let mut link = self.0.link.lock().unwrap();
+            link.sink = sink;
+            link.watched.clear();
+            link.epoch += 1;
+        }
+        if attached {
+            let notices = std::mem::take(&mut *self.0.on_attach.lock().unwrap());
+            self.emit_events(
+                notices
+                    .into_iter()
+                    .map(|text| Event::Notice {
+                        level: port::NoticeLevel::Warn,
+                        text,
+                    })
+                    .collect(),
+            );
+        }
     }
 
     fn hello(&self) -> (InstanceInfo, bool, bool) {

@@ -68,7 +68,7 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
     })
     .await;
     assert_eq!(list(&c).await, vec![j.clone()]);
-    let stored = lv.read("jobs.json");
+    let stored = lv.read_jobs();
     assert_eq!(stored[0]["job"]["id"], j.id.0.as_str());
     assert_eq!(stored[0]["job"]["cron"], "0 3 * * *");
 
@@ -92,7 +92,7 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
         })
         .await;
     assert_eq!(off.next_fire_ms, None, "停用的作业没有下次触发");
-    assert_eq!(lv.read("jobs.json")[0]["job"]["enabled"], false);
+    assert_eq!(lv.read_jobs()[0]["job"]["enabled"], false);
 
     c.ok(Command::DeleteJob { job: j.id.clone() }).await;
     let id = j.id.clone();
@@ -101,7 +101,7 @@ async fn jobs_are_saved_listed_toggled_and_deleted() {
     })
     .await;
     assert!(list(&c).await.is_empty());
-    assert_eq!(lv.read("jobs.json"), serde_json::json!([]));
+    assert_eq!(lv.read_jobs(), serde_json::json!([]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -262,7 +262,7 @@ async fn a_missed_firing_is_caught_up_once_only_when_asked() {
     lv.stop().await;
 
     // 装作实例停了两个小时：把两个作业的基线挪到两小时前。
-    let path = lv.instance_dir().join("jobs.json");
+    let path = lv.state().jobs();
     let mut stored: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let past = live::now_ms() - 2 * 3_600_000;

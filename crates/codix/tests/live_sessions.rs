@@ -75,7 +75,7 @@ async fn the_first_line_names_a_session_and_renames_and_closes_survive_a_restart
     // 再说一句话也不该把人起的名字换回第一句话。
     c.turn(&s1, OK).await.ended();
 
-    let reg = lv.read("sessions.json");
+    let reg = lv.read_state("sessions.json");
     assert_eq!(reg[&s1.0]["title"], "renamed-live");
     assert_eq!(reg[&s2.0]["closed"], true);
 
@@ -111,7 +111,10 @@ async fn set_model_is_recorded_and_the_command_table_is_listed() {
         })
         .await;
     assert_eq!(sum.provenance.model, other);
-    assert_eq!(lv.read("sessions.json")[&s.0]["model"], other.as_str());
+    assert_eq!(
+        lv.read_state("sessions.json")[&s.0]["model"],
+        other.as_str()
+    );
     c.turn(&s, OK).await.ended();
 
     let Reply::Commands(cmds) = c.ok(Command::Commands { session: s }).await else {

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use client::{Layout, SocketInstances};
+use client::{Layout, ProjectState, SocketInstances};
 use port::{
     Answer, Attach, Backend, Command, Event, Instances, JobEntry, NewInstance, PortError, Prompt,
     PromptKind, Reply, SessionId, SessionSummary, StopReason, SubmitMode, Usage, Watched,
@@ -206,16 +206,29 @@ impl Live {
         self.layout().instance(NAME)
     }
 
-    /// 实例目录下的 JSON 文件（`sessions.json`、`jobs.json`、`instance.json`、`meta.json`）。
+    /// 项目里 Codix 的东西：`state/codix/`、`.codix/jobs.json`。
+    pub fn state(&self) -> ProjectState {
+        ProjectState::new(self.project_path())
+    }
+
+    /// 实例目录下的 JSON 文件（`instance.json`、`meta.json`）。
     pub fn read(&self, file: &str) -> serde_json::Value {
-        let p = self.instance_dir().join(file);
-        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}：{e}", p.display()));
-        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}：{e}", p.display()))
+        read_json_file(&self.instance_dir().join(file))
+    }
+
+    /// 项目状态里的 JSON 文件（`sessions.json`、`jobs-state.json`）。
+    pub fn read_state(&self, file: &str) -> serde_json::Value {
+        read_json_file(&self.state().dir().join(file))
+    }
+
+    /// 作业定义：`.codix/jobs.json`。
+    pub fn read_jobs(&self) -> serde_json::Value {
+        read_json_file(&self.state().jobs())
     }
 
     /// `jobs/<id>.jsonl`：同一 `fired_ms` 以最后一行为准。
     pub fn job_history_file(&self, job: &str) -> Vec<JobEntry> {
-        let p = self.layout().job_history(NAME, job);
+        let p = self.state().job_history(job);
         let text = std::fs::read_to_string(&p).unwrap_or_default();
         let mut by: BTreeMap<u64, JobEntry> = BTreeMap::new();
         for l in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -254,10 +267,15 @@ impl Live {
         std::fs::read_to_string(self.layout().log(NAME)).unwrap_or_default()
     }
 
-    /// 直接跑 `codix host`（不经 `SocketInstances`）：测同名实例的锁。
+    /// 直接跑 `codix host`（不经 `SocketInstances`）：测项目锁。
     pub fn run_host_directly(&self, name: &str) -> std::process::Output {
+        self.run_host_directly_in(name, &self.project_path())
+    }
+
+    /// 同上，指定项目：测同名实例的锁（同一个项目会先撞上项目锁）。
+    pub fn run_host_directly_in(&self, name: &str, project: &str) -> std::process::Output {
         std::process::Command::new(codix())
-            .args(["host", "--name", name, "--project", &self.project_path()])
+            .args(["host", "--name", name, "--project", project])
             .env("CODIX_HOME", self.home.path())
             .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
             .envs(self.extra_env.iter().map(|(k, v)| (k, v)))
@@ -285,6 +303,11 @@ impl Drop for Live {
 }
 
 /// 一个 git 示例项目：有一个文件、提交过一次。
+fn read_json_file(p: &std::path::Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}：{e}", p.display()));
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}：{e}", p.display()))
+}
+
 pub fn new_project(name: &str) -> tempfile::TempDir {
     let dir = tempfile::Builder::new().prefix(name).tempdir().unwrap();
     std::fs::write(
