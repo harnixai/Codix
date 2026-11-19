@@ -1362,3 +1362,28 @@ async fn closed_sessions_are_listed_viewed_reopened_and_deleted() {
         .unwrap();
     assert_eq!(r.calls("session.delete")[0]["session_id"], "s2");
 }
+
+/// 自检：引擎的检查原样带上，再加实例自己的几项；配置里读不懂的报成 degraded。
+#[tokio::test]
+async fn doctor_reports_the_engines_checks_and_the_instances_own() {
+    let r = rig_with(Box::new(|m, p| match m {
+        "daemon.doctor" => Ok(json!({"health": {"status": "ok", "checks": [
+            {"name": "settings.tiers", "status": "ok", "summary": "every settings.json present parses"}]}})),
+        _ => default_handler(m, p),
+    }))
+    .await;
+    r.hub
+        .config_problem("jobs.defaults.timeout: \"soon\" is not understood".into());
+    let Reply::Doctor(checks) = r.hub.handle(Command::Doctor).await.unwrap() else {
+        panic!()
+    };
+    let status = |n: &str| checks.iter().find(|c| c.name == n).map(|c| c.status);
+    assert_eq!(status("settings.tiers"), Some(port::HealthStatus::Ok));
+    assert_eq!(status("codix.config"), Some(port::HealthStatus::Degraded));
+    assert_eq!(
+        status("codix.flows"),
+        Some(port::HealthStatus::Failing),
+        "这个搭法里没有流程"
+    );
+    assert!(status("codix.notify").is_some() && status("codix.gitignore").is_some());
+}

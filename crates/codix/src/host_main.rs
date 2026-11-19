@@ -77,6 +77,7 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     });
     for p in problems {
         tracing::warn!("codix.yaml: {p}");
+        hub.config_problem(p);
     }
     hub.set_guard_config(guard);
     if !cfg.notify.is_null() {
@@ -100,7 +101,11 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
                 }
                 hub.set_notifier(n);
             }
-            Err(e) => tracing::warn!("codix.yaml: notify is not understood, nothing is sent: {e}"),
+            Err(e) => {
+                let p = format!("notify is not understood, nothing is sent: {e}");
+                tracing::warn!("codix.yaml: {p}");
+                hub.config_problem(p);
+            }
         }
     }
     if let Some(q) = project_claim.quarantined() {

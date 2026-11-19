@@ -254,3 +254,88 @@ impl Hub {
         n.send(&[a]).await
     }
 }
+
+impl Hub {
+    /// `/doctor`：引擎的检查加上实例自己的几项（项目状态、`.gitignore`、配置、通知出口、流程）。
+    pub(super) async fn doctor(&self) -> Vec<port::HealthCheck> {
+        use port::{HealthCheck, HealthStatus as H};
+        let check = |name: &str, status, summary: String| HealthCheck {
+            name: name.into(),
+            status,
+            summary,
+        };
+        let mut out = vec![];
+        match self
+            .call(
+                "daemon.doctor",
+                json!({"scene": "code", "project_root": self.0.project}),
+            )
+            .await
+        {
+            Ok(v) => out.extend(
+                serde_json::from_value::<Vec<HealthCheck>>(v["health"]["checks"].clone())
+                    .unwrap_or_default(),
+            ),
+            Err(e) => out.push(check("agix", H::Failing, e.to_string())),
+        }
+        let data = std::path::Path::new(&self.0.project).join(".codix");
+        let ignored = std::fs::read_to_string(data.join(".gitignore"))
+            .is_ok_and(|t| t.lines().any(|l| l.trim() == "state/"));
+        out.push(check(
+            "codix.project_state",
+            H::Ok,
+            format!(
+                "{} (locked by this instance)",
+                data.join("state/codix").display()
+            ),
+        ));
+        out.push(if ignored {
+            check(
+                "codix.gitignore",
+                H::Ok,
+                ".codix/.gitignore keeps state/ out of git".into(),
+            )
+        } else {
+            check(
+                "codix.gitignore",
+                H::Degraded,
+                ".codix/.gitignore does not name state/: local state may end up in git".into(),
+            )
+        });
+        let problems = self.0.config_problems.locked().clone();
+        out.push(if problems.is_empty() {
+            check(
+                "codix.config",
+                H::Ok,
+                "codix.yaml jobs and notify parse".into(),
+            )
+        } else {
+            check("codix.config", H::Degraded, problems.join("; "))
+        });
+        let sinks = self
+            .0
+            .notifier
+            .locked()
+            .as_ref()
+            .map_or(0, |n| n.cfg.sinks.len());
+        out.push(check(
+            "codix.notify",
+            H::Ok,
+            if sinks == 0 {
+                "no notification sinks: what needs you waits until you attach".into()
+            } else {
+                format!("{sinks} notification sink(s); /notify sends a test")
+            },
+        ));
+        out.push(if self.flows().is_some() {
+            check("codix.flows", H::Ok, "flows are running".into())
+        } else {
+            check(
+                "codix.flows",
+                H::Failing,
+                "flows are not available (see host.log)".into(),
+            )
+        });
+        out
+    }
+}

@@ -24,7 +24,7 @@ chat_update:
   ask_other: "Type something else…"
   need_session: "Open or create a session first"
   current_model: "Current model: {m} (/model <name> to switch)"
-  doctor_todo: "Diagnose: available once stage 3 wires in daemon.doctor"
+  doctor_title: "Health check"
   steer_missed: "Your message missed this turn and was put back in the input box"
   trusted: "This project is trusted now: its own settings and flows apply from the next turn"
   untrusted: "This project is no longer trusted"

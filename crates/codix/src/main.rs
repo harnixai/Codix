@@ -272,7 +272,8 @@ async fn event_loop(
     settings: model::Settings,
     mock_mode: bool,
 ) -> Result<()> {
-    let keymap = Arc::new(keys::Keymap::default());
+    // 用户的键位覆盖：读不出来就当没有（原因进 /doctor）；写错的那几条不生效，别的照用。
+    let keymap = Arc::new(keys::Keymap::load(&config::home().join("keybindings.json")));
     // mock 的数据以一个固定时刻为"现在"：交互运行时让时钟从那一刻起走，耗时、"下次触发"
     // 这些才对得上。真实实例用墙上时间。
     let begin = std::time::Instant::now();

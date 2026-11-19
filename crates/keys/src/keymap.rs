@@ -109,6 +109,17 @@ pub(crate) enum Lookup {
 pub struct Keymap {
     bindings: Vec<Binding>,
     index: HashMap<(Context, Vec<Key>), Action>,
+    /// 用户覆盖里没生效的那几条与原因（`/doctor` 报出来）。
+    problems: Vec<String>,
+}
+
+/// `~/.codix/keybindings.json` 的一条：把某个上下文里的一个键（或和弦，空格隔开）绑到一个动作；
+/// `action` 为 `null` 是解绑。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Override {
+    pub context: Context,
+    pub keys: String,
+    pub action: Option<Action>,
 }
 
 impl Default for Keymap {
@@ -143,7 +154,65 @@ impl Keymap {
                 }
             }
         }
-        Ok(Keymap { bindings, index })
+        Ok(Keymap {
+            bindings,
+            index,
+            problems: vec![],
+        })
+    }
+
+    /// 内置键位叠上用户的覆盖，一条一条地加：同一个上下文的同一个键，覆盖的替掉内置的；跟别的
+    /// 绑定冲突（同键两个动作、一个是另一个的前缀）的那条不生效，原因记下来——写错一条不该让
+    /// 所有覆盖都作废，更不该让程序起不来。
+    pub fn with_overrides(overrides: &[Override]) -> Keymap {
+        let mut bindings = crate::defaults::bindings();
+        let mut problems = vec![];
+        for o in overrides {
+            let keys: Option<Vec<Key>> = o.keys.split(' ').map(Key::parse).collect();
+            let Some(keys) = keys.filter(|k| !k.is_empty()) else {
+                problems.push(format!(
+                    "{:?}: {:?} is not a key; ignored",
+                    o.context, o.keys
+                ));
+                continue;
+            };
+            let mut next = bindings.clone();
+            next.retain(|b| !(b.context == o.context && b.keys == keys));
+            if let Some(action) = o.action {
+                next.push(Binding {
+                    context: o.context,
+                    keys,
+                    action,
+                });
+            }
+            match Keymap::new(next.clone()) {
+                Ok(_) => bindings = next,
+                Err(e) => problems.push(format!("{e}; ignored")),
+            }
+        }
+        let mut km = Keymap::new(bindings).expect("each override was checked as it was added");
+        km.problems = problems;
+        km
+    }
+
+    pub fn problems(&self) -> &[String] {
+        &self.problems
+    }
+
+    /// 读 `keybindings.json` 叠在内置键位上；文件没有就是内置的，读不懂就不用覆盖并记下原因。
+    pub fn load(path: &std::path::Path) -> Keymap {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Keymap::default();
+        };
+        match serde_json::from_str::<Vec<Override>>(&text) {
+            Ok(o) => Keymap::with_overrides(&o),
+            Err(e) => {
+                let mut km = Keymap::default();
+                km.problems
+                    .push(format!("{}: {e}; no overrides are used", path.display()));
+                km
+            }
+        }
     }
 
     pub fn bindings(&self) -> &[Binding] {

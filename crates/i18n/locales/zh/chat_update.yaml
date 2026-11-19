@@ -24,7 +24,7 @@ chat_update:
   ask_other: "自己写…"
   need_session: "先打开或新建一个会话"
   current_model: "当前模型：{m}（/model <名字> 切换）"
-  doctor_todo: "诊断：阶段 3 接入 daemon.doctor 后可用"
+  doctor_title: "自检"
   steer_missed: "插话没赶上这一轮，已放回输入框"
   trusted: "已信任这个项目：它自己的设置与流程从下一轮起生效"
   untrusted: "已不再信任这个项目"

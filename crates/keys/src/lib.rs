@@ -11,5 +11,5 @@ mod resolver;
 
 pub use action::Action;
 pub use key::{Key, KeyCode, Mods};
-pub use keymap::{Binding, Context, Keymap, KeymapError, chord_label};
+pub use keymap::{Binding, Context, Keymap, KeymapError, Override, chord_label};
 pub use resolver::{Resolution, Resolver};

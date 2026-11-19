@@ -188,6 +188,8 @@ pub enum Command {
     },
     /// 经配置的通知出口发一条测试通知（architecture §8.10）。
     TestNotify,
+    /// 自检：引擎的 `daemon.doctor` 加上实例自己的几项。
+    Doctor,
     /// 停下正在跑的那一次（`fired_ms` 省略 = 正在跑的那次）。
     StopFiring {
         job: JobId,
@@ -242,6 +244,7 @@ impl Command {
             Command::ValidateJob { .. } => "validate_job",
             Command::StopFiring { .. } => "stop_firing",
             Command::TestNotify => "test_notify",
+            Command::Doctor => "doctor",
         }
     }
 }
@@ -351,4 +354,5 @@ pub enum Reply {
     JobHistory(Vec<JobEntry>),
     JobCheck(JobCheck),
     Notified(Vec<crate::SinkResult>),
+    Doctor(Vec<crate::HealthCheck>),
 }

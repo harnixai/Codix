@@ -531,6 +531,11 @@ impl ScriptedBackend {
                     .unwrap_or_default(),
             )),
             TestNotify => Ok(Reply::Notified(vec![])),
+            Doctor => Ok(Reply::Doctor(vec![port::HealthCheck {
+                name: "mock".into(),
+                status: port::HealthStatus::Ok,
+                summary: "演示后端".into(),
+            }])),
             ListClosedSessions => Ok(Reply::Sessions(
                 st().closed.iter().map(|s| s.summary.clone()).collect(),
             )),

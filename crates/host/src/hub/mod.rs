@@ -150,6 +150,8 @@ struct Inner {
     exhausted: Mutex<Option<String>>,
     /// 等人处理的事与通知出口（`attention.rs`）。
     alerts: Mutex<attention::Alerts>,
+    /// 配置里读不懂、退回缺省的项（`codix.yaml` 的 jobs、notify）：`/doctor` 报出来。
+    config_problems: Mutex<Vec<String>>,
     notifier: Mutex<Option<Arc<crate::notify::Notifier>>>,
     /// 侧问分叉出的会话：那一轮结束时把回答作为提示推出去。
     side: Mutex<HashSet<String>>,
@@ -241,6 +243,7 @@ impl Hub {
             paused_runs: Mutex::default(),
             exhausted: Mutex::default(),
             alerts: Mutex::default(),
+            config_problems: Mutex::default(),
             notifier: Mutex::default(),
             side: Mutex::default(),
             default_model: Mutex::default(),
@@ -396,6 +399,10 @@ impl Hub {
         self.scheduler()
             .map(|s| s.store().locked().guard_config().clone())
             .unwrap_or_default()
+    }
+
+    pub fn config_problem(&self, p: String) {
+        self.0.config_problems.locked().push(p);
     }
 
     /// 下一个接入的 TUI 在 `Hello` 时收到这句提示，只说一次。

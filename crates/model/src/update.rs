@@ -108,6 +108,8 @@ pub(crate) enum Pending {
     Trusted(bool),
     /// `/notify`：测试通知出口。
     Notified,
+    /// `/doctor`：自检。
+    Doctor,
     /// Shift+Tab 切了这个会话的权限模式（请求的是第二项），回复里是实际生效的。
     PermissionSet(port::SessionId, port::PermissionMode),
 }

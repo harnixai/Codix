@@ -658,10 +658,7 @@ fn local_command(s: &mut State, name: &str, arg: String) -> Option<Vec<Effect>> 
             },
         )],
         "notify" => vec![s.call(Pending::Notified, Command::TestNotify)],
-        "doctor" => {
-            s.notice(i18n::t!("chat_update.doctor_todo"), false);
-            vec![]
-        }
+        "doctor" => vec![s.call(Pending::Doctor, Command::Doctor)],
         _ => return None,
     })
 }
@@ -738,6 +735,32 @@ pub(crate) fn chat_reply(s: &mut State, what: Pending, reply: Reply) -> Vec<Effe
                     true,
                 );
             }
+            vec![]
+        }
+        (Pending::Doctor, Reply::Doctor(checks)) => {
+            let mut lines: Vec<String> = checks
+                .iter()
+                .map(|c| {
+                    let g = match c.status {
+                        port::HealthStatus::Ok => "✓",
+                        port::HealthStatus::Degraded => "◐",
+                        port::HealthStatus::Failing => "✗",
+                    };
+                    format!("{g} {}  {}", c.name, c.summary)
+                })
+                .collect();
+            // 键位覆盖里冲突、没生效的那几条（`keybindings.json`）。
+            lines.extend(
+                s.keymap
+                    .problems()
+                    .iter()
+                    .map(|c| format!("◐ keybindings  {c}")),
+            );
+            s.ui.overlay = Some(crate::state::Overlay::Text {
+                title: i18n::t!("chat_update.doctor_title"),
+                lines,
+                scroll: 0,
+            });
             vec![]
         }
         (Pending::Notified, Reply::Notified(results)) => {

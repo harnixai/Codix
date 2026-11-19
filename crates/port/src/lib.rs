@@ -17,7 +17,7 @@ pub mod order;
 mod session;
 mod task;
 
-pub use alert::{Alert, AlertKind, AlertTarget, SinkResult};
+pub use alert::{Alert, AlertKind, AlertTarget, HealthCheck, HealthStatus, SinkResult};
 pub use backend::{Backend, Instances, PortError};
 pub use command::{
     Command, GoalAction, PermissionMode, Reply, SessionFilter, SlashCommand, SubmitMode, Watched,

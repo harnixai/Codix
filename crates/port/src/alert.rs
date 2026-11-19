@@ -53,3 +53,20 @@ pub struct SinkResult {
     #[serde(default)]
     pub detail: String,
 }
+
+/// `/doctor` 的一项检查（Agix 的 `daemon.doctor` 加上 Codix 自己的几项）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthCheck {
+    pub name: String,
+    pub status: HealthStatus,
+    #[serde(default)]
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthStatus {
+    Ok,
+    Degraded,
+    Failing,
+}
