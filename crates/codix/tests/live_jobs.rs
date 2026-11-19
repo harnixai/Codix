@@ -27,6 +27,7 @@ fn job(name: &str, cron: &str, prompt: &str, catch_up: bool) -> Job {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     }
 }
 
@@ -221,7 +222,7 @@ async fn fire_long(lv: &Live) -> (live::Client, Job, port::JobEntry) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live"]
-async fn a_firing_cut_short_by_a_stop_is_recorded_as_failed() {
+async fn a_firing_cut_short_by_a_stop_is_recorded_as_stopped_by_the_instance() {
     let lv = Live::new();
     let (c, j, running) = fire_long(&lv).await;
     drop(c);
@@ -231,9 +232,12 @@ async fn a_firing_cut_short_by_a_stop_is_recorded_as_failed() {
         .iter()
         .find(|e| e.fired_ms == running.fired_ms)
         .expect("那次触发");
-    assert!(
-        matches!(&e.outcome, JobOutcome::Failed { .. }),
-        "正常停实例时引擎收掉那一轮，记录随之收尾：{e:?}"
+    assert_eq!(
+        e.outcome,
+        JobOutcome::Stopped {
+            reason: port::StopCause::InstanceStopped
+        },
+        "正常停实例时引擎收掉那一轮，记录随之收尾，不算作业失败"
     );
 }
 
@@ -267,9 +271,12 @@ async fn a_firing_left_running_by_a_crash_is_marked_interrupted_on_start() {
         .iter()
         .find(|e| e.fired_ms == running.fired_ms)
         .expect("那次触发");
-    assert!(
-        matches!(&e.outcome, JobOutcome::Failed { message } if message.contains("interrupted")),
-        "{e:?}"
+    assert_eq!(
+        e.outcome,
+        JobOutcome::Stopped {
+            reason: port::StopCause::InstanceStopped
+        },
+        "崩溃留下的那次在下次启动时收尾，不算作业失败"
     );
     assert!(
         lv.job_history_file(&j.id.0)
@@ -374,5 +381,48 @@ async fn a_running_firing_is_stopped_and_recorded_as_stopped() {
         JobOutcome::Stopped {
             reason: port::StopCause::Manual
         }
+    );
+}
+
+/// 护栏在真实实例上：`codix.yaml` 给的超时到了，那一次被打断、记成超时；作业的护栏显示的是这台机器的值。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_firing_past_the_configured_timeout_is_stopped() {
+    let lv = Live::with(live::Opts {
+        codix_yaml: Some("jobs:\n  defaults:\n    timeout: 2s\n".into()),
+        ..Default::default()
+    });
+    let mut c = lv.start_trusted().await;
+    let j = save(
+        &c,
+        job(
+            "slow",
+            "0 3 * * *",
+            "Write a 3000-word essay on the history of timekeeping. Do not use any tools.",
+            false,
+        ),
+    )
+    .await;
+    assert_eq!(
+        j.effective_guard.as_ref().and_then(|g| g.timeout_ms),
+        Some(2_000),
+        "生效的超时取自 codix.yaml"
+    );
+    c.ok(Command::RunJobNow {
+        job: j.id.clone(),
+        subject: None,
+        prompt_append: None,
+    })
+    .await;
+    let done = fired(&mut c, &j.id, "超时停下", |e| {
+        e.outcome != JobOutcome::Running
+    })
+    .await;
+    assert_eq!(
+        done.outcome,
+        JobOutcome::Stopped {
+            reason: port::StopCause::Timeout
+        },
+        "{done:?}"
     );
 }

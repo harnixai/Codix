@@ -27,3 +27,19 @@ ui:
 instance:
   # How long idle before auto-detaching and releasing the instance: 30m, 2h, 0 (never).
   idle_timeout: 30m
+
+# Guardrails for scheduled jobs: stop unattended work that runs away, hangs or piles up
+# (the jobs tab shows the values in effect for each job).
+jobs:
+  # Used when a job does not set its own. Durations like 30m, 2h; tokens like 2M, 500k.
+  defaults:
+    timeout: 30m        # how long one firing may run
+    max_tokens: 2M      # how many tokens one firing may use (input + output, sub-agents included)
+    overlap: skip       # when due while the previous one still runs: skip, queue one, or replace it
+    disable_after: 3    # disable the job on this machine after this many failures in a row; 0 = never
+  # Ceilings: a job definition committed to the repository cannot go above them.
+  limits:
+    timeout: 4h
+    max_tokens: 20M
+  daily_tokens: 50M     # all unattended work of this instance in one day; 0 = no limit
+  max_concurrent: 2     # firings running at the same time

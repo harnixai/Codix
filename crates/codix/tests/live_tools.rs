@@ -27,6 +27,7 @@ fn job(name: &str, prompt: &str) -> Job {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     }
 }
 

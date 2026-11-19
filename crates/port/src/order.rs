@@ -123,6 +123,7 @@ mod tests {
             next_fire_ms: None,
             last: None,
             running_ms: None,
+            today_tokens: 0,
         };
         let jobs_in = [j("j00000001", "a", 2), j("jffffffff", "b", 1)];
         let names: Vec<&str> = jobs(&jobs_in).iter().map(|x| x.name.as_str()).collect();

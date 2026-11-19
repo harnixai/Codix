@@ -63,6 +63,22 @@ pub async fn run(name: String, project: PathBuf) -> Result<()> {
     )
     .await
     .context("connect to the engine")?;
+    let j = &cfg.jobs;
+    let text = |a: &Option<app::config::Amount>| a.as_ref().map(app::config::Amount::text);
+    let (guard, problems) = host::jobs::guard::GuardConfig::parse(&host::jobs::guard::GuardText {
+        timeout: text(&j.defaults.timeout),
+        max_tokens: text(&j.defaults.max_tokens),
+        overlap: j.defaults.overlap.clone(),
+        disable_after: j.defaults.disable_after,
+        limit_timeout: text(&j.limits.timeout),
+        limit_max_tokens: text(&j.limits.max_tokens),
+        daily_tokens: text(&j.daily_tokens),
+        max_concurrent: j.max_concurrent,
+    });
+    for p in problems {
+        tracing::warn!("codix.yaml: {p}");
+    }
+    hub.set_guard_config(guard);
     if let Some(q) = project_claim.quarantined() {
         tracing::warn!(to = %q.display(), "project state not written on this machine; quarantined");
         hub.notice_on_attach(format!(

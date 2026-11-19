@@ -464,6 +464,35 @@ impl FlowPort for Flows {
         Ok((s.id, s.subject))
     }
 
+    async fn scheduled_runs(&self) -> Vec<crate::hub::ScheduledRun> {
+        let mut out = vec![];
+        for s in self
+            .runs(None, Some(RunStatus::Active))
+            .await
+            .unwrap_or_default()
+        {
+            let Ok(v) = self.engine.get(&s.id).await else {
+                continue;
+            };
+            let harnix_flow::Trigger::Schedule { schedule, .. } = &v.record.trigger else {
+                continue;
+            };
+            let view = map::run_view(&v);
+            out.push(crate::hub::ScheduledRun {
+                job: schedule.clone(),
+                run: view.summary.id.clone(),
+                subject: view.summary.subject.clone(),
+                started_ms: view.summary.started_ms,
+                tokens: view.summary.usage.total(),
+                paused: matches!(
+                    view.summary.status,
+                    port::RunStatus::Paused | port::RunStatus::Pausing
+                ),
+            });
+        }
+        out
+    }
+
     async fn check_job_flow(&self, key: &str, inputs: &Value) -> Result<String, String> {
         let flows = self.summaries().await;
         let name = port::order::resolve(&port::order::flows(&flows), key, |f| &f.name)

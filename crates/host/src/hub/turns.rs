@@ -62,6 +62,7 @@ impl Hub {
                     );
                 }
                 let ev = SessionEvent::parse(&event);
+                self.meter_frame(&session_id, &ev);
                 self.apply(|st, out| st.on_event(&session_id, &session_id, ev, now, out));
             }
             Notification::Daemon(v) => match DaemonEvent::parse(&v) {
@@ -217,6 +218,7 @@ impl Hub {
             }]);
         }
         let run = self.0.job_runs.locked().remove(session);
+        self.meter_end(session);
         if let (Some((job, fired, started)), Ok(sched)) = (run, self.scheduler()) {
             let stopped = self.0.stop_causes.locked().remove(session);
             let outcome = match (stopped, ok) {
@@ -244,6 +246,7 @@ impl Hub {
                 events.push(Event::JobUpserted(j));
             }
             self.emit_events(events);
+            self.after_finish(&job);
         }
     }
 }

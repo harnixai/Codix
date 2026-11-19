@@ -31,6 +31,9 @@ pub struct Job {
     /// 正在跑的那一次触发的时刻（派生）。
     #[serde(default)]
     pub running_ms: Option<Millis>,
+    /// 今天这个作业用了多少 token（派生，本机的账）。
+    #[serde(default)]
+    pub today_tokens: u64,
 }
 
 /// 护栏的各项；`None` 是"用全局缺省"。
@@ -146,6 +149,8 @@ pub enum StopCause {
     DailyBudget,
     Manual,
     InstanceStopped,
+    /// 到点时上一次还在跑、重叠策略是 `replace`：被新的一次换掉。
+    Replaced,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,9 +185,15 @@ impl JobOutcome {
         }
     }
 
-    /// 算不算"这一次没成"：连续失败自动停用按它数。
+    /// 算不算这个作业自己没成：连续失败自动停用按它数。人停的、额度用完、实例停了、被替换，都不是它的错。
     pub fn is_failure(&self) -> bool {
-        matches!(self, JobOutcome::Failed { .. } | JobOutcome::Stopped { .. })
+        matches!(
+            self,
+            JobOutcome::Failed { .. }
+                | JobOutcome::Stopped {
+                    reason: StopCause::Timeout | StopCause::Budget
+                }
+        )
     }
 }
 

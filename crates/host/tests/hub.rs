@@ -65,6 +65,22 @@ struct Rig {
 }
 
 async fn rig_with(handler: Handler) -> Rig {
+    rig_full(handler, Arc::new(|| 1_000_000)).await
+}
+
+/// 时钟可拨的：护栏的超时、到点触发要它。
+async fn rig_clocked(handler: Handler) -> (Rig, Arc<std::sync::atomic::AtomicU64>) {
+    let now = Arc::new(std::sync::atomic::AtomicU64::new(1_763_400_000_000));
+    let n = now.clone();
+    let r = rig_full(
+        handler,
+        Arc::new(move || n.load(std::sync::atomic::Ordering::SeqCst)),
+    )
+    .await;
+    (r, now)
+}
+
+async fn rig_full(handler: Handler, clock: host::hub::Clock) -> Rig {
     let fake = Arc::new(Fake {
         calls: Mutex::default(),
         handler,
@@ -87,7 +103,7 @@ async fn rig_with(handler: Handler) -> Rig {
             started_ms: 1,
             registry: Registry::open(dir.path().join("sessions.json")),
             jobs: Some(store),
-            clock: Arc::new(|| 1_000_000),
+            clock,
         },
     )
     .await
@@ -645,6 +661,7 @@ async fn a_job_fired_session_may_change_only_its_own_job() {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     };
     let Reply::Job(mine) = r
         .hub
@@ -780,6 +797,7 @@ async fn jobs_follow_the_projects_trust() {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     };
     let refused = r.hub.handle(Command::SaveJob { job: job.clone() }).await;
     assert!(refused.is_err(), "不受信的项目存不进作业：{refused:?}");
@@ -900,6 +918,7 @@ fn simple_job(name: &str, prompt: &str) -> port::Job {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     }
 }
 
@@ -1009,4 +1028,209 @@ async fn stopping_a_running_firing_interrupts_its_session_and_records_why() {
         })
         .await;
     assert!(again.is_err(), "没有在跑的就说清楚：{again:?}");
+}
+
+fn guarded(
+    cfg: impl FnOnce(&mut host::jobs::guard::GuardConfig),
+) -> host::jobs::guard::GuardConfig {
+    let mut g = host::jobs::guard::GuardConfig::default();
+    cfg(&mut g);
+    g
+}
+
+async fn save_job(r: &Rig, j: port::Job) -> port::Job {
+    let Reply::Job(saved) = r.hub.handle(Command::SaveJob { job: j }).await.unwrap() else {
+        panic!()
+    };
+    saved
+}
+
+/// 立即跑一次，等触发真的起来（它在自己的任务里建会话、发第一轮）。
+async fn run_now(r: &Rig, job: &port::JobId) {
+    r.hub
+        .handle(Command::RunJobNow {
+            job: job.clone(),
+            subject: None,
+            prompt_append: None,
+        })
+        .await
+        .unwrap();
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+}
+
+fn outcomes(ev: &[Event]) -> Vec<port::JobOutcome> {
+    ev.iter()
+        .filter_map(|e| match e {
+            Event::JobFired { entry, .. } => Some(entry.outcome.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 单次 token 上限：按每次调用的用量记账，超了就打断，结局记成超额；用量进了今天的账。
+#[tokio::test]
+async fn a_firing_over_its_token_limit_is_stopped() {
+    let mut r = rig().await;
+    let mut j = simple_job("nightly", "跑测试");
+    j.guard.max_tokens = Some(1_000);
+    let job = save_job(&r, j).await;
+    run_now(&r, &job.id).await;
+    r.frame("new1", json!({"kind":"turn_start"}));
+    r.frame(
+        "new1",
+        json!({"kind":"step_end","usage":{"input_tokens":500,"output_tokens":100}}),
+    );
+    r.events().await;
+    assert!(r.calls("session.interrupt").is_empty(), "还没超");
+    r.frame(
+        "new1",
+        json!({"kind":"step_end","usage":{"input_tokens":500,"output_tokens":100}}),
+    );
+    r.events().await;
+    assert_eq!(r.calls("session.interrupt").len(), 1, "超了就打断");
+    r.frame(
+        "new1",
+        json!({"kind":"turn_complete","stop_reason":"cancelled"}),
+    );
+    let ev = r.events().await;
+    assert!(
+        outcomes(&ev).contains(&port::JobOutcome::Stopped {
+            reason: port::StopCause::Budget
+        }),
+        "{ev:?}"
+    );
+    let Reply::Jobs(v) = r.hub.handle(Command::ListJobs).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(v[0].today_tokens, 1_200, "进了今天的账");
+}
+
+/// 超时：定时检查发现跑过了作业的超时，打断它，记成超时。
+#[tokio::test(start_paused = true)]
+async fn a_firing_past_its_timeout_is_stopped() {
+    let (mut r, now) = rig_clocked(Box::new(default_handler)).await;
+    let mut j = simple_job("nightly", "跑测试");
+    j.guard.timeout_ms = Some(60_000);
+    let job = save_job(&r, j).await;
+    run_now(&r, &job.id).await;
+    r.frame("new1", json!({"kind":"turn_start"}));
+    r.events().await;
+    now.fetch_add(61_000, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    r.events().await;
+    assert_eq!(r.calls("session.interrupt").len(), 1, "超时打断");
+    r.frame(
+        "new1",
+        json!({"kind":"turn_complete","stop_reason":"cancelled"}),
+    );
+    let ev = r.events().await;
+    assert!(outcomes(&ev).contains(&port::JobOutcome::Stopped {
+        reason: port::StopCause::Timeout
+    }));
+}
+
+/// 到点时上一次还在跑：缺省跳过，记一条"上一次还在跑"。人立即运行的不受这个管。
+#[tokio::test(start_paused = true)]
+async fn a_due_firing_is_skipped_while_the_previous_one_runs() {
+    let (mut r, now) = rig_clocked(Box::new(default_handler)).await;
+    let mut j = simple_job("every-minute", "跑测试");
+    j.cron = "* * * * *".into();
+    let job = save_job(&r, j).await;
+    run_now(&r, &job.id).await;
+    r.frame("new1", json!({"kind":"turn_start"}));
+    r.events().await;
+    now.fetch_add(61_000, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_secs(61)).await;
+    let ev = r.events().await;
+    assert!(
+        outcomes(&ev).contains(&port::JobOutcome::Skipped {
+            reason: port::SkipCause::Overlap
+        }),
+        "{ev:?}"
+    );
+    assert_eq!(r.calls("session.create").len(), 1, "没有再开一个会话");
+}
+
+/// 每日额度用完：在跑的停下、记成额度用完，说一次；之后到点的都跳过。
+#[tokio::test(start_paused = true)]
+async fn the_daily_budget_stops_running_work_and_skips_the_rest() {
+    let (mut r, now) = rig_clocked(Box::new(default_handler)).await;
+    r.hub.set_guard_config(guarded(|g| g.daily_tokens = 1_000));
+    let mut j = simple_job("every-minute", "跑测试");
+    j.cron = "* * * * *".into();
+    let job = save_job(&r, j).await;
+    run_now(&r, &job.id).await;
+    r.frame("new1", json!({"kind":"turn_start"}));
+    r.frame(
+        "new1",
+        json!({"kind":"step_end","usage":{"input_tokens":900,"output_tokens":200}}),
+    );
+    let ev = r.events().await;
+    assert!(
+        ev.iter()
+            .any(|e| matches!(e, Event::Notice { text, .. } if text.contains("budget"))),
+        "{ev:?}"
+    );
+    assert_eq!(r.calls("session.interrupt").len(), 1);
+    r.frame(
+        "new1",
+        json!({"kind":"turn_complete","stop_reason":"cancelled"}),
+    );
+    let ev = r.events().await;
+    assert!(outcomes(&ev).contains(&port::JobOutcome::Stopped {
+        reason: port::StopCause::DailyBudget
+    }));
+    now.fetch_add(61_000, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_secs(61)).await;
+    let ev = r.events().await;
+    assert!(
+        outcomes(&ev).contains(&port::JobOutcome::Skipped {
+            reason: port::SkipCause::DailyBudget
+        }),
+        "{ev:?}"
+    );
+}
+
+/// 连续失败到了上限：在这台机器上停用，标出来；启用时清掉。
+#[tokio::test]
+async fn repeated_failures_disable_the_job_on_this_machine() {
+    let (mut r, now) = rig_clocked(Box::new(|m, p| match m {
+        "session.run_turn" => Err(RpcError::Remote {
+            code: -32002,
+            message: "no_credentials: no API key".into(),
+            data: Value::Null,
+        }),
+        _ => default_handler(m, p),
+    }))
+    .await;
+    let mut j = simple_job("nightly", "跑测试");
+    j.guard.disable_after = Some(2);
+    let job = save_job(&r, j).await;
+    run_now(&r, &job.id).await;
+    r.events().await;
+    now.fetch_add(1_000, std::sync::atomic::Ordering::SeqCst);
+    run_now(&r, &job.id).await;
+    let ev = r.events().await;
+    let last = ev
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::JobUpserted(j) => Some(j.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!last.enabled && last.auto_disabled.as_ref().is_some_and(|a| a.after == 2));
+    r.hub
+        .handle(Command::SetJobEnabled {
+            job: job.id.clone(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let Reply::Jobs(v) = r.hub.handle(Command::ListJobs).await.unwrap() else {
+        panic!()
+    };
+    assert!(v[0].enabled && v[0].auto_disabled.is_none(), "启用时清掉");
 }

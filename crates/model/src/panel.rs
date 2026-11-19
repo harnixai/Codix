@@ -588,6 +588,7 @@ pub(crate) fn stop_cause(c: port::StopCause) -> String {
         port::StopCause::DailyBudget => i18n::t!("panel.stop_cause.daily_budget"),
         port::StopCause::Manual => i18n::t!("panel.stop_cause.manual"),
         port::StopCause::InstanceStopped => i18n::t!("panel.stop_cause.instance_stopped"),
+        port::StopCause::Replaced => i18n::t!("panel.stop_cause.replaced"),
     }
 }
 
@@ -666,9 +667,14 @@ pub(crate) fn job_def(j: &Job, flow_title: Option<&str>) -> Vec<JobDefRow> {
         )),
     ];
     if let Some(g) = &j.effective_guard {
-        out.push(JobDefRow::Plain(
-            field(&l_guard).push(guard_text(g), Tone::Normal),
-        ));
+        let mut line = field(&l_guard).push(guard_text(g), Tone::Normal);
+        if j.today_tokens > 0 {
+            line = line.push(
+                i18n::t!("panel.today_tokens", n = fmt_budget(j.today_tokens)),
+                Tone::Dim,
+            );
+        }
+        out.push(JobDefRow::Plain(line));
     }
     match &j.kind {
         JobKind::Simple {

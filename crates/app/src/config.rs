@@ -28,6 +28,51 @@ pub fn default_yaml(lang: &str) -> &'static str {
 pub struct Config {
     pub ui: UiConfig,
     pub instance: InstanceConfig,
+    pub jobs: JobsConfig,
+}
+
+/// 作业的护栏（architecture §8.5）：缺省与这台机器的天花板。按原样交给实例去解析（`host::jobs::guard`），
+/// 这里只认形状；数字与 `2M`、`30m` 这样的写法都收。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct JobsConfig {
+    pub defaults: JobDefaults,
+    pub limits: JobLimits,
+    pub daily_tokens: Option<Amount>,
+    pub max_concurrent: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct JobDefaults {
+    pub timeout: Option<Amount>,
+    pub max_tokens: Option<Amount>,
+    pub overlap: Option<String>,
+    pub disable_after: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct JobLimits {
+    pub timeout: Option<Amount>,
+    pub max_tokens: Option<Amount>,
+}
+
+/// YAML 里 `0` 是数、`2M` 是字符串：两种都收，交出去的是字符串。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Amount {
+    Number(u64),
+    Text(String),
+}
+
+impl Amount {
+    pub fn text(&self) -> String {
+        match self {
+            Amount::Number(n) => n.to_string(),
+            Amount::Text(s) => s.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

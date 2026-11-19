@@ -39,6 +39,7 @@ panel:
     daily_budget: "今日额度用完"
     manual: "手动停下"
     instance_stopped: "实例停了"
+    replaced: "被新的一次替换"
   skip_cause:
     overlap: "上一次还在跑"
     daily_budget: "今日额度用完"
@@ -68,6 +69,7 @@ panel:
     replace: "重叠时替换"
   disable_after: "连续失败 {n} 次停用"
   disable_never: "失败不停用"
+  today_tokens: " · 今天 {n}"
   default: "缺省"
   job_scene: "{scene} · 模型 {model}"
   job_flow_jump: "  Enter 跳到这个流程"

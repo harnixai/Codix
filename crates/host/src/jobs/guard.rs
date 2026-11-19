@@ -72,6 +72,75 @@ impl GuardConfig {
     }
 }
 
+/// `codix.yaml` 的 `jobs:` 段，原样的字符串（`app` 不依赖实例，解析在这里）。
+#[derive(Debug, Clone, Default)]
+pub struct GuardText {
+    pub timeout: Option<String>,
+    pub max_tokens: Option<String>,
+    pub overlap: Option<String>,
+    pub disable_after: Option<u32>,
+    pub limit_timeout: Option<String>,
+    pub limit_max_tokens: Option<String>,
+    pub daily_tokens: Option<String>,
+    pub max_concurrent: Option<u32>,
+}
+
+impl GuardConfig {
+    /// 读不懂的项用缺省，原因放进返回的列表（写进 host.log，配置写错不该让实例起不来）。
+    pub fn parse(t: &GuardText) -> (GuardConfig, Vec<String>) {
+        let mut c = GuardConfig::default();
+        let mut problems = vec![];
+        let mut take = |name: &str, v: &Option<String>, parse: fn(&str) -> Option<u64>| {
+            let s = v.as_deref()?;
+            let n = parse(s);
+            if n.is_none() {
+                problems.push(format!(
+                    "jobs.{name}: {s:?} is not understood; the default is used"
+                ));
+            }
+            n
+        };
+        if let Some(v) = take("defaults.timeout", &t.timeout, parse_duration) {
+            c.defaults.timeout_ms = Some(v);
+        }
+        if let Some(v) = take("defaults.max_tokens", &t.max_tokens, parse_tokens) {
+            c.defaults.max_tokens = Some(v);
+        }
+        if let Some(v) = take("limits.timeout", &t.limit_timeout, parse_duration) {
+            c.max_timeout_ms = v;
+        }
+        if let Some(v) = take("limits.max_tokens", &t.limit_max_tokens, parse_tokens) {
+            c.max_tokens = v;
+        }
+        match t.daily_tokens.as_deref().map(str::trim) {
+            Some("0") => c.daily_tokens = 0,
+            Some(s) => match parse_tokens(s) {
+                Some(v) => c.daily_tokens = v,
+                None => problems.push(format!(
+                    "jobs.daily_tokens: {s:?} is not understood; the default is used"
+                )),
+            },
+            None => {}
+        }
+        match t.overlap.as_deref().map(str::trim) {
+            Some("skip") => c.defaults.overlap = Some(Overlap::Skip),
+            Some("queue") => c.defaults.overlap = Some(Overlap::Queue),
+            Some("replace") => c.defaults.overlap = Some(Overlap::Replace),
+            Some(s) => problems.push(format!(
+                "jobs.defaults.overlap: {s:?} is not skip, queue or replace; the default is used"
+            )),
+            None => {}
+        }
+        if let Some(n) = t.disable_after {
+            c.defaults.disable_after = Some(n);
+        }
+        if let Some(n) = t.max_concurrent {
+            c.max_concurrent = n.max(1);
+        }
+        (c, problems)
+    }
+}
+
 /// `30m`、`2h`、`90s`、`1h30m`；纯数字按分钟。
 pub fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
@@ -131,6 +200,28 @@ pub fn fmt_tokens(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_yaml_section_is_parsed_and_bad_values_fall_back() {
+        let (c, problems) = GuardConfig::parse(&GuardText {
+            timeout: Some("45m".into()),
+            max_tokens: Some("lots".into()),
+            overlap: Some("queue".into()),
+            disable_after: Some(5),
+            limit_timeout: Some("2h".into()),
+            limit_max_tokens: None,
+            daily_tokens: Some("0".into()),
+            max_concurrent: Some(4),
+        });
+        assert_eq!(c.defaults.timeout_ms, Some(45 * MIN));
+        assert_eq!(c.defaults.max_tokens, Some(2_000_000), "读不懂的用缺省");
+        assert_eq!(c.defaults.overlap, Some(Overlap::Queue));
+        assert_eq!(c.defaults.disable_after, Some(5));
+        assert_eq!(c.max_timeout_ms, 120 * MIN);
+        assert_eq!(c.daily_tokens, 0, "0 是不限");
+        assert_eq!(c.max_concurrent, 4);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
 
     #[test]
     fn durations_and_token_counts_parse() {

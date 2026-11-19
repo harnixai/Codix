@@ -204,7 +204,7 @@ impl St {
                 out.events.push(Event::TurnStarted { session: session() });
                 self.upsert(sid, out);
             }
-            SessionEvent::StepEnd {} => s.step_mark = s.turn_text.len(),
+            SessionEvent::StepEnd { .. } => s.step_mark = s.turn_text.len(),
             SessionEvent::StepStart { step } => {
                 if s.last_step == Some(step) {
                     s.turn_text.truncate(s.step_mark);

@@ -27,3 +27,18 @@ ui:
 instance:
   # 空闲多久自动脱离，让出实例：30m、2h、0（不超时）。
   idle_timeout: 30m
+
+# 作业的护栏：无人值守的工作跑飞、挂住、叠起来时把它停下（作业页能看到每个作业实际生效的值）。
+jobs:
+  # 作业自己没写时用。时长写 30m、2h；token 写 2M、500k。
+  defaults:
+    timeout: 30m        # 一次触发至多跑多久
+    max_tokens: 2M      # 一次触发至多用多少 token（输入+输出，含子 Agent）
+    overlap: skip       # 到点时上一次还在跑：skip 跳过、queue 排一个、replace 停下上一次
+    disable_after: 3    # 连续失败几次就在这台机器上停用；0 不停
+  # 天花板：仓库里提交的作业定义写得再大也不超过它。
+  limits:
+    timeout: 4h
+    max_tokens: 20M
+  daily_tokens: 50M     # 这个实例所有无人值守的工作一天合计；0 不限
+  max_concurrent: 2     # 同时在跑的触发

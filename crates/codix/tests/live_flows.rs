@@ -511,6 +511,7 @@ async fn a_flow_job_starts_a_run_when_it_fires() {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     };
     let Reply::Job(job) = c.ok(Command::SaveJob { job }).await else {
         panic!("save_job")

@@ -94,6 +94,7 @@ fn job(name: &str, cron: &str, prompt: &str, enabled: bool) -> Job {
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     }
 }
 

@@ -3,7 +3,15 @@
 use super::*;
 
 impl Hub {
-    pub(super) async fn fire_job(&self, job: Job, fired_ms: u64) {
+    /// 一次触发：到点的先过护栏（`guard.rs`），人"立即运行"的直接跑。
+    pub(super) async fn fire_job(&self, job: Job, fired_ms: u64, scheduled: bool) {
+        if scheduled && !self.admit(&job, fired_ms).await {
+            return;
+        }
+        self.launch(job, fired_ms).await;
+    }
+
+    pub(super) async fn launch(&self, job: Job, fired_ms: u64) {
         let Ok(sched) = self.scheduler() else { return };
         let store = sched.store();
         let (entry, run) = match &job.kind {
@@ -104,7 +112,11 @@ impl Hub {
                 .job_runs
                 .locked()
                 .insert(sid.clone(), (job.id.0.clone(), fired_ms, self.now()));
+            self.meter_start(&sid, &job.id.0, fired_ms);
             self.run_turn(&sid, &prompt, "queue");
+        } else {
+            // 这一次在这里就有了结局：流程作业（触发记录只记启动成没成）、没起来的简单作业。
+            self.after_finish(&job.id.0);
         }
     }
 }

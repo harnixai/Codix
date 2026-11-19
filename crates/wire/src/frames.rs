@@ -21,7 +21,11 @@ pub enum SessionEvent {
         #[serde(default)]
         step: u32,
     },
-    StepEnd {},
+    /// 一次模型调用结束；`usage` 只是这一次的（护栏按它记账）。
+    StepEnd {
+        #[serde(default)]
+        usage: Usage,
+    },
     ModelRetry {
         #[serde(default)]
         attempt: u32,

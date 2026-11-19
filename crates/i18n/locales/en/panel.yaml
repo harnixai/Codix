@@ -38,6 +38,7 @@ panel:
     daily_budget: "daily budget used up"
     manual: "stopped by hand"
     instance_stopped: "the instance stopped"
+    replaced: "replaced by a newer firing"
   skip_cause:
     overlap: "the previous one was still running"
     daily_budget: "daily budget used up"
@@ -67,6 +68,7 @@ panel:
     replace: "replace when still running"
   disable_after: "disable after {n} failures"
   disable_never: "never disable"
+  today_tokens: " · {n} today"
   default: "default"
   job_scene: "{scene} · model {model}"
   job_flow_jump: "  Enter to jump to this flow"

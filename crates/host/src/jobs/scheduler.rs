@@ -12,9 +12,10 @@ use super::store::JobStore;
 use crate::sync::Locked;
 
 /// 触发一次作业。`fired_ms` 同时是触发记录的键，`Fire` 的实现负责写 `Running` 行和之后的结局行。
+/// `scheduled` 是到点触发（受重叠、并发、每日额度管）；人"立即运行"的不是。
 #[async_trait]
 pub trait Fire: Send + Sync + 'static {
-    async fn fire(&self, job: Job, fired_ms: u64);
+    async fn fire(&self, job: Job, fired_ms: u64, scheduled: bool);
 }
 
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
@@ -95,7 +96,7 @@ impl Scheduler {
         self.lock().set_trusted(trusted);
         let now = self.now();
         for job in self.take_due(now, true) {
-            self.spawn_fire(job, now);
+            self.spawn_fire(job, now, true);
         }
         self.wake.notify_one();
         let after = self.list();
@@ -124,14 +125,14 @@ impl Scheduler {
             .get(id, now)
             .ok_or_else(|| format!("no job {id}"))?;
         edit(&mut job);
-        self.spawn_fire(job, now);
+        self.spawn_fire(job, now, false);
         Ok(now)
     }
 
-    fn spawn_fire(&self, job: Job, fired_ms: u64) {
+    fn spawn_fire(&self, job: Job, fired_ms: u64, scheduled: bool) {
         // 另起任务：一次触发要等一整轮对话，不能让它挡住调度循环。
         let fire = self.fire.clone();
-        tokio::spawn(async move { fire.fire(job, fired_ms).await });
+        tokio::spawn(async move { fire.fire(job, fired_ms, scheduled).await });
     }
 
     /// 取出到期的作业并先落盘 `last_fired_ms`，再返回交给调用方触发；
@@ -170,7 +171,7 @@ impl Scheduler {
             }
             let now = self.now();
             for job in self.take_due(now, startup) {
-                self.spawn_fire(job, now);
+                self.spawn_fire(job, now, true);
             }
             startup = false;
 
@@ -206,7 +207,7 @@ mod tests {
 
     #[async_trait]
     impl Fire for Rec {
-        async fn fire(&self, job: Job, fired_ms: u64) {
+        async fn fire(&self, job: Job, fired_ms: u64, _scheduled: bool) {
             self.0.lock().unwrap().push((job.id.0, fired_ms));
         }
     }
@@ -232,6 +233,7 @@ mod tests {
             next_fire_ms: None,
             last: None,
             running_ms: None,
+            today_tokens: 0,
         }
     }
 

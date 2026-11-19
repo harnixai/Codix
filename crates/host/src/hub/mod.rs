@@ -2,6 +2,7 @@
 //! 触发。实例是引擎唯一的客户端：它订阅内存里的每个会话，所以状态不依赖 TUI 在不在。
 
 mod dispatch;
+mod guard;
 mod history;
 mod jobs;
 mod registry;
@@ -57,12 +58,27 @@ pub(crate) trait FlowPort: Send + Sync {
         inputs: Value,
         job: &Job,
     ) -> Result<(port::RunId, String), String>;
+    /// 作业起的、还没结束的运行：护栏按它们记账、看超时（architecture §8.5）。
+    async fn scheduled_runs(&self) -> Vec<ScheduledRun>;
     /// 流程作业的定义要用的流程：`#n` 或名字认出是哪个，`inputs` 合它的 schema。回流程名。
     async fn check_job_flow(&self, key: &str, inputs: &Value) -> Result<String, String>;
     /// 挂在连接上的流程工具的声明。
     fn tool_declarations(&self) -> Vec<Value>;
     /// 实例项目的信任变了：重新问引擎，项目自己的流程跟着出现或消失。
     async fn trust_changed(&self);
+}
+
+/// 作业起的一次还没结束的运行。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ScheduledRun {
+    pub job: String,
+    pub run: port::RunId,
+    pub subject: String,
+    pub started_ms: u64,
+    /// 运行里所有会话到此刻的用量合计。
+    pub tokens: u64,
+    /// 已经暂停或正在暂停。
+    pub paused: bool,
 }
 
 /// 一个会话的帧，原样分给看着它的流程派工器（`Hub::tap`）。
@@ -124,6 +140,13 @@ struct Inner {
     job_runs: Mutex<std::collections::HashMap<String, (String, u64, u64)>>,
     /// 作业触发出来的会话被停下的原因：那一轮结束时记成 `Stopped` 而不是 `Failed`。
     stop_causes: Mutex<HashMap<String, port::StopCause>>,
+    /// 护栏（`guard.rs`）：在跑的简单作业触发的账、没能马上跑的到点触发、作业起的运行上次记到的用量、
+    /// 护栏暂停过的运行、额度用完的那一天。
+    meters: Mutex<HashMap<String, guard::Meter>>,
+    waiting: Mutex<Vec<guard::Waiting>>,
+    run_seen: Mutex<HashMap<String, u64>>,
+    paused_runs: Mutex<HashSet<String>>,
+    exhausted: Mutex<Option<String>>,
     /// 侧问分叉出的会话：那一轮结束时把回答作为提示推出去。
     side: Mutex<HashSet<String>>,
     default_model: Mutex<String>,
@@ -208,6 +231,11 @@ impl Hub {
             jobs: Mutex::new(None),
             job_runs: Mutex::default(),
             stop_causes: Mutex::default(),
+            meters: Mutex::default(),
+            waiting: Mutex::default(),
+            run_seen: Mutex::default(),
+            paused_runs: Mutex::default(),
+            exhausted: Mutex::default(),
             side: Mutex::default(),
             default_model: Mutex::default(),
             flows: OnceLock::new(),
@@ -264,8 +292,8 @@ impl Hub {
                             let _ = s.finish(
                                 &id,
                                 e.fired_ms,
-                                JobOutcome::Failed {
-                                    message: "interrupted: the instance stopped".into(),
+                                JobOutcome::Stopped {
+                                    reason: port::StopCause::InstanceStopped,
                                 },
                                 e.elapsed_ms,
                                 e.usage,
@@ -275,6 +303,18 @@ impl Hub {
                 }
             }
             *hub.0.jobs.locked() = Some(sched);
+            // 护栏的定时检查：超时、作业起的运行的用量、排着的触发。
+            let weak = Arc::downgrade(&hub.0);
+            tokio::spawn(async move {
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_millis(guard::TICK_MS));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tick.tick().await;
+                    let Some(inner) = weak.upgrade() else { break };
+                    Hub(inner).guard_tick().await;
+                }
+            });
         }
         Ok(hub)
     }
@@ -357,9 +397,16 @@ impl Hub {
         self.0.on_attach.locked().push(text);
     }
 
+    /// 实例要停了：调度器不再触发；在跑的作业会话接下来被引擎收掉，那一轮记成"实例停了"而不是失败
+    /// （不是作业自己的错，不算进连续失败）。
     pub fn shutdown(&self) {
         if let Some(s) = self.0.jobs.locked().as_ref() {
             s.shutdown();
+        }
+        let running: Vec<String> = self.0.job_runs.locked().keys().cloned().collect();
+        let mut causes = self.0.stop_causes.locked();
+        for s in running {
+            causes.entry(s).or_insert(port::StopCause::InstanceStopped);
         }
     }
 
@@ -537,9 +584,9 @@ struct Firer(Weak<Inner>);
 
 #[async_trait]
 impl Fire for Firer {
-    async fn fire(&self, job: Job, fired_ms: u64) {
+    async fn fire(&self, job: Job, fired_ms: u64, scheduled: bool) {
         if let Some(inner) = self.0.upgrade() {
-            Hub(inner).fire_job(job, fired_ms).await;
+            Hub(inner).fire_job(job, fired_ms, scheduled).await;
         }
     }
 }

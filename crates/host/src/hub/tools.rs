@@ -235,6 +235,7 @@ pub fn job_from_input(input: &Value, existing: Option<Job>) -> Result<Job, Strin
         next_fire_ms: None,
         last: None,
         running_ms: None,
+        today_tokens: 0,
     });
     let to_flow = match str_of(input, "kind").as_deref() {
         Some("flow") => true,

@@ -90,6 +90,7 @@ const UNTRUSTED: &str =
 
 pub struct JobStore {
     guard: super::guard::GuardConfig,
+    ledger: super::ledger::Ledger,
     defs_path: PathBuf,
     state_path: PathBuf,
     history_dir: PathBuf,
@@ -104,10 +105,17 @@ impl JobStore {
         state_path: impl Into<PathBuf>,
         history_dir: impl Into<PathBuf>,
     ) -> JobStore {
+        let state_path: PathBuf = state_path.into();
+        // 用量账与本机状态放在一起：`state/codix/usage/`。
+        let usage = state_path
+            .parent()
+            .map(|p| p.join("usage"))
+            .unwrap_or_else(|| PathBuf::from("usage"));
         JobStore {
             guard: Default::default(),
+            ledger: super::ledger::Ledger::new(usage),
             defs_path: defs_path.into(),
-            state_path: state_path.into(),
+            state_path,
             history_dir: history_dir.into(),
             trusted: false,
             jobs: vec![],
@@ -124,6 +132,10 @@ impl JobStore {
 
     pub fn guard_config(&self) -> &super::guard::GuardConfig {
         &self.guard
+    }
+
+    pub fn ledger(&self) -> &super::ledger::Ledger {
+        &self.ledger
     }
 
     pub fn trusted(&self) -> bool {
@@ -162,6 +174,7 @@ impl JobStore {
                     next_fire_ms: None,
                     last: None,
                     running_ms: None,
+                    today_tokens: 0,
                 },
                 last_fired_ms: l.last_fired_ms,
                 since_ms: l.since_ms,
@@ -195,6 +208,9 @@ impl JobStore {
             None
         };
         job.effective_guard = Some(self.guard.effective(&job.guard).0);
+        job.today_tokens = self
+            .ledger
+            .of(&super::ledger::day_of(now_ms), job.id.as_str());
         let recent = self.history(job.id.as_str(), 1);
         job.last = recent.first().map(|e| e.outcome.clone());
         job.running_ms = recent
@@ -476,6 +492,7 @@ mod tests {
             next_fire_ms: None,
             last: None,
             running_ms: None,
+            today_tokens: 0,
         }
     }
 
