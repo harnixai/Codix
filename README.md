@@ -14,7 +14,7 @@ git -C agix checkout main
 Agix 的配置：`~/.codix/settings.json`，或环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
 `ANTHROPIC_BASE_URL`。
 
-构建前先按 `3rds/INDEX.md` 把流程库拷进来（要有 Harnix 的本地检出，缺省 `../Harnix-next`）：
+构建前先按 `3rds/INDEX.md` 把流程库拷进来（要有 Harnix 的本地检出，缺省 `../Harnix`，`HARNIX_DIR` 可改）：
 
 ```sh
 git submodule update --init agix

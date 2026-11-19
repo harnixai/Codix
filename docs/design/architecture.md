@@ -407,8 +407,36 @@ codix（一个二进制）
 - 作业 ID 是随机的短 ID（`j` 加 8 位十六进制）：定义进 git，几个人各自新建，按序号编的 ID 合并时会撞。
   列表按创建时刻排（`port::order::jobs`），`#n` 照旧。
 
-**宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、
-`job_list`、`job_show`、`job_save`、`job_delete`、`job_enable`、`job_run`；流程的 22 个 `flow_*` 是流程库的编写与
+**护栏**（无人值守 = cron × 模型 × 没人看着）。Agix 已经做的不重复：`attended:false` 的会话权限询问直接拒绝、
+设置里一轮的调用次数与 token 上限、询问超时按拒绝。Codix 加三层上限，下层只能更紧：
+
+```yaml
+# ~/.codix/codix.yaml
+jobs:
+  defaults: {timeout: 30m, max_tokens: 2M, overlap: skip, disable_after: 3}   # 作业没写时用
+  limits:   {timeout: 4h,  max_tokens: 20M}                                   # 天花板
+  daily_tokens: 50M      # 这个实例所有无人值守的工作一天合计；0 = 不限
+  max_concurrent: 2      # 同时在跑的触发
+```
+
+作业定义里的 `guard`（随项目提交）与天花板取较小值：仓库里的作业放不宽这台机器的上限。执行（`host::jobs::guard`）：
+
+| 护栏 | 怎么执行 | 结局 |
+|---|---|---|
+| 超时 | 触发时起计时器 | 简单作业 `session.interrupt`；流程作业**暂停**它起的运行（工作留着、进待处理）。`Stopped{timeout}` |
+| 单次 token | `Hub::tap` 看着触发出来的会话：`step_end.usage` 加子 Agent 的 `task_updated.usage` 累计；流程作业按运行里所有会话累计 | 同上，`Stopped{budget}` |
+| 重叠 | 到期时这个作业还有 `Running` 的触发：`skip` 记 `Skipped{overlap}`；`queue` 至多排一个；`replace` 先停旧的 | |
+| 连续失败 | 连着 `disable_after` 次 `Failed` / `Stopped`：在本机状态里停用，记 `auto_disabled` | 进待处理；启用时清掉 |
+| 每日额度 | `state/codix/usage/<YYYYMMDD>.json` 按作业累计 | 超了在跑的停下、当天剩下的 `Skipped{daily_budget}` |
+| 并发 | 在跑的触发数到 `max_concurrent` 就排队，排过一个周期 `Skipped` | |
+
+手动从流程页启动的运行不受作业护栏管（有人在）。Agix 若提供按会话收紧执行上限（[Codix 10]），超时之外的两项改由引擎执行。
+
+**宿主工具**（`hub/tools.rs`）：`session_list`、`session_show`、`session_rename`、`session_close`、`session_delete`、
+`job_list`、`job_show`、`job_save`、`job_validate`、`job_history`、`job_stop`、`job_delete`、`job_enable`、`job_run`
+（作业一套对齐流程：`job_save` 收 `kind: simple | flow`，流程作业的 `flow` 收 `#n` 或名字、存前校验流程在、`inputs` 合它的
+schema；`job_validate` 不落盘，回下 5 次触发时刻与护栏的实际生效值；`job_history` 翻页、按结局筛；`job_stop` 停下正在跑的那次；
+`job_run` 可以这一次换主题或补一句）；流程的 22 个 `flow_*` 是流程库的编写与
 运行工具（`harnix_flow::author`），声明与执行都在库里，`flows/tools.rs` 只在外面加 Codix 的三样：`flow` 参数收
 `#n`（换成名字再交给库）、按会话限作用域、有运行不许改。库要宿主答的（`AuthorHost`）：会话在实例的项目里；
 会话刚建的流程是它的"当前流程"，运行里的会话的当前流程与当前运行是它自己那个——别的会话没有"当前"，
@@ -496,6 +524,31 @@ codix（一个二进制）
 - 顺序：先拿 `host.lock`（拿不到就是这个项目已有实例，报出锁文件里记的实例名后退出），再认领，再打开里面的东西。
   `known-projects.json` 的读改写另加一把 flock（`known-projects.lock`），几个实例同时启动也不会互相覆盖。
 
+### 8.10 通知
+
+实例里产生"等人处理"的事时（TUI 可能不在），经用户配置的出口送出去；没配置就攒着，接入时一次摆出来。
+
+- **Alert**（`host::attention`，订阅自己的领域事件）：有人值守的会话在等回答而 TUI 没接着（`prompt`）、运行的站等确认 /
+  搁置 / 未达标（`station`）、作业起的运行结束（`run_ended`，info）、触发失败或被护栏中止（`job_failed`）、自动停用
+  （`job_disabled`）、今日额度用完（`daily_budget`）、项目状态被挪进 quarantine（`quarantined`）。去重键是种类加对象，
+  同一个对象没变就不再发；60 秒内的合成一条。同一份数据给 `Hello` 的"等你"计数。
+- **出口只有一种：命令**，只认全局 `codix.yaml`（项目里的配置不能让别人的机器执行命令或往外发东西）：
+
+  ```yaml
+  notify:
+    when: detached       # detached（没 TUI 接着才发，缺省）| always
+    min_level: warn      # info | warn | error
+    sinks:
+      - {name: desktop, command: ["terminal-notifier", "-title", "Codix {instance}", "-message", "{text}"]}
+      - {name: phone, command: ["sh", "-c", "curl -s -d @- https://ntfy.sh/$TOPIC"], stdin: json, min_level: error}
+  ```
+
+  桌面、ntfy、webhook、邮件都是一条命令；Codix 不内建网络客户端，凭据留在用户自己的环境里。占位符
+  `{instance} {project} {kind} {level} {title} {text} {attach}` 只做参数级替换（不经 shell）；`{attach}` 是
+  `ssh <host> -t codix attach <名>`。每条至多 10 秒，失败重试一次，记到 `state/codix/notify.jsonl`。`TestNotify`
+  （`/notify test`）发一条测试，回每个出口的结果。
+- **离开期间**：接入时实例推 `AwaySummary{since_ms, alerts}`（上一次有人脱离之后的 Alert），TUI 弹浮层（交互 §5.5）。
+
 ## 9. 旧实现踩过的坑
 
 | 坑 | 本设计如何避开 |
@@ -514,6 +567,6 @@ codix（一个二进制）
 | 问题 | 倾向 |
 |---|---|
 | 空闲超时的缺省值 | 30 分钟（`codix.yaml` 的 `instance.idle_timeout`），设为 `0` 表示不超时 |
-| 缺省终端尺寸 | 160×45，写在 `config.toml`，可以设为 `off` |
+| 缺省终端尺寸 | 160×45，写在 `codix.yaml` 的 `ui.initial_size`，可以设为 `off` |
 | 宽屏下左右两栏的缺省比例 | 60 : 40，可调，并记住 |
 | 实例开机自启 | P2：在手册里给出 systemd user unit 和 launchd plist 的示例 |

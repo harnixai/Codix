@@ -75,5 +75,5 @@ archive/       旧实现 AttaCode 的本地副本，不入库，只作参考
 
 ## 代码风格
 
-- `cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`。
+- `cargo fmt`（不带 `--all`：`--all` 会连 `3rds/` 里拷来的、不改的代码一起格式化）；`cargo clippy --workspace --all-targets -- -D warnings`。一批改动做完跑 `scripts/check.sh`。
 - 注释写"为什么不能写成看起来更自然的那样"，不复述代码。变更经过写进提交消息。
