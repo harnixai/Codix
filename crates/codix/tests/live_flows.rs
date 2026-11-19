@@ -27,6 +27,23 @@ stations:
     exit: [{kind: output}]
 "#;
 
+/// 一站，在自己的 worktree 里干活。
+const IN_WORKTREE: &str = r#"name: live-wt
+title: Live worktree
+workspace: worktree
+stations:
+  - id: say
+    title: Say
+    executor: {kind: session}
+    skill: say-word
+    output:
+      type: object
+      required: [word]
+      properties:
+        word: {type: string}
+    exit: [{kind: output}]
+"#;
+
 /// 两站：第二站等人确认，运行就停在那里不结束。
 const WAITS: &str = r#"name: live-wait
 title: Live wait
@@ -234,6 +251,59 @@ async fn a_run_goes_from_start_to_finish() {
         (listed.stations_done, listed.stations_total),
         (1, 1),
         "列表里的站数从运行记录算"
+    );
+}
+
+/// 运行的 worktree 在仓库根的 `.wkts/<运行>/`，主仓库看不到它，运行记录在项目状态里（architecture §8.1）。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live"]
+async fn a_worktree_run_works_under_the_repositorys_wkts() {
+    let lv = Live::new();
+    install(&lv, &[("live-wt", IN_WORKTREE)]);
+    let mut c = lv.start().await;
+    c.answering(Answering::Auto);
+    let run = start(&c, "live-wt", "say the word OK").await;
+    let id = run.id.clone();
+    c.wait_event("运行结束", RUN, |e| match e {
+        Event::RunDetail(v) if v.summary.id == id && v.summary.status == RunStatus::Finished => {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    let project = std::path::PathBuf::from(lv.project_path());
+    let wkts = project.join(".wkts");
+    let safe: String =
+        id.0.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+    assert!(wkts.join(&safe).is_dir(), "worktree 在 .wkts/{safe}");
+    assert_eq!(
+        std::fs::read_to_string(wkts.join(".gitignore")).unwrap(),
+        "*\n"
+    );
+    let status = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        !status.contains(".wkts") && !status.contains(".codix/state"),
+        "主仓库看不到 worktree 和项目状态：{status}"
+    );
+    assert!(
+        std::fs::read_dir(lv.state().flow_runs())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with(&safe)),
+        "运行记录在项目状态里"
     );
 }
 

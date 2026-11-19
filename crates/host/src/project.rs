@@ -64,6 +64,7 @@ pub fn claim(
         real_dir(&dir)?;
     }
     let lock = lock(&state, instance)?;
+    ensure_ignored(&data);
     let quarantined = recognize(layout, &state, now_ms)?;
     Ok(ProjectClaim {
         state,
@@ -89,6 +90,30 @@ fn real_dir(dir: &Path) -> Result<(), ProjectError> {
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// `.codix/.gitignore` 里要有 `state/`。引擎也维护这一行，但要等它第一次往项目里写本机数据；实例一起来
+/// 就建了 `state/codix/`，中间那段 `git status` 会看到它。只补缺的这一行，别的不动；`.gitignore` 是
+/// 符号链接时不动它，也不动它指向的文件（与引擎的做法一样）。
+fn ensure_ignored(data_dir: &Path) {
+    const LINE: &str = "state/";
+    let file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .custom_flags(libc_nofollow())
+        .open(data_dir.join(".gitignore"));
+    let Ok(mut file) = file else { return };
+    let mut had = String::new();
+    if file.read_to_string(&mut had).is_err() || had.lines().any(|l| l.trim() == LINE) {
+        return;
+    }
+    let sep = if had.is_empty() || had.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let _ = file.write_all(format!("{sep}{LINE}\n").as_bytes());
 }
 
 fn lock(state: &ProjectState, instance: &str) -> Result<Flock<File>, ProjectError> {
@@ -262,5 +287,29 @@ mod tests {
             Err(ProjectError::NotADirectory(_))
         ));
         assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn the_state_directory_is_kept_out_of_git_once() {
+        let (_t, layout, state) = setup();
+        fs::create_dir_all(state.data_dir()).unwrap();
+        fs::write(state.data_dir().join(".gitignore"), "settings.local.json").unwrap();
+        drop(claim(&layout, state.clone(), "a", 1).unwrap());
+        drop(claim(&layout, state.clone(), "a", 2).unwrap());
+        assert_eq!(
+            fs::read_to_string(state.data_dir().join(".gitignore")).unwrap(),
+            "settings.local.json\nstate/\n"
+        );
+    }
+
+    #[test]
+    fn a_symlinked_gitignore_is_left_alone() {
+        let (t, layout, state) = setup();
+        let target = t.path().join("bashrc");
+        fs::write(&target, "x").unwrap();
+        fs::create_dir_all(state.data_dir()).unwrap();
+        std::os::unix::fs::symlink(&target, state.data_dir().join(".gitignore")).unwrap();
+        drop(claim(&layout, state, "a", 1).unwrap());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "x");
     }
 }
