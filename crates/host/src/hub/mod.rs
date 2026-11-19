@@ -1774,6 +1774,7 @@ impl Hub {
             }
             cmd @ (C::ListFlows
             | C::ListRuns { .. }
+            | C::ListEndedRuns { .. }
             | C::GetFlow { .. }
             | C::GetRun { .. }
             | C::StartRun { .. }
@@ -1781,7 +1782,7 @@ impl Hub {
                 Some(f) => f.command(cmd).await,
                 None => match cmd {
                     C::ListFlows => Ok(Reply::Flows(vec![])),
-                    C::ListRuns { .. } => Ok(Reply::Runs(vec![])),
+                    C::ListRuns { .. } | C::ListEndedRuns { .. } => Ok(Reply::Runs(vec![])),
                     _ => Err(PortError::Unsupported("flows".into())),
                 },
             },

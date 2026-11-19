@@ -251,5 +251,7 @@ pub(crate) fn run_view(v: &harnix_flow::RunView) -> port::RunView {
         summary: summary_of(rec, &phase, now),
         main_session: SessionId(main),
         stations,
+        def_digest: rec.def_digest.clone(),
+        def_state: port::DefState::Current,
     }
 }

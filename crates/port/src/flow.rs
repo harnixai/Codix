@@ -82,6 +82,21 @@ pub struct RunView {
     pub summary: RunSummary,
     pub main_session: SessionId,
     pub stations: Vec<StationView>,
+    /// 运行启动时钉住的定义的摘要（Harnix 的 `def_digest`），界面写它的前 7 位。
+    #[serde(default)]
+    pub def_digest: String,
+    #[serde(default)]
+    pub def_state: DefState,
+}
+
+/// 钉住的定义与流程现在的定义比：已结束的运行看得出它跑的是不是现在这份。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefState {
+    #[default]
+    Current,
+    Changed,
+    Deleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

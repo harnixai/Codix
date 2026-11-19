@@ -152,6 +152,8 @@ pub fn busy() -> Seed {
             },
             main_session: SessionId::from("b001"),
             stations: vec![],
+            def_digest: String::new(),
+            def_state: port::DefState::Current,
         })
         .collect();
     Seed {

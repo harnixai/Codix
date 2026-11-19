@@ -1,4 +1,5 @@
-//! 流程标签（需求 F，交互 §5.3）：上半是流程定义（选中即展开它的运行），下半是选中运行的
+//! 流程标签（需求 F，交互 §5.3）：上半是流程定义（选中即展开它没结束的运行），末尾是不分流程的
+//! 「已结束」；下半是选中运行的
 //! 主 Agent、各站（不缩进，按进展上色）与站里的子 Agent；选中流程定义时下半是流程设计。
 //! 流程定义本身没有会话：选中它左边不动，改它回到用户会话里说（`n` `e` `d` `R` 放话头）；
 //! 选中运行或站 → 左边切到那里的会话。
@@ -16,8 +17,22 @@ use crate::update::{Effect, Pending};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlowRow {
     Flow(String),
+    /// 运行：在流程下面的是没结束的，在「已结束」下面的是结束了的。同一个运行结束时从前者挪到
+    /// 后者，行的身份不变，选中跟着它走。
     Run(String, RunId),
+    /// 「已结束 (n)」。
+    Ended,
+    /// 「已结束」末尾的「更多」：再取一页。
+    More,
 }
+
+/// 完成与取消的运行在「已结束」下面，不在它的流程下面。
+pub(crate) fn is_ended(s: &RunStatus) -> bool {
+    matches!(s, RunStatus::Finished | RunStatus::Cancelled)
+}
+
+/// 「已结束」一次取多少条。
+pub(crate) const ENDED_PAGE: u32 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlowLower {
@@ -49,8 +64,33 @@ impl State {
             {
                 out.extend(
                     runs.iter()
+                        .filter(|r| !is_ended(&r.status))
                         .map(|r| FlowRow::Run(f.name.clone(), r.id.clone())),
                 );
+            }
+        }
+        let ended: Vec<&RunSummary> = self
+            .domain
+            .ended_runs
+            .iter()
+            .filter(|r| {
+                filter.is_empty()
+                    || r.subject.contains(filter.as_str())
+                    || r.flow.contains(filter.as_str())
+                    || self.flow_title(&r.flow).contains(filter.as_str())
+            })
+            .collect();
+        if !ended.is_empty() {
+            out.push(FlowRow::Ended);
+            if self.ui.ended_expanded {
+                out.extend(
+                    ended
+                        .iter()
+                        .map(|r| FlowRow::Run(r.flow.clone(), r.id.clone())),
+                );
+                if self.domain.ended_more {
+                    out.push(FlowRow::More);
+                }
             }
         }
         out
@@ -98,7 +138,7 @@ impl State {
                         .collect()
                 })
                 .unwrap_or_default(),
-            None => vec![],
+            Some(FlowRow::Ended | FlowRow::More) | None => vec![],
         }
     }
 
@@ -137,8 +177,24 @@ impl State {
             .unwrap_or_else(|| name.to_string())
     }
 
-    fn run_summary(&self, flow: &str, id: &RunId) -> Option<&RunSummary> {
-        self.domain.runs.get(flow)?.iter().find(|r| &r.id == id)
+    /// 先看它流程下面的，再看「已结束」的：定义没了的运行只在后者里。
+    pub(crate) fn run_summary(&self, flow: &str, id: &RunId) -> Option<&RunSummary> {
+        self.domain
+            .runs
+            .get(flow)
+            .and_then(|v| v.iter().find(|r| &r.id == id))
+            .or_else(|| self.domain.ended_runs.iter().find(|r| &r.id == id))
+    }
+
+    /// 选中的是一个已结束的运行。
+    pub(crate) fn selected_ended_run(&self) -> Option<RunId> {
+        match self.selected_flow_row()? {
+            FlowRow::Run(flow, id) => self
+                .run_summary(&flow, &id)
+                .filter(|r| is_ended(&r.status))
+                .map(|_| id),
+            _ => None,
+        }
     }
 }
 
@@ -223,11 +279,42 @@ pub(crate) fn upper_lines(s: &State, width: usize) -> Vec<Line> {
                     width,
                 )
             }
+            FlowRow::Ended => {
+                let mark = if s.ui.ended_expanded { "▾" } else { "▸" };
+                let n = s.domain.ended_runs.len();
+                let label = if s.domain.ended_more {
+                    i18n::t!("flows.ended_more", n = n)
+                } else {
+                    i18n::t!("flows.ended", n = n)
+                };
+                Line::toned(format!("{mark} "), Tone::Dim).push(label, Tone::Normal)
+            }
+            FlowRow::More => Line::toned(format!("      {}", i18n::t!("flows.more")), Tone::Dim),
             FlowRow::Run(flow, id) => {
                 let Some(r) = s.run_summary(flow, id) else {
                     return Line::default();
                 };
                 let (g, text, tone) = run_status(&r.status);
+                if is_ended(&r.status) {
+                    // 不分流程平铺，所以写出它是哪个流程的；状态只靠符号（✓ 完成、✗ 取消）。
+                    let end = r.ended_ms.unwrap_or(now);
+                    return crate::sessions::split_line(
+                        Line::toned("    ", Tone::Normal)
+                            .push(format!("{g} "), tone)
+                            .push(r.subject.clone(), Tone::Normal)
+                            .push(format!("  {}", s.flow_title(&r.flow)), Tone::Dim),
+                        Line::toned(
+                            format!(
+                                "{}  {}  {}",
+                                progress(r),
+                                fmt_elapsed(end.saturating_sub(r.started_ms)),
+                                fmt_k(r.usage.total())
+                            ),
+                            Tone::Dim,
+                        ),
+                        width,
+                    );
+                }
                 let end = r.ended_ms.unwrap_or(now);
                 let station = progress(r);
                 crate::sessions::split_line(
@@ -385,9 +472,31 @@ fn join_note(all: &[port::StationView], st: &port::StationView) -> String {
 pub(crate) fn lower_title(s: &State) -> (Option<String>, Option<String>) {
     match s.selected_flow_row() {
         Some(FlowRow::Run(flow, id)) => {
-            let r = s.run_summary(&flow, &id);
-            (r.map(|r| r.subject.clone()), r.map(progress))
+            let Some(r) = s.run_summary(&flow, &id) else {
+                return (None, None);
+            };
+            if !is_ended(&r.status) {
+                return (Some(r.subject.clone()), Some(progress(r)));
+            }
+            // 已结束的运行写出它是哪个流程的、跑的哪份定义、那份定义现在怎样了。站数在列表那一行
+            // 里有了；框右边的标题至多占一半宽，所以流程写在左边。
+            let title = i18n::t!(
+                "flows.ended_title",
+                subject = r.subject,
+                flow = s.flow_title(&flow)
+            );
+            let def = s.domain.run_views.get(&id).map(|v| {
+                let digest: String = v.def_digest.chars().take(7).collect();
+                let state = match v.def_state {
+                    port::DefState::Current => String::new(),
+                    port::DefState::Changed => i18n::t!("flows.def_changed"),
+                    port::DefState::Deleted => i18n::t!("flows.def_deleted"),
+                };
+                format!("{}{state}", i18n::t!("flows.attribution", digest = digest))
+            });
+            (Some(title), def)
         }
+        Some(FlowRow::Ended | FlowRow::More) => (None, None),
         Some(FlowRow::Flow(name)) => {
             let f = s.domain.flows.iter().find(|f| f.name == name);
             (
@@ -415,11 +524,41 @@ fn run_op(s: &mut State, run: RunId, op: RunOp) -> Vec<Effect> {
 
 fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     let row = s.selected_flow_row();
+    let ended = s.selected_ended_run().is_some();
     Some(match (a, row) {
         (Action::Expand, Some(FlowRow::Flow(name))) => {
             s.ui.flow_expanded.insert(name);
             vec![]
         }
+        (Action::Expand | Action::Open, Some(FlowRow::Ended)) if !s.ui.ended_expanded => {
+            s.ui.ended_expanded = true;
+            vec![]
+        }
+        (Action::Collapse | Action::Open, Some(FlowRow::Ended)) => {
+            s.ui.ended_expanded = false;
+            vec![]
+        }
+        (Action::Collapse, Some(FlowRow::Run(..) | FlowRow::More)) if ended || row_is_more(s) => {
+            s.ui.ended_expanded = false;
+            s.ui.upper_mut().selected = s
+                .flow_rows()
+                .iter()
+                .position(|r| r == &FlowRow::Ended)
+                .unwrap_or(0);
+            vec![]
+        }
+        (Action::Open, Some(FlowRow::More)) => {
+            let before = s.domain.ended_runs.last().and_then(|r| r.ended_ms);
+            vec![s.call(
+                Pending::EndedRuns { append: true },
+                Command::ListEndedRuns {
+                    limit: ENDED_PAGE,
+                    before_ms: before,
+                },
+            )]
+        }
+        // 结束了的运行停不了也取消不了。
+        (Action::PauseResume | Action::Close, Some(FlowRow::Run(..))) if ended => vec![],
         (Action::Collapse, Some(FlowRow::Flow(name) | FlowRow::Run(name, _))) => {
             s.ui.flow_expanded.remove(&name);
             s.ui.upper_mut().selected = s
@@ -483,10 +622,15 @@ fn upper_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
 
 const NOTICE: &str = "flows.notice_tool";
 
+fn row_is_more(s: &State) -> bool {
+    s.selected_flow_row() == Some(FlowRow::More)
+}
+
 fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
     if let Some(FlowRow::Flow(name)) = s.selected_flow_row() {
         return def_action(s, a, &name);
     }
+    let ended = s.selected_ended_run().is_some();
     let run = s.selected_run()?.clone();
     let rows = s.flow_lower_rows();
     let row = rows.get(s.ui.lower[Tab::Flows.index()].selected)?.clone();
@@ -518,6 +662,12 @@ fn lower_action(s: &mut State, a: Action) -> Option<Vec<Effect>> {
         (Action::Open, _) => {
             s.show_chat_pub();
             s.ui.focus = Focus::Composer;
+            vec![]
+        }
+        // 结束了的运行，站上的操作都没有意义。
+        (Action::Confirm | Action::Release | Action::Retry | Action::Force | Action::Rework, _)
+            if ended =>
+        {
             vec![]
         }
         (Action::Confirm, Some(st)) => run_op(s, id, RunOp::Confirm { station: st.id }),

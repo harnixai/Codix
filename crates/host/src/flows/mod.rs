@@ -240,7 +240,34 @@ impl Flows {
 
     pub(crate) async fn view(&self, run: &str) -> Result<port::RunView, PortError> {
         let v = self.engine.get(run).await.map_err(flow_err)?;
-        Ok(map::run_view(&v))
+        let mut view = map::run_view(&v);
+        view.def_state = match self.packs().flow(&v.record.flow) {
+            None => port::DefState::Deleted,
+            Some((_, digest)) if digest != v.record.def_digest => port::DefState::Changed,
+            Some(_) => port::DefState::Current,
+        };
+        Ok(view)
+    }
+
+    /// 已结束的运行，结束时刻新的在前。库的列表摘要不带结束时刻与站数，要从运行记录算。
+    async fn ended_runs(
+        &self,
+        limit: u32,
+        before_ms: Option<u64>,
+    ) -> Result<Vec<port::RunSummary>, PortError> {
+        let mut out = vec![];
+        for s in self.runs(None, None).await.map_err(flow_err)? {
+            if s.status == RunStatus::Active {
+                continue;
+            }
+            if let Ok(v) = self.view(&s.id).await {
+                out.push(v.summary);
+            }
+        }
+        out.retain(|r| before_ms.is_none_or(|b| r.ended_ms.unwrap_or(0) < b));
+        out.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
+        out.truncate(limit as usize);
+        Ok(out)
     }
 
     pub(crate) async fn start_run(
@@ -388,6 +415,9 @@ impl FlowPort for Flows {
                     });
                 }
                 Ok(Reply::Runs(out))
+            }
+            Command::ListEndedRuns { limit, before_ms } => {
+                Ok(Reply::Runs(self.ended_runs(limit, before_ms).await?))
             }
             Command::GetRun { run } => Ok(Reply::Run(Box::new(self.view(&run.0).await?))),
             Command::StartRun {

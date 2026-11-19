@@ -147,6 +147,8 @@ fn row_keys(s: &State, tab: Tab, upper: bool) -> Vec<String> {
             .map(|r| match r {
                 FlowRow::Flow(n) => format!("f:{n}"),
                 FlowRow::Run(_, id) => format!("r:{id}"),
+                FlowRow::Ended => "ended".into(),
+                FlowRow::More => "more".into(),
             })
             .collect(),
         (Tab::Flows, false) => s
@@ -355,6 +357,25 @@ fn data(s: &mut State) -> Vec<Effect> {
                     ));
                 }
             }
+            if !s.domain.ended_loaded {
+                out.extend(load(
+                    s,
+                    "ended".into(),
+                    Pending::EndedRuns { append: false },
+                    Command::ListEndedRuns {
+                        limit: crate::flows::ENDED_PAGE,
+                        before_ms: None,
+                    },
+                ));
+            }
+            // 选中一个已结束的运行，左边是它的主会话：在那里说话不影响运行，提示一次。
+            if s.ui.focus == Focus::SideUpper
+                && let Some(id) = s.selected_ended_run()
+                && s.ui.ended_noticed.as_ref() != Some(&id)
+            {
+                s.ui.ended_noticed = Some(id);
+                s.notice(i18n::t!("flows.ended_notice"), false);
+            }
             match s.selected_flow_row() {
                 Some(FlowRow::Flow(name)) if !s.domain.flow_details.contains_key(&name) => {
                     out.extend(load(
@@ -476,7 +497,7 @@ fn target_at(s: &State, tab: Tab, upper: bool) -> Option<Target> {
             }
         }
         (Tab::Flows, true) => match s.selected_flow_row()? {
-            FlowRow::Flow(_) => None,
+            FlowRow::Flow(_) | FlowRow::Ended | FlowRow::More => None,
             FlowRow::Run(_, id) => {
                 let v = s.domain.run_views.get(&id)?;
                 Some(Target::Session(v.main_session.clone(), vec![], None))
@@ -553,7 +574,12 @@ impl State {
                 }
             }
         }
-        for v in self.domain.run_views.values() {
+        for v in self
+            .domain
+            .run_views
+            .values()
+            .filter(|v| !crate::flows::is_ended(&v.summary.status))
+        {
             let stuck = v
                 .stations
                 .iter()

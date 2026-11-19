@@ -92,6 +92,10 @@ pub(crate) enum Pending {
     },
     TaskOutput(port::TaskId),
     Runs(String),
+    /// 「已结束」的一页；`append` 是「更多」取的，接在后面。
+    EndedRuns {
+        append: bool,
+    },
     FlowDetail(String),
     RunView {
         id: port::RunId,
@@ -1063,6 +1067,16 @@ fn upsert_run(s: &mut State, r: &port::RunSummary) {
         Some(x) => *x = r.clone(),
         None => list.insert(0, r.clone()),
     }
+    // 结束了的挪进「已结束」（还没取过就等取）。
+    if s.domain.ended_loaded && crate::flows::is_ended(&r.status) {
+        upsert_ended(&mut s.domain.ended_runs, r.clone());
+    }
+}
+
+fn upsert_ended(list: &mut Vec<port::RunSummary>, r: port::RunSummary) {
+    list.retain(|x| x.id != r.id);
+    list.push(r);
+    list.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
 }
 
 fn event(s: &mut State, e: Event) -> Vec<Effect> {
@@ -1194,6 +1208,7 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
     };
     let key = match &what {
         Pending::Runs(f) => Some(format!("runs:{f}")),
+        Pending::EndedRuns { append: false } => Some("ended".into()),
         Pending::FlowDetail(f) => Some(format!("flow:{f}")),
         Pending::RunView { id, .. } => Some(format!("run:{id}")),
         Pending::JobHistory(j) => Some(format!("history:{j}")),
@@ -1205,6 +1220,9 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
     let reply = match r {
         Ok(r) => r,
         Err(e) => {
+            if matches!(what, Pending::EndedRuns { .. }) {
+                s.domain.ended_loaded = true;
+            }
             let tab = match what {
                 Pending::Sessions => Some(Tab::Sessions),
                 Pending::Flows => Some(Tab::Flows),
@@ -1250,6 +1268,16 @@ fn reply(s: &mut State, id: ReqId, r: Result<Reply, PortError>) -> Vec<Effect> {
         }
         (Pending::Runs(f), Reply::Runs(v)) => {
             d.runs.insert(f, v);
+        }
+        (Pending::EndedRuns { append }, Reply::Runs(v)) => {
+            d.ended_more = v.len() >= crate::flows::ENDED_PAGE as usize;
+            if !append {
+                d.ended_runs.clear();
+            }
+            for r in v {
+                upsert_ended(&mut d.ended_runs, r);
+            }
+            d.ended_loaded = true;
         }
         (Pending::FlowDetail(f), Reply::Flow(v)) => {
             d.flow_details.insert(f, *v);

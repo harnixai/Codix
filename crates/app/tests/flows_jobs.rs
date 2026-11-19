@@ -445,3 +445,57 @@ async fn run_lower_shows_time_and_tokens_but_no_status_words() {
     assert!(!lower.contains("入") && !lower.contains("出 "), "{lower}");
     assert!(lower.contains("7m00s"), "{lower}");
 }
+
+/// 已结束的运行在末尾的「已结束」里，不在它的流程下面；选中它左边是主会话，标题写出归属，
+/// 停不了也取消不了（交互 §5.3）。
+#[tokio::test(start_paused = true)]
+async fn ended_runs_sit_under_ended_and_show_where_they_came_from() {
+    let mut h = flows("default").await;
+    h.pick_upper(flow_index(&h, "feature-to-ship")).await;
+    h.keys("Right").await;
+    h.settle().await;
+    let rows = h.core.state.flow_rows();
+    assert!(
+        !rows
+            .iter()
+            .any(|r| matches!(r, FlowRow::Run(_, id) if id.as_str() == "r3")),
+        "已完成的运行不在流程下面：{rows:?}"
+    );
+    let ended = rows.iter().position(|r| r == &FlowRow::Ended).unwrap();
+    h.pick_upper(ended).await;
+    h.keys("Right").await;
+    h.settle().await;
+    h.pick_upper(run_index(&h, "r3")).await;
+    h.settle().await;
+    assert_eq!(
+        h.chat_title(),
+        "昨天的调研",
+        "左边是它的主会话（mock 里是 s3）"
+    );
+    let text = h.text();
+    for want in [
+        "登录限流  需求到上线",
+        "登录限流 · 流程「需求到上线」",
+        "定义 3f2a91c · 已改过",
+        "运行已结束",
+    ] {
+        assert!(text.contains(want), "缺 {want}\n{text}");
+    }
+    let before = h.calls("dev").len();
+    h.keys("p x").await;
+    h.settle().await;
+    assert!(
+        !h.calls("dev")[before..]
+            .iter()
+            .any(|c| matches!(c, Command::RunOp { .. })),
+        "结束了的运行不发运行操作"
+    );
+    assert!(h.core.state.ui.confirm.is_none(), "也不问要不要取消");
+    h.keys("Left").await;
+    h.settle().await;
+    assert_eq!(
+        h.core.state.selected_flow_row(),
+        Some(FlowRow::Ended),
+        "← 收起「已结束」，选中回到它"
+    );
+}

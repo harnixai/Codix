@@ -252,6 +252,25 @@ async fn a_run_goes_from_start_to_finish() {
         (1, 1),
         "列表里的站数从运行记录算"
     );
+    let Reply::Runs(ended) = c
+        .ok(Command::ListEndedRuns {
+            limit: 50,
+            before_ms: None,
+        })
+        .await
+    else {
+        panic!("list_ended_runs")
+    };
+    let e = ended
+        .iter()
+        .find(|r| r.id == id)
+        .expect("结束的运行在「已结束」里");
+    assert!(e.ended_ms.is_some(), "带结束时刻");
+    let Reply::Run(v) = c.ok(Command::GetRun { run: id.clone() }).await else {
+        panic!("get_run")
+    };
+    assert!(!v.def_digest.is_empty(), "带钉住的定义的摘要");
+    assert_eq!(v.def_state, port::DefState::Current, "定义没改过");
 }
 
 /// 运行的 worktree 在仓库根的 `.wkts/<运行>/`，主仓库看不到它，运行记录在项目状态里（architecture §8.1）。

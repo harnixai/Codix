@@ -161,6 +161,12 @@ pub struct Domain {
     /// 每个流程的运行（展开流程时取）。
     pub runs: Map<String, Vec<port::RunSummary>>,
     pub run_views: Map<port::RunId, port::RunView>,
+    /// 已结束的运行，不分流程，结束时刻新的在前（流程标签末尾的「已结束」，交互 §5.3）。
+    pub ended_runs: Vec<port::RunSummary>,
+    /// 取过一次了（取失败也算，免得每帧重取）。
+    pub ended_loaded: bool,
+    /// 上一次取满了一页：后面可能还有，列表末尾放「更多」。
+    pub ended_more: bool,
     pub flow_details: Map<String, port::FlowDetail>,
     pub job_history: Map<port::JobId, Vec<port::JobEntry>>,
     /// 列表加载失败的原因，按标签（会话 / 流程 / 作业）。
@@ -241,6 +247,10 @@ pub struct Ui {
     /// 正在给这个会话改名：输入框里是新名字（交互 §5.2 `r`）。
     pub rename: Option<SessionId>,
     pub flow_expanded: std::collections::HashSet<String>,
+    /// 「已结束」展开着（缺省收起）。
+    pub ended_expanded: bool,
+    /// 上一次提示过"运行已结束"的运行：同一个只提示一次。
+    pub ended_noticed: Option<port::RunId>,
     /// 运行里收起的站（`运行/站`）；有子 Agent 的站缺省展开。
     pub station_collapsed: std::collections::HashSet<String>,
     /// 上一次因为选中而自动展开的流程：同一个流程被 ← 收起后不再自动展开。
@@ -361,6 +371,8 @@ impl State {
                 task_view: None,
                 rename: None,
                 flow_expanded: Default::default(),
+                ended_expanded: false,
+                ended_noticed: None,
                 station_collapsed: Default::default(),
                 flow_auto: None,
                 last_follow: None,

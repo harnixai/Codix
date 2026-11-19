@@ -467,6 +467,18 @@ impl ScriptedBackend {
                 runs.sort_by_key(|r| std::cmp::Reverse(r.started_ms));
                 Ok(Reply::Runs(runs))
             }
+            ListEndedRuns { limit, before_ms } => {
+                let mut runs: Vec<_> = st()
+                    .runs
+                    .values()
+                    .map(|r| r.summary.clone())
+                    .filter(|r| matches!(r.status, RunStatus::Finished | RunStatus::Cancelled))
+                    .filter(|r| before_ms.is_none_or(|b| r.ended_ms.unwrap_or(0) < b))
+                    .collect();
+                runs.sort_by_key(|r| std::cmp::Reverse((r.ended_ms.unwrap_or(0), r.id.0.clone())));
+                runs.truncate(*limit as usize);
+                Ok(Reply::Runs(runs))
+            }
             GetRun { run } => st()
                 .runs
                 .get(run)
@@ -650,6 +662,8 @@ impl ScriptedBackend {
                     s
                 })
                 .collect(),
+            def_digest: String::new(),
+            def_state: port::DefState::Current,
         };
         advance(&mut view);
         Ok(view)

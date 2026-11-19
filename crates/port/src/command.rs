@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Answer, ClientInfo, FlowDetail, FlowSummary, Goal, HistoryItem, InstanceInfo, Job, JobEntry,
-    JobId, MessageId, Prompt, PromptId, RunId, RunOp, RunSummary, RunView, SessionId,
+    JobId, MessageId, Millis, Prompt, PromptId, RunId, RunOp, RunSummary, RunView, SessionId,
     SessionSummary, Task, TaskId, Todo,
 };
 
@@ -121,6 +121,13 @@ pub enum Command {
     ListRuns {
         flow: String,
     },
+    /// 已结束（完成、取消）的运行，不分流程，结束时刻新的在前：至多 `limit` 条，给了 `before_ms`
+    /// 就只要结束得比它早的（"更多"）。
+    ListEndedRuns {
+        limit: u32,
+        #[serde(default)]
+        before_ms: Option<Millis>,
+    },
     GetRun {
         run: RunId,
     },
@@ -184,6 +191,7 @@ impl Command {
             Command::ListFlows => "list_flows",
             Command::GetFlow { .. } => "get_flow",
             Command::ListRuns { .. } => "list_runs",
+            Command::ListEndedRuns { .. } => "list_ended_runs",
             Command::GetRun { .. } => "get_run",
             Command::StartRun { .. } => "start_run",
             Command::RunOp { .. } => "run_op",

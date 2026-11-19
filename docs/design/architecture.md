@@ -93,7 +93,7 @@ pub trait Backend: Send + Sync + 'static {
 | 对话 | `Submit{session, text, mode: Turn \| Steer \| Queue}`、`Interrupt`、`Answer{session, prompt, answer}`、`SetModel`、`Commands{session}`、`SideQuestion{session, text}` |
 | goal | `SetGoal`、`UpdateGoal{action: Pause \| Resume \| Edit \| Clear}` |
 | 任务 | `StopTask`、`MessageTask`、`TaskOutput{task, from_byte}` |
-| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`GetRun{id}`、`StartRun{flow, subject, inputs}`、`RunOp{run, op}` |
+| 流程 | `ListFlows`、`GetFlow{name}`、`ListRuns{flow}`、`ListEndedRuns{limit, before_ms}`（不分流程，结束新的在前）、`GetRun{id}`（带钉住的定义的摘要与它现在怎样了：`def_digest`、`def_state`）、`StartRun{flow, subject, inputs}`、`RunOp{run, op}` |
 | 作业 | `ListJobs`、`SaveJob`、`DeleteJob`、`SetJobEnabled`、`RunJobNow`、`JobHistory{job}` |
 
 ### 3.3 事件（`Event`）
@@ -457,7 +457,8 @@ codix（一个二进制）
   - `send` = `run_turn` 排队；`answer` = `respondToPrompt`；`note` = `session.appendEntry`（命名空间
     `codix.flow`）；`close` 之后看着它的流结束，Codix 里关掉的会话不会被再带回来。
   - 库的一致性套件（`conformance::run_all`）对着它跑，见 testing.md §8。
-- **端口**：`ListFlows` / `GetFlow` / `ListRuns` / `GetRun` / `StartRun` / `RunOp` 是库的读取与运行操作；派工器
+- **端口**：`ListFlows` / `GetFlow` / `ListRuns` / `ListEndedRuns` / `GetRun` / `StartRun` / `RunOp` 是库的读取与运行操作
+  （`ListEndedRuns` 要结束时刻与站数，逐个读运行记录；`GetRun` 拿钉住的定义的摘要与流程包里现在的比）；派工器
   每改一次运行（`Runner::changes`）推 `RunUpserted` + `RunDetail` 与那个流程的 `FlowUpserted`（在跑的个数）；
   定义经工具存了推 `FlowUpserted` + `FlowDetail`，删了推 `FlowRemoved`。状态与库一致，"等待 / 暂停中 /
   已暂停"取库算出的 `Phase`。`Hello` 的 `flows` 为真。
