@@ -201,7 +201,8 @@ mock 那一套不动，真实后端按层另加用例，全部离线、不调模
 catch_up`（再按名字过滤）。凭据取仓库根的 `.env`（worktree 里往上找；`CODIX_LIVE_ENV` 可指定），要有
 `ANTHROPIC_AUTH_TOKEN`（或 `ANTHROPIC_API_KEY`）与 `ANTHROPIC_MODEL`，读不到就失败并说明。凭据只交给
 实例进程的环境（`SocketInstances::with_env`），不进测试进程、不打印。同时起的实例数用 `LIVE_THREADS`
-控制（缺省 4）。用例全标 `#[ignore = "live"]`，`./scripts/check.sh` 只编译不跑。
+控制（缺省 4）；跑全部时流程的一致性套件不进并发，最后单独串行跑（它自己就要跑十几轮模型，挤在并发里会撞上单轮
+超时）。用例全标 `#[ignore = "live"]`，`./scripts/check.sh` 只编译不跑。
 
 **harness**（`crates/codix/tests/live/mod.rs`）：
 

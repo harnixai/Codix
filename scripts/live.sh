@@ -18,4 +18,6 @@ files=()
 for f in crates/codix/tests/live_*.rs; do
     files+=(--test "$(basename "$f" .rs)")
 done
-exec cargo test -p codix "${files[@]}" -- --ignored --test-threads="$threads"
+cargo test -p codix "${files[@]}" -- --ignored --test-threads="$threads" --skip conformance
+# 流程的一致性套件自己就要跑十几轮模型，挤在并发里会撞上它的单轮超时：最后单独跑。
+exec cargo test -p codix --test live_flows -- --ignored --test-threads=1 conformance
